@@ -47,7 +47,10 @@ function mcpAppendLog(itemId, line, replaceLast) {
     console.log('[mcp:' + itemId + '] ' + line);
 }
 
-function mcpFinishInstall(itemId, returnCode) {
+// 记录正在卸载的服务器 ID，用于回调时区分安装/卸载操作
+var _pendingUninstallIds = {};
+
+function mcpFinishInstall(itemId, returnCode, installed) {
     var logDiv = document.getElementById('mcpLog_' + itemId);
     var content = logDiv ? logDiv.querySelector('.mcp-log-content') : null;
     if (content) {
@@ -58,18 +61,31 @@ function mcpFinishInstall(itemId, returnCode) {
         content.scrollTop = content.scrollHeight;
     }
     if (logDiv && content) _updateLogCount(itemId, content);
+    // 操作失败时清理卸载标记，避免影响后续安装
+    if (returnCode !== 0 && _pendingUninstallIds[itemId]) {
+        delete _pendingUninstallIds[itemId];
+    }
     if (returnCode === 0) {
         var item = appState.mcpMarket.find(function(m) { return m.id === itemId; });
         if (item) {
             var name = item.title || item.name || itemId;
-            item.installed = true;
-            var existing = appState.mcpServers.find(function(s) { return s.id === itemId; });
-            if (!existing) {
-                appState.mcpServers.push({
-                    id: itemId, name: name,
-                    url: item.githubRepoUrl || '', description: item.description || '',
-                    transport: 'stdio', enabled: true, online: false, tools: []
-                });
+            var isUninstall = !!_pendingUninstallIds[itemId];
+            if (isUninstall) {
+                // ===== 卸载完成 =====
+                item.installed = false;
+                appState.mcpServers = appState.mcpServers.filter(function(s) { return s.id !== itemId; });
+                delete _pendingUninstallIds[itemId];
+            } else {
+                // ===== 安装完成 =====
+                item.installed = true;
+                var existing = appState.mcpServers.find(function(s) { return s.id === itemId; });
+                if (!existing) {
+                    appState.mcpServers.push({
+                        id: itemId, name: name,
+                        url: item.githubRepoUrl || '', description: item.description || '',
+                        transport: 'stdio', enabled: true, online: false, tools: []
+                    });
+                }
             }
             // 重新渲染但不关闭日志窗口：记录日志面板状态，渲染后恢复
             var wasLogOpen = logDiv && logDiv.style.display === 'block';
@@ -77,7 +93,7 @@ function mcpFinishInstall(itemId, returnCode) {
             if (wasLogOpen) showMCPLog(itemId, '');  // 恢复日志显示
             if (typeof renderMCPServers === 'function') renderMCPServers();
             if (typeof renderMCPLocalServers === 'function') renderMCPLocalServers();
-            showToast('📦 MCP 服务器已安装: ' + name, 'success');
+            showToast(isUninstall ? '🗑️ MCP 服务器已卸载: ' + name : '📦 MCP 服务器已安装: ' + name, isUninstall ? 'warning' : 'success');
         }
         if (typeof loadMCPServers === 'function') loadMCPServers();
     }

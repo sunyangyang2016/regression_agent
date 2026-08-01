@@ -223,6 +223,8 @@ function toggleMCPInstall(id) {
     var name = item.title || item.name || id;
     if (item.installed) {
         showMCPLog(id, '🔄 正在卸载: ' + name);
+        // 标记为卸载中，用于 mcpFinishInstall 回调时区分操作类型
+        if (window._pendingUninstallIds) window._pendingUninstallIds[id] = true;
         if (window.mcp_bridge && window._bridgeReady) window.mcp_bridge.uninstallMCPFromMarket(id, '');
         item.installed = false;
         appState.mcpServers = appState.mcpServers.filter(function(s) { return s.id !== id; });
