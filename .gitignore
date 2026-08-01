@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/*.log
+logs/archive/
+logs/mcp/
+
+# MCP Server
+tools/mcp/server/
+
+# Config (sensitive)
+config/.env
+config/*.secret.yaml
+config/secret_manager.py
+*.secret.*
+.env
+.env.local
+
+# User config (keep defaults, ignore overrides)
+user_config/*.local.*
+user_config/**/*.override.*
+# 模型配置含 API key，不纳入版本库
+user_config/model.yaml
+user_config/defaults/models.json
+user_config/defaults/mcp_servers.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Generated
+ui/template/main_layout.html
+backups/
+dist/
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+tests/.coverage
+
+# Build
+*.egg-info/
+*.whl
+*.tar.gz
