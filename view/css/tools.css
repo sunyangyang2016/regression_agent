@@ -1,0 +1,9 @@
+/* 工具面板样式 */
+.tool-group{margin-bottom:4px;}
+.tool-group .item-row{border-bottom:none;border-radius:var(--radius-md) var(--radius-md) 0 0;}
+.tool-group .item-row:last-child{border-bottom:none;}
+.tool-detail{font-size:13px;line-height:1.5;}
+.tool-detail .row{display:flex;padding:4px 0;}
+.tool-detail .label{color:var(--text-secondary);min-width:70px;flex-shrink:0;}
+.tool-detail .value{color:var(--text-primary);white-space:pre-wrap;word-break:break-all;}
+.tool-detail .value.mono{font-family:monospace;font-size:12px;}

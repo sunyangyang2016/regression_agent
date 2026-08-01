@@ -1,0 +1,12 @@
+<!-- MCP 远程服务器面板 -->
+<div class="config-section">
+    <div class="config-section-title"><i class="fas fa-server"></i> 远程服务器</div>
+    <div id="mcpServerList"></div>
+</div>
+<div style="margin-top:20px;border-top:1px solid var(--border-color);padding-top:16px;">
+    <div class="config-section-title" style="margin-bottom:12px;"><i class="fas fa-plus-circle"></i> 添加远程服务器</div>
+    <div class="config-group"><label>服务器名称</label><input type="text" id="mcpServerName" placeholder="例如: filesystem"></div>
+    <div class="config-group"><label>服务器 URL</label><input type="text" id="mcpServerUrl" placeholder="http://localhost:8000"></div>
+    <div class="config-group"><label>描述 (可选)</label><input type="text" id="mcpServerDesc" placeholder="文件系统操作服务器"></div>
+    <button class="btn-primary" onclick="addRemoteMCPServer()"><i class="fas fa-plus"></i> 添加服务器</button>
+</div>

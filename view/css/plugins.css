@@ -1,0 +1,4 @@
+/* 插件面板样式 - 粉色主题 */
+.plugins-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); }
+.plugins-header h3 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.plugins-header h3 i { color: var(--accent-pink); }

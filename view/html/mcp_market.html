@@ -1,0 +1,26 @@
+<!-- MCP 市场面板 -->
+<div class="config-section">
+    <div class="config-section-title"><i class="fas fa-store"></i> MCP 市场</div>
+    <!-- 搜索和筛选 -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+        <div style="flex:1;min-width:180px;position:relative;">
+            <i class="fas fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px;"></i>
+            <input type="text" id="mcpMarketSearch" placeholder="搜索服务器名称、描述..." 
+                oninput="filterMCPMarket()"
+                style="width:100%;padding:7px 10px 7px 30px;border:1px solid var(--border-color);border-radius:var(--radius-md);background:var(--bg-primary);color:var(--text-primary);font-size:13px;outline:none;box-sizing:border-box;">
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;" id="mcpCategoryFilters">
+            <button class="mcp-filter-btn active" data-cat="all" onclick="filterMCPMarketByCat('all')">全部</button>
+            <button class="mcp-filter-btn" data-cat="approved" onclick="filterMCPMarketByCat('approved')">已审核</button>
+            <button class="mcp-filter-btn" data-cat="tested" onclick="filterMCPMarketByCat('tested')">已验证</button>
+            <button class="mcp-filter-btn" data-cat="pending" onclick="filterMCPMarketByCat('pending')">待审核</button>
+        </div>
+        <button onclick="loadMCPMarket()" style="padding:7px 12px;border:1px solid var(--border-color);border-radius:var(--radius-md);background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;font-size:12px;">
+            <i class="fas fa-sync-alt"></i> 刷新
+        </button>
+    </div>
+    <!-- 结果统计 -->
+    <div id="mcpMarketStats" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
+    <!-- 服务器列表 -->
+    <div id="mcpMarketList"></div>
+</div>

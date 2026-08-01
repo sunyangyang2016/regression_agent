@@ -1,0 +1,250 @@
+// ============================================
+// Agent - 应用初始化与全局状态
+// ============================================
+const APP_INFO = { name: 'Agent', version: '1.0.1alpha', releaseDate: '2026-07-19' };
+var appState = {
+    currentModel: null, models: [], mcpServers: [], mcpMarket: [],
+    skills: [], conversations: [], currentTab: 'mcp', isProcessing: false,
+    messages: [],
+    config: { provider: 'deepseek', model: 'deepseek-chat', temperature: 0.7, maxTokens: 2000 }
+};
+window.appState = appState;
+
+const defaultModels = [{ id:'deepseek', name:'DeepSeek', provider:'deepseek', model:'deepseek-chat', apiKey:'', baseUrl:'https://api.deepseek.com/v1', temperature:0.7, maxTokens:2000, active:true, online:true, isDefault:true }];
+const defaultMCPServers = [];
+const defaultMCPMarket = [
+    { id:'github', name:'GitHub MCP', author:'github', description:'GitHub \u64CD\u4F5C', downloads:1234, stars:89, installed:false },
+    { id:'slack', name:'Slack MCP', author:'slack', description:'Slack \u6D88\u606F\u53D1\u9001', downloads:856, stars:67, installed:false },
+    { id:'redis', name:'Redis MCP', author:'redis', description:'Redis \u6570\u636E\u5E93\u64CD\u4F5C', downloads:567, stars:45, installed:true }
+];
+const defaultSkills = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    appState.models = defaultModels;
+    appState.currentModel = appState.models.find(m=>m.active)||appState.models[0];
+    appState.mcpServers = defaultMCPServers;
+    appState.mcpMarket = defaultMCPMarket;
+    appState.skills = defaultSkills;
+    const t = localStorage.getItem('agent-theme')||'dark';
+    setTheme(t);
+    updateModelUI(); renderMCPServers(); renderMCPLocalServers(); renderMCPMarket(); renderModelList();
+    renderTools(); renderSkills(); renderPlugins(); updateMCPBadge(); updateModelCount();
+    ['tabMCP','tabModels','tabTools','tabSkills','tabPlugins','tabSettings','tabAbout'].forEach(function(id){
+        var el=document.getElementById(id);
+        if(el) el.style.display = id==='tabMCP' ? 'block' : 'none';
+    });
+    switchMCPSubTab('market');
+    console.log('Agent loaded');
+    setTimeout(function() { lazyLoadPanel('tabAbout', 'html/about.html'); }, 500);
+    setTimeout(function() { lazyLoadPanel('tabSettings', 'html/settings.html'); }, 600);
+    setTimeout(function() { lazyLoadPanel('tabTools', 'html/tools.html'); }, 700);
+    setTimeout(function() {
+        lazyLoadPanel('tabSkills', 'html/skills.html', function(){
+            // 面板加载完成后渲染技能
+            if (typeof renderSkills === 'function') {
+                renderSkills();
+                console.log('[Skills] 面板加载完成，重新渲染');
+            }
+        });
+    }, 800);
+    setTimeout(function() { lazyLoadPanel('tabPlugins', 'html/plugins.html'); }, 900);
+    setTimeout(function() { lazyLoadPanel('tabModels', 'html/models.html'); }, 1000);
+});
+
+window._bridgeReady = false;
+window.py_bridge = null;
+window.config_bridge = null;
+window.tool_bridge = null;
+window.skill_bridge = null;
+window.mcp_bridge = null;
+function connectBridge() {
+    if(typeof QWebChannel==='undefined'||typeof qt==='undefined'||!qt.webChannelTransport){setTimeout(connectBridge,200);return;}
+    try{
+    new QWebChannel(qt.webChannelTransport,function(ch){
+            window.py_bridge=ch.objects.py_bridge;
+            window.config_bridge=ch.objects.config_bridge;
+            window.tool_bridge=ch.objects.tool_bridge;
+            window.skill_bridge=ch.objects.skill_bridge;
+            window.mcp_bridge=ch.objects.mcp_bridge;
+            window._bridgeReady=true;
+            console.log('[Bridge] OK');
+            if(window.py_bridge) showToast('\u540E\u7AEF\u5DF2\u8FDE\u63A5','success');
+            if (typeof startMCPStatusPolling === 'function') startMCPStatusPolling();
+            setTimeout(function(){loadAllData();}, 200);
+        });
+    }catch(e){console.error('[Bridge]',e);setTimeout(connectBridge,500);}
+}
+function loadAllData() {
+    if(window.config_bridge){
+        try{
+            var promise=window.config_bridge.getModels();
+            if(promise && typeof promise.then==='function'){
+                promise.then(function(modelsStr){
+                    try{
+                        if(typeof modelsStr==='string') modelsStr=JSON.parse(modelsStr);
+                        if(modelsStr&&modelsStr.length>0){
+                            appState.models=modelsStr;
+                            appState.currentModel=appState.models.find(function(m){return m.active;})||appState.models[0];
+                            console.log('[Models] \u5DF2\u52A0\u8F7D',modelsStr.length,'\u4E2A\u6A21\u578B');
+                            updateModelUI();renderModelList();
+                            loadConfig();
+                        }
+                    }catch(e2){console.warn('[Models] \u89E3\u6790\u5931\u8D25:',e2);}
+                });
+            } else if(typeof models==='string'){
+                var models=JSON.parse(models);
+                if(models&&models.length>0){
+                    appState.models=models;
+                    appState.currentModel=appState.models.find(function(m){return m.active;})||appState.models[0];
+                }
+            }
+        }catch(e){console.warn('[Models] \u52A0\u8F7D\u6A21\u578B\u5217\u8868\u5931\u8D25:',e);}
+    }
+    if(window.py_bridge){
+        try{
+            var promise=window.py_bridge.getConversations();
+            if(promise && typeof promise.then==='function'){
+                promise.then(function(convStr){
+                    if(convStr && typeof convStr==='string'){
+                        var convList=JSON.parse(convStr);
+                        if(convList && convList.length>0){
+                            appState.conversations=convList;
+                            renderChatList(convList);
+                            console.log('[App] \u5DF2\u52A0\u8F7D '+convList.length+' \u4E2A\u5BF9\u8BDD');
+                        }
+                    }
+                }).catch(function(e){console.warn('[App] Promise \u5931\u8D25:',e);});
+            } else if(convStr && typeof convStr==='string'){
+                var convList=JSON.parse(convStr);
+                if(convList && convList.length>0){
+                    appState.conversations=convList;
+                    renderChatList(convList);
+                }
+            }
+        }catch(e){console.warn('[App] \u52A0\u8F7D\u5BF9\u8BDD\u5217\u8868\u5931\u8D25:',e);}
+    }
+    if(window.skill_bridge){
+        try{
+            var promise=window.skill_bridge.getSkills();
+            if(promise && typeof promise.then==='function'){
+                promise.then(function(skillsStr){
+                    if(skillsStr && typeof skillsStr==='string'){
+                        var skills=JSON.parse(skillsStr);
+                        if(skills && skills.length>0){
+                            appState.skills=skills;
+                            renderSkills();
+                            console.log('[Skills] \u5DF2\u52A0\u8F7D '+skills.length+' \u4E2A\u6280\u80FD');
+                        } else {
+                            console.log('[Skills] \u540E\u7AEF\u8FD4\u56DE\u7684\u6280\u80FD\u5217\u8868\u4E3A\u7A7A');
+                        }
+                    }
+                }).catch(function(e){console.warn('[Skills] Promise \u5931\u8D25:',e);});
+            } else {
+                console.warn('[Skills] skill_bridge.getSkills \u4E0D\u652F\u6301 Promise');
+                try {
+                    var raw = window.skill_bridge.getSkills();
+                    if (raw) {
+                        var skills = JSON.parse(raw);
+                        if (skills && skills.length>0) {
+                            appState.skills = skills;
+                            renderSkills();
+                            console.log('[Skills] \u5DF2\u52A0\u8F7D(no-promise) '+skills.length+' \u4E2A\u6280\u80FD');
+                        }
+                    }
+                } catch(e) { console.warn('[Skills] \u540C\u6B65\u52A0\u8F7D\u5931\u8D25:', e); }
+            }
+        }catch(e){console.warn('[Skills] \u52A0\u8F7D\u6280\u80FD\u5217\u8868\u5931\u8D25:',e);}
+    }
+    if(window.tool_bridge){
+        try{
+            var promise = window.tool_bridge.getTools();
+            if(promise && typeof promise.then==='function'){
+                promise.then(function(toolsStr){
+                    if(toolsStr && typeof toolsStr==='string'){
+                        var tools = JSON.parse(toolsStr);
+                        if(tools && tools.length>0){
+                            window._cachedTools = tools;
+                            renderTools();
+                            console.log('[Tools] \u5DF2\u52A0\u8F7D '+tools.length+' \u4E2A\u5DE5\u5177');
+                        }
+                    }
+                }).catch(function(e){console.warn('[Tools] Promise \u5931\u8D25:',e);});
+            }
+        }catch(e){console.warn('[Tools] \u52A0\u8F7D\u5DE5\u5177\u5217\u8868\u5931\u8D25:',e);}
+    }
+    if (window.mcp_bridge && window._bridgeReady) {
+        try {
+            var promise = window.mcp_bridge.getMCPMarket();
+            if (promise && typeof promise.then === 'function') {
+                promise.then(function(marketStr) {
+                    try {
+                        var data = typeof marketStr === 'string' ? JSON.parse(marketStr) : marketStr;
+                        var items = data.market || data || [];
+                        if (items.length > 0) {
+                            items.forEach(function(item) {
+                                var server = appState.mcpServers.find(function(s) { return s.id === item.id; });
+                                if (server) item.installed = true;
+                            });
+                            appState.mcpMarket = items;
+                            renderMCPMarket();
+                            console.log('[MCP] \u5DF2\u52A0\u8F7D ' + items.length + ' \u4E2A\u5E02\u573A\u9879');
+                        }
+                    } catch(e) { console.warn('[MCP] \u89E3\u6790\u5E02\u573A\u6570\u636E\u5931\u8D25:', e); }
+                }).catch(function(e) { console.warn('[MCP] \u5E02\u573A\u6570\u636E Promise \u5931\u8D25:', e); });
+            }
+        } catch(e) { console.warn('[MCP] \u52A0\u8F7D\u5E02\u573A\u6570\u636E\u5931\u8D25:', e); }
+    }
+    if (window.mcp_bridge && window._bridgeReady) {
+        try {
+            var promise = window.mcp_bridge.getMCPServers();
+            if (promise && typeof promise.then === 'function') {
+                promise.then(function(serversStr) {
+                    try {
+                        var servers = typeof serversStr === 'string' ? JSON.parse(serversStr) : serversStr;
+                        appState.mcpServers = servers || [];
+                        renderMCPServers();
+                        renderMCPLocalServers();
+                        updateMCPBadge();
+                        console.log('[MCP] \u5DF2\u52A0\u8F7D ' + (appState.mcpServers.length) + ' \u4E2A\u670D\u52A1\u5668');
+                    } catch(e) { console.warn('[MCP] \u89E3\u6790\u670D\u52A1\u5668\u5217\u8868\u5931\u8D25:', e); }
+                }).catch(function(e) { console.warn('[MCP] \u670D\u52A1\u5668 Promise \u5931\u8D25:', e); });
+            }
+        } catch(e) { console.warn('[MCP] \u52A0\u8F7D\u670D\u52A1\u5668\u5931\u8D25:', e); }
+    }
+    updateModelUI();renderModelList();updateModelCount();renderTools();
+    _retryLoadMCPConfig(0);
+}
+
+function _retryLoadMCPConfig(tries) {
+    if (tries > 15) return;
+    if (typeof loadMCPConfigToEditor === 'function' && window.mcp_bridge && window._bridgeReady) {
+        loadMCPConfigToEditor();
+    } else {
+        setTimeout(function() { _retryLoadMCPConfig(tries + 1); }, 500);
+    }
+}
+
+function loadConfig() {
+    if(!window.config_bridge) return;
+    try{
+        var promise=window.config_bridge.getConfig();
+        if(promise && typeof promise.then==='function'){
+            promise.then(function(cfgStr){
+                try{
+                    if(typeof cfgStr==='string') cfgStr=JSON.parse(cfgStr);
+                    if(cfgStr&&cfgStr.provider){
+                        appState.config=cfgStr;
+                        var model=appState.models.find(function(m){
+                            return m.id===cfgStr.provider||(m.name||'').toLowerCase()===cfgStr.provider.toLowerCase();
+                        });
+                        if(model){appState.currentModel=model;}
+                        console.log('[Config] \u5DF2\u52A0\u8F7D\u540E\u7AEF\u914D\u7F6E:',cfgStr.provider,cfgStr.model);
+                        updateModelUI();
+                    }
+                }catch(e2){console.warn('[Config] \u89E3\u6790\u5931\u8D25:',e2);}
+            });
+        }
+    }catch(e){console.warn('[Config] \u52A0\u8F7D\u540E\u7AEF\u914D\u7F6E\u5931\u8D25:',e);}
+    updateModelUI();renderModelList();updateModelCount();
+}
+setTimeout(connectBridge,300);

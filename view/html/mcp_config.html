@@ -1,0 +1,12 @@
+<!-- MCP JSON 配置面板 -->
+<div class="config-section">
+    <div class="config-section-title"><i class="fas fa-code"></i> JSON 配置</div>
+    <div class="json-editor-container">
+        <textarea class="json-editor" id="mcpJsonConfig" spellcheck="false">{"mcpServers":{}}</textarea>
+        <div class="json-actions">
+            <button onclick="formatJSON()"><i class="fas fa-magic"></i> 格式化</button>
+            <button onclick="validateJSON()"><i class="fas fa-check-circle"></i> 验证</button>
+            <button onclick="applyJSONConfig()" style="background:var(--accent-primary);color:white;"><i class="fas fa-save"></i> 应用</button>
+        </div>
+    </div>
+</div>

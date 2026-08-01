@@ -1,0 +1,11 @@
+/* ============================================
+   MCP 配置 - JSON 编辑器
+   ============================================ */
+
+/* JSON 编辑器 */
+.json-editor{background:var(--bg-input);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:16px;font-family:Courier New,monospace;font-size:13px;color:var(--text-primary);min-height:200px;resize:vertical;width:100%;line-height:1.6;}
+.json-editor:focus{outline:none;border-color:var(--accent-primary);box-shadow:0 0 0 3px rgba(88,166,255,0.15);}
+.json-editor-container{position:relative;}
+.json-editor-container .json-actions{position:absolute;top:8px;right:8px;display:flex;gap:4px;}
+.json-editor-container .json-actions button{padding:4px 10px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:var(--font-family);transition:var(--transition);}
+.json-editor-container .json-actions button:hover{background:var(--bg-hover);color:var(--text-primary);}

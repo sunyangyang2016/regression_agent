@@ -1,0 +1,15 @@
+<!-- MCP 面板容器 -->
+<div class="mcp-sub-tabs" id="mcpSubTabs">
+    <button class="mcp-sub-tab active" data-subtab="market" onclick="switchMCPSubTab('market')"><i class="fas fa-store"></i> 市场</button>
+    <button class="mcp-sub-tab" data-subtab="local" onclick="switchMCPSubTab('local')"><i class="fas fa-laptop"></i> 本地</button>
+    <button class="mcp-sub-tab" data-subtab="remote" onclick="switchMCPSubTab('remote')"><i class="fas fa-server"></i> 远程</button>
+    <button class="mcp-sub-tab" data-subtab="manual" onclick="switchMCPSubTab('manual')"><i class="fas fa-plus-circle"></i> 手动</button>
+    <button class="mcp-sub-tab" data-subtab="config" onclick="switchMCPSubTab('config')"><i class="fas fa-code"></i> 配置</button>
+</div>
+<div id="mcpSubMarket" class="mcp-sub-panel"></div>
+<div id="mcpSubLocal" class="mcp-sub-panel" style="display:none;">
+    <div id="mcpLocalServerList"></div>
+</div>
+<div id="mcpSubRemote" class="mcp-sub-panel" style="display:none;"></div>
+<div id="mcpSubManual" class="mcp-sub-panel" style="display:none;"></div>
+<div id="mcpSubConfig" class="mcp-sub-panel" style="display:none;"></div>

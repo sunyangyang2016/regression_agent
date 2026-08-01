@@ -1,0 +1,18 @@
+/* ============================================
+   MCP 市场 - 市场卡片、搜索、筛选
+   ============================================ */
+
+/* 市场卡片 */
+.market-item{background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:16px;margin-bottom:12px;transition:var(--transition);}
+.market-item:hover{border-color:var(--accent-primary);cursor:pointer;}
+.market-item .market-header{display:flex;align-items:center;justify-content:space-between;}
+.market-item .market-name{font-size:15px;font-weight:600;}
+.market-item .market-desc{font-size:13px;color:var(--text-secondary);margin:4px 0;}
+.market-item .market-actions button{padding:6px 16px;background:var(--accent-primary);color:white;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-family:var(--font-family);transition:var(--transition);}
+.market-item .market-actions button:hover{background:var(--accent-secondary);}
+.market-item .market-actions button.installed{background:var(--accent-success);}
+
+/* 搜索筛选按钮 */
+.mcp-filter-btn{padding:5px 12px;border:1px solid var(--border-color);border-radius:var(--radius-md);background:var(--bg-secondary);color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:var(--font-family);transition:var(--transition);}
+.mcp-filter-btn:hover{background:var(--bg-hover);color:var(--text-primary);border-color:var(--accent-primary);}
+.mcp-filter-btn.active{background:var(--accent-primary);color:white;border-color:var(--accent-primary);}
