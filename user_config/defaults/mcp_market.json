@@ -1,0 +1,60 @@
+{
+    "market": [
+        {
+            "id": "web-scraper",
+            "name": "Web Scraper",
+            "author": "community",
+            "description": "网页抓取 MCP 服务器，使用 Python + uv 运行，支持抓取和分析网页内容",
+            "downloads": 342,
+            "stars": 28,
+            "installed": false,
+            "installCommand": "pip install httpx beautifulsoup4 parsel",
+            "uninstallCommand": "pip uninstall -y beautifulsoup4 parsel",
+            "depsDir": "tools/mcp/server/mcp-webscraper"
+        },
+        {
+            "id": "github",
+            "name": "GitHub MCP",
+            "author": "github",
+            "description": "GitHub 仓库操作，包括创建、克隆、PR 管理等",
+            "downloads": 1234,
+            "stars": 89,
+            "installed": false,
+            "installCommand": "npm install -g @modelcontextprotocol/server-github",
+            "uninstallCommand": "npm uninstall -g @modelcontextprotocol/server-github"
+        },
+        {
+            "id": "slack",
+            "name": "Slack MCP",
+            "author": "slack",
+            "description": "Slack 消息发送、频道管理、用户查询",
+            "downloads": 856,
+            "stars": 67,
+            "installed": false,
+            "installCommand": "npm install -g @modelcontextprotocol/server-slack",
+            "uninstallCommand": "npm uninstall -g @modelcontextprotocol/server-slack"
+        },
+        {
+            "id": "aws",
+            "name": "AWS MCP",
+            "author": "aws",
+            "description": "AWS 云服务操作，包括 EC2、S3、Lambda 等",
+            "downloads": 2341,
+            "stars": 156,
+            "installed": false,
+            "installCommand": "npm install -g @modelcontextprotocol/server-aws",
+            "uninstallCommand": "npm uninstall -g @modelcontextprotocol/server-aws"
+        },
+        {
+            "id": "redis",
+            "name": "Redis MCP",
+            "author": "redis",
+            "description": "Redis 数据库操作，支持所有数据类型",
+            "downloads": 567,
+            "stars": 45,
+            "installed": true,
+            "installCommand": "npm install -g @modelcontextprotocol/server-redis",
+            "uninstallCommand": "npm uninstall -g @modelcontextprotocol/server-redis"
+        }
+    ]
+}

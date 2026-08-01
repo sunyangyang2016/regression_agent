@@ -24,7 +24,7 @@ function renderAbout() {
             '<div class="about-info-item"><div class="label">发布日期</div><div class="value">2026-07-19</div></div>' +
             '<div class="about-info-item"><div class="label">作者</div><div class="value" id="aboutAuthor">' + author + '</div></div>' +
             '<div class="about-info-item"><div class="label">许可证</div><div class="value" id="aboutLicense">' + license + '</div></div>' +
-            '<div class="about-info-item"><div class="label">GitHub</div><div class="value"><a href="#" onclick="showToast(\'GitHub: github.com/agent/agent\',\'info\')">github.com/agent/agent</a></div></div>' +
+            '<div class="about-info-item"><div class="label">GitHub</div><div class="value"><a href="https://github.com/sunyangyang2016/regression_agent" target="_blank" onclick="event.preventDefault();window.mcp_bridge && window.mcp_bridge.openExternalUrl(\'https://github.com/sunyangyang2016/regression_agent\');">github.com/sunyangyang2016/regression_agent</a></div></div>' +
             '<div class="about-info-item"><div class="label">文档</div><div class="value"><a href="#" onclick="showToast(\'文档: docs.agent.ai\',\'info\')">docs.agent.ai</a></div></div>' +
         '</div>' +
         '<hr class="about-divider">' +

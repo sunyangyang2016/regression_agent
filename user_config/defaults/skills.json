@@ -1,0 +1,28 @@
+{
+    "skills": [
+        {
+            "name": "代码助手",
+            "desc": "代码编写、审查和优化",
+            "trigger": "关键词触发",
+            "icon": "fa-code"
+        },
+        {
+            "name": "文档写作",
+            "desc": "技术文档和报告撰写",
+            "trigger": "手动触发",
+            "icon": "fa-pen-fancy"
+        },
+        {
+            "name": "数据分析",
+            "desc": "数据分析和可视化",
+            "trigger": "意图触发",
+            "icon": "fa-chart-line"
+        },
+        {
+            "name": "翻译",
+            "desc": "多语言翻译服务",
+            "trigger": "关键词触发",
+            "icon": "fa-language"
+        }
+    ]
+}

@@ -1,0 +1,13 @@
+{
+  "enabled_tools": [
+    "run_command",
+    "github_get_issue",
+    "get_weather",
+    "current_time",
+    "calculate",
+    "directory_ops",
+    "file_ops",
+    "mcp_finalize_install",
+    "mcp_env_setup"
+  ]
+}

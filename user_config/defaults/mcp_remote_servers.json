@@ -1,0 +1,22 @@
+{
+    "servers": [
+        {
+            "id": "filesystem",
+            "name": "filesystem",
+            "url": "http://localhost:8000",
+            "description": "文件系统操作服务器",
+            "enabled": true,
+            "online": true,
+            "tools": ["read_file", "write_file", "list_directory", "delete_file", "move_file"]
+        },
+        {
+            "id": "database",
+            "name": "database",
+            "url": "http://localhost:8001",
+            "description": "数据库查询服务器",
+            "enabled": false,
+            "online": false,
+            "tools": ["query", "execute", "schema", "explain"]
+        }
+    ]
+}
