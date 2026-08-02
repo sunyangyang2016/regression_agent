@@ -1,0 +1,43 @@
+{
+    "models": [
+        {
+            "id": "deepseek",
+            "name": "deepseek-v4-flash",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "apiKey": "",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "temperature": 0.7,
+            "maxTokens": 2000,
+            "active": true,
+            "online": true,
+            "isDefault": true
+        },
+        {
+            "id": "claude",
+            "name": "Claude 3",
+            "provider": "anthropic",
+            "model": "Claude 3",
+            "apiKey": "",
+            "baseUrl": "https://api.anthropic.com/v1",
+            "temperature": 0.7,
+            "maxTokens": 2000,
+            "active": false,
+            "online": false,
+            "isDefault": false
+        },
+        {
+            "id": "gpt4",
+            "name": "GPT-4",
+            "provider": "openai",
+            "model": "gpt-4",
+            "apiKey": "",
+            "baseUrl": "https://api.openai.com/v1",
+            "temperature": 0.7,
+            "maxTokens": 2000,
+            "active": false,
+            "online": false,
+            "isDefault": false
+        }
+    ]
+}
