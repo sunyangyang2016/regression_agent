@@ -79,9 +79,10 @@ class ChatController(QObject):
     def handle_load_conversation(self, conversation_id: str):
         messages = self.conversation_model.load_conversation_messages(conversation_id)
         self.ai_controller.reset_messages()
-        # 从数据库加载已保存的 token 和 cost 数据
+        # 从数据库加载已保存的 token 数据
         self._session_total_tokens = self.conversation_model.get_token_count(conversation_id)
-        self._session_total_cost = 0.0
+        # 累计费用由累计 token 推导，确保 UI 上费用与 token 同步显示
+        self._session_total_cost = self._calculate_session_cost(self._session_total_tokens)
         for m in messages:
             role = m.get("role", "user")
             content = m.get("content", "")
@@ -97,6 +98,16 @@ class ChatController(QObject):
             max_ctx = 8192
             ctx_pct = (self._session_total_tokens / max_ctx) * 100
             self.push_token_stats(self._session_total_tokens, 0, 0, ctx_pct, self._session_total_cost, max_ctx)
+
+    def _calculate_session_cost(self, tokens: int) -> float:
+        """根据累计 token 数计算累计费用（费用数据由 token 推导，保证 UI 同步）
+
+        费用 = (累计 token / 1000) × 模型输出单价
+        """
+        model_name = self.model_config.get("api", "model") or "deepseek-chat"
+        from ai.cost_tracker import MODEL_PRICING
+        pricing = MODEL_PRICING.get(model_name, {"input": 0.001, "output": 0.002})
+        return round((tokens / 1000) * pricing["output"], 4)
 
     def _on_stream_chunk(self, content: str):
         self.update_message.emit("", content)
@@ -136,12 +147,9 @@ class ChatController(QObject):
         max_ctx = 8192
         ctx_pct = (self._session_total_tokens / max_ctx) * 100
 
-        # 根据 output tokens 和模型定价计算费用
+        # 累计费用由累计 token 推导，确保 UI 上费用与 token 同步刷新
         model_name = self.model_config.get("api", "model") or "deepseek-chat"
-        from ai.cost_tracker import MODEL_PRICING
-        pricing = MODEL_PRICING.get(model_name, {"input": 0.001, "output": 0.002})
-        round_cost = (output_tokens / 1000) * pricing["output"]
-        self._session_total_cost += round_cost
+        self._session_total_cost = self._calculate_session_cost(self._session_total_tokens)
 
         # 保存 token 数到数据库
         self.conversation_model.update_token_count(self._session_total_tokens)

@@ -44,9 +44,14 @@ class ChatBridge(BridgeBase):
         """创建新对话（重置状态，不写数据库，不发消息不生成条目）"""
         try:
             import json
-            conv_model = self.app_controller.chat_controller.conversation_model
+            chat_controller = self.app_controller.chat_controller
+            conv_model = chat_controller.conversation_model
             conv_model._current_conversation_id = None
             conv_model._current_user_content = None
+            # 重置累计 token/费用，确保 UI 同步归零
+            chat_controller._session_total_tokens = 0
+            chat_controller._session_total_cost = 0.0
+            chat_controller.push_token_stats(0, 0, 0, 0.0, 0.0)
             print(f"[Bridge] newConversation 重置状态成功")
         except Exception as e:
             import traceback
@@ -72,10 +77,15 @@ class ChatBridge(BridgeBase):
             return
         try:
             import json
-            conv_model = self.app_controller.chat_controller.conversation_model
+            chat_controller = self.app_controller.chat_controller
+            conv_model = chat_controller.conversation_model
             conv_model.delete_conversation(conversation_id)
             conv_model._current_conversation_id = None
             conv_model._current_user_content = None
+            # 重置累计 token/费用，确保 UI 同步归零
+            chat_controller._session_total_tokens = 0
+            chat_controller._session_total_cost = 0.0
+            chat_controller.push_token_stats(0, 0, 0, 0.0, 0.0)
             data = conv_model.get_sidebar_data()
             welcome_html = '<div class="welcome-screen" id="welcomeScreen">' \
                 '<div class="welcome-icon">🤖</div>' \

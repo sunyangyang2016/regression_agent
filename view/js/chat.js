@@ -169,6 +169,16 @@ window.chatApp = {
             '<div class="quick-action" onclick="chatApp.quickAction(\'翻译成中文\')"><i class="fas fa-language"></i><span class="label">翻译</span></div></div></div>';
         document.getElementById('chatMessages').innerHTML = html;
         this.messages = [];
+        // 重置 token 统计并刷新 UI（累计费用由 token 推导，同步归零）
+        this.tokenStats = {
+            totalTokens: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            contextPercent: 0,
+            cost: 0,
+            maxContext: 8192
+        };
+        this.updateStatusBar();
         document.getElementById('messageInput').focus();
         showToast('新对话已创建', 'success');
     },
