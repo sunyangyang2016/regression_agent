@@ -344,38 +344,120 @@ function toggleLogBody(headerEl) {
     }
 }
 
-// 打开/关闭日志模态框（不影响右侧面板）
+// 打开/关闭日志悬浮窗（非模态）
 function toggleAILog(event) {
     if (event) event.stopPropagation();
     var modal = document.getElementById('logModal');
     if (!modal) return;
     if (modal.style.display === 'none') {
-        modal.style.display = 'flex';
-        // 已有条目时重新渲染全部
-        var list = document.getElementById('logList');
-        if (list) {
-            list.innerHTML = '';
-            var logs = window.chatApp.aiLogs;
-            if (logs.length === 0) {
-                list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
-            } else {
-                logs.forEach(function(entry) { renderLogEntry(entry); });
-                // 滚动到底部
-                list.scrollTop = list.scrollHeight;
-            }
-        }
+        openAILogWindow();
     } else {
         modal.style.display = 'none';
     }
 }
 
-// 关闭日志模态框
-function closeAILog(event) {
-    // 如果点击的是遮罩层，关闭
-    if (!event || event.target === document.getElementById('logModal')) {
-        var modal = document.getElementById('logModal');
-        if (modal) modal.style.display = 'none';
+// 打开日志悬浮窗并渲染内容
+function openAILogWindow() {
+    var modal = document.getElementById('logModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    var list = document.getElementById('logList');
+    if (list) {
+        list.innerHTML = '';
+        var logs = window.chatApp.aiLogs;
+        if (logs.length === 0) {
+            list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
+        } else {
+            logs.forEach(function(entry) { renderLogEntry(entry); });
+            list.scrollTop = list.scrollHeight;
+        }
     }
+}
+
+// 关闭日志悬浮窗
+function closeAILog(event) {
+    var modal = document.getElementById('logModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// 放大/缩小悬浮窗（切换预设尺寸）
+function toggleLogSize() {
+    var modal = document.getElementById('logModal');
+    if (!modal) return;
+    var icon = document.getElementById('logSizeIcon');
+    var isLarge = modal.dataset.size === 'large';
+    if (isLarge) {
+        modal.style.width = '520px';
+        modal.style.height = '400px';
+        modal.dataset.size = 'default';
+        if (icon) icon.className = 'fas fa-expand';
+    } else {
+        // 放大：按 1080p（1920×1080）比例计算，取视口 80%×88%（约 1536×950）
+        modal.style.width = Math.min(Math.floor(window.innerWidth * 0.8), 1680) + 'px';
+        modal.style.height = Math.min(Math.floor(window.innerHeight * 0.88), 950) + 'px';
+        modal.dataset.size = 'large';
+        if (icon) icon.className = 'fas fa-compress';
+    }
+}
+
+// 拖动：按住标题栏拖动悬浮窗
+function setupLogDrag() {
+    var modal = document.getElementById('logModal');
+    var header = document.getElementById('logModalHeader');
+    if (!modal || !header) return;
+    var dragging = false, offsetX = 0, offsetY = 0;
+
+    header.addEventListener('mousedown', function(e) {
+        if (e.target.closest('button')) return;
+        dragging = true;
+        var rect = modal.getBoundingClientRect();
+        offsetX = e.clientX - rect.left;
+        offsetY = e.clientY - rect.top;
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        var x = Math.max(0, Math.min(e.clientX - offsetX, window.innerWidth - 60));
+        var y = Math.max(0, Math.min(e.clientY - offsetY, window.innerHeight - 40));
+        modal.style.left = x + 'px';
+        modal.style.top = y + 'px';
+        modal.style.right = 'auto';
+        modal.style.bottom = 'auto';
+    });
+    document.addEventListener('mouseup', function() { dragging = false; });
+}
+
+// 缩放：拖拽右下角控制柄调整尺寸
+function setupLogResize() {
+    var modal = document.getElementById('logModal');
+    var handle = document.getElementById('logResizeHandle');
+    if (!modal || !handle) return;
+    var resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
+
+    handle.addEventListener('mousedown', function(e) {
+        resizing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        var rect = modal.getBoundingClientRect();
+        startW = rect.width;
+        startH = rect.height;
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!resizing) return;
+        modal.style.width = Math.max(320, startW + (e.clientX - startX)) + 'px';
+        modal.style.height = Math.max(240, startH + (e.clientY - startY)) + 'px';
+        modal.style.resize = 'none';
+        modal.dataset.size = 'custom';
+    });
+    document.addEventListener('mouseup', function() { resizing = false; });
+}
+
+// 初始化悬浮窗事件（页面加载完成后调用）
+function initLogFloatWindow() {
+    setupLogDrag();
+    setupLogResize();
 }
 
 // 清空日志
@@ -467,3 +549,10 @@ function newChat() {
 }
 function quickAction(text) { window.chatApp.quickAction(text); }
 function autoResize(t){t.style.height='auto';t.style.height=Math.min(t.scrollHeight,150)+'px';}
+
+// 页面加载完成后初始化悬浮窗（拖动/缩放）
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initLogFloatWindow);
+} else {
+    initLogFloatWindow();
+}
