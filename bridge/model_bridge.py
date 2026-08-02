@@ -7,6 +7,7 @@ import os
 from PyQt5.QtCore import pyqtSlot
 
 from .base import BridgeBase
+from config.user_config import USER_DIR, resolve_config_path, load_agent_info
 
 
 class ModelBridge(BridgeBase):
@@ -18,8 +19,8 @@ class ModelBridge(BridgeBase):
         return None
 
     def _get_user_config_dir(self):
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(base, "user_config", "defaults")
+        # 用户配置写入目录：user_config/user/（默认配置在 defaults/ 下，只读不修改）
+        return USER_DIR
 
     @pyqtSlot(str)
     def saveConfig(self, config_json):
@@ -62,14 +63,15 @@ class ModelBridge(BridgeBase):
 
     @pyqtSlot(result=str)
     def getModels(self):
-        """从 user_config/defaults/models.json 读取模型列表"""
+        """读取模型列表：优先 user_config/user/models.json，回退 defaults/models.json"""
         try:
-            path = os.path.join(self._get_user_config_dir(), "models.json")
+            path = resolve_config_path("models.json")
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 models = data.get("models", [])
-                print(f"[ModelBridge] ✅ 已加载 {len(models)} 个模型")
+                source = "user" if path.startswith(USER_DIR) else "defaults"
+                print(f"[ModelBridge] ✅ 已加载 {len(models)} 个模型（来源: {source}）")
                 return json.dumps(models, ensure_ascii=False)
             else:
                 print(f"[ModelBridge] ⚠️ models.json 未找到: {path}")
@@ -79,15 +81,16 @@ class ModelBridge(BridgeBase):
 
     @pyqtSlot(str)
     def saveModels(self, models_json):
-        """保存模型列表到 user_config/defaults/models.json"""
+        """保存模型列表到 user_config/user/models.json（defaults 目录不被修改）"""
         try:
             models = json.loads(models_json)
             if not isinstance(models, list):
                 raise ValueError("数据必须是数组格式")
             path = os.path.join(self._get_user_config_dir(), "models.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"models": models}, f, ensure_ascii=False, indent=4)
-            print(f"[ModelBridge] ✅ 已保存 {len(models)} 个模型")
+            print(f"[ModelBridge] ✅ 已保存 {len(models)} 个模型 → {path}")
             return True
         except Exception as e:
             print(f"[ModelBridge] ❌ 保存 models.json 失败: {e}")
@@ -136,13 +139,22 @@ class ModelBridge(BridgeBase):
 
     @pyqtSlot(str, result=str)
     def getUserConfig(self, filename):
-        """通用方法：从 user_config/defaults/ 读取 JSON 文件"""
+        """通用方法：读取 JSON 文件，优先 user_config/user/，回退 defaults/"""
         try:
-            path = os.path.join(self._get_user_config_dir(), filename)
+            path = resolve_config_path(filename)
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     return f.read()
             return "{}"
         except Exception as e:
             print(f"[ModelBridge] ❌ 读取 {filename} 失败: {e}")
+            return "{}"
+
+    @pyqtSlot(result=str)
+    def getAgentInfo(self):
+        """获取 Agent 信息（关于界面详情，读取 defaults/agent_info.json）"""
+        try:
+            return json.dumps(load_agent_info(), ensure_ascii=False)
+        except Exception as e:
+            print(f"[ModelBridge] ❌ 读取 agent_info.json 失败: {e}")
             return "{}"

@@ -15,6 +15,7 @@ import threading
 from typing import Optional, Callable, Dict, List, Any
 from tools.mcp.local_client import MCPLocalClient
 from tools.mcp.http_client import MCPHTTPClient
+from config.user_config import USER_DIR, resolve_config_path
 
 
 LOG = "[MCP-Host]"
@@ -41,7 +42,8 @@ class MCPHost:
             return
         
         base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.config_dir = config_dir or os.path.join(base, "user_config", "defaults")
+        # 用户配置写入目录：user_config/user/（默认配置在 defaults/ 下，只读不修改）
+        self.config_dir = config_dir or USER_DIR
         os.makedirs(self.config_dir, exist_ok=True)
         
         # 已启动的 Client 列表
@@ -71,7 +73,8 @@ class MCPHost:
     # ==========================================
     
     def _get_config_path(self) -> str:
-        return os.path.join(self.config_dir, "mcp_servers.json")
+        """读取配置路径：优先 user/ 目录，回退 defaults/ 目录"""
+        return resolve_config_path("mcp_servers.json")
     
     def _read_config(self) -> Dict:
         path = self._get_config_path()
@@ -84,7 +87,9 @@ class MCPHost:
         return {"mcpServers": {}}
     
     def _write_config(self, config: Dict):
-        path = self._get_config_path()
+        """写入配置到 user/ 目录（defaults 目录不被修改），首次保存自动创建 mcp_servers.json"""
+        path = os.path.join(self.config_dir, "mcp_servers.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
     

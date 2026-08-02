@@ -46,6 +46,9 @@ user_config/**/*.override.*
 user_config/model.yaml
 user_config/defaults/models.json
 user_config/defaults/mcp_servers.json
+# 用户个性化配置目录：仅提交 README.md，其余文件（用户修改的配置）不纳入版本库
+user_config/user/*
+!user_config/user/README.md
 
 # Database
 user_config/database/*.db

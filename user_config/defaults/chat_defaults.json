@@ -1,0 +1,5 @@
+{
+  "_comment": "聊天默认配置（只读，defaults 目录永不被修改）。stream 字段为预留项：当前请求层（StreamHandler/providers）强制流式以支持多轮工具调用与实时输出，暂未消费此字段；system_prompt 为系统提示词，AI 客户端启动时会从 chat.system_prompt 读取。",
+  "stream": true,
+  "system_prompt": "你是一个有帮助的AI助手。"
+}

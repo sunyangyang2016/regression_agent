@@ -7,11 +7,10 @@ import os
 from PyQt5.QtCore import pyqtSlot
 
 from .base import BridgeBase
+from config.user_config import USER_DIR, resolve_config_path
 
-_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "user_config", "defaults", "builtin_tools_config.json"
-)
+# 用户配置写入目录：user_config/user/（默认配置在 defaults/ 下，只读不修改）
+_CONFIG_PATH = os.path.join(USER_DIR, "builtin_tools_config.json")
 
 
 class ToolBridge(BridgeBase):
@@ -22,22 +21,27 @@ class ToolBridge(BridgeBase):
         self._ensure_config()
 
     def _ensure_config(self):
-        """确保配置文件存在"""
+        """确保用户配置目录存在（defaults/ 目录内的默认配置不做修改）"""
         os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-        if not os.path.exists(_CONFIG_PATH):
-            with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump({"enabled_tools": []}, f, ensure_ascii=False, indent=2)
+
+    def _get_read_path(self):
+        """读取路径：优先 user/ 目录，回退 defaults/ 目录"""
+        return resolve_config_path("builtin_tools_config.json")
 
     def _read_config(self):
-        """读取工具开关配置"""
+        """读取工具开关配置：优先 user/，回退 defaults/"""
         try:
-            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+            path = self._get_read_path()
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
         except:
-            return {"enabled_tools": []}
+            pass
+        return {"enabled_tools": []}
 
     def _write_config(self, config):
-        """写入工具开关配置"""
+        """写入工具开关配置到 user/ 目录（defaults 目录不被修改）"""
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
         with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
 

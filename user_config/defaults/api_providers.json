@@ -1,0 +1,32 @@
+{
+  "providers": {
+    "DeepSeek": {
+      "base_url": "https://api.deepseek.com",
+      "models": ["deepseek-chat", "deepseek-v4-flash", "deepseek-reasoner"]
+    },
+    "OpenAI": {
+      "base_url": "https://api.openai.com/v1",
+      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+    },
+    "硅基流动 (SiliconFlow)": {
+      "base_url": "https://api.siliconflow.cn/v1",
+      "models": ["deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-72B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"]
+    },
+    "阿里云 (DashScope)": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "models": ["qwen-plus", "qwen-max", "qwen-turbo", "qwen2.5-72b-instruct"]
+    },
+    "智谱 (ZhipuAI)": {
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "models": ["glm-4-plus", "glm-4-flash", "glm-4-air"]
+    },
+    "百度 (QianFan)": {
+      "base_url": "https://qianfan.baidubce.com/v2",
+      "models": ["ernie-4.0", "ernie-3.5-8k", "ernie-speed-128k"]
+    },
+    "自定义": {
+      "base_url": "",
+      "models": []
+    }
+  }
+}

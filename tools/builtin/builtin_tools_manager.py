@@ -6,8 +6,10 @@ import os
 import json
 import importlib
 
-_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CONFIG_PATH = os.path.join(_BASE, "user_config", "defaults", "builtin_tools_config.json")
+from config.user_config import USER_DIR, resolve_config_path
+
+# 用户配置写入目录：user_config/user/（默认配置在 defaults/ 下，只读不修改）
+_CONFIG_PATH = os.path.join(USER_DIR, "builtin_tools_config.json")
 
 
 class BuiltinManager:
@@ -24,13 +26,27 @@ class BuiltinManager:
     # 内部方法
     # ==========================================
 
+    def _get_read_path(self):
+        """读取路径：优先 user/ 目录，回退 defaults/ 目录"""
+        return resolve_config_path("builtin_tools_config.json")
+
     def _read_config(self):
+        """读取已启用工具列表：优先 user/，回退 defaults/（defaults 不被修改）"""
         try:
-            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-                return cfg.get("enabled_tools", [])
+            path = self._get_read_path()
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    return cfg.get("enabled_tools", [])
         except:
-            return []
+            pass
+        return []
+
+    def _write_config(self, enabled_tools: list):
+        """写入已启用工具列表到 user/ 目录（defaults 目录不被修改）"""
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"enabled_tools": enabled_tools}, f, ensure_ascii=False, indent=2)
 
     def _load_module(self, mod_name):
         try:
