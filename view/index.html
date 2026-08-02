@@ -25,6 +25,7 @@
     <link rel="stylesheet" href="css/plugins.css">
     <link rel="stylesheet" href="css/tools.css">
     <link rel="stylesheet" href="css/settings.css">
+    <link rel="stylesheet" href="css/chat_log.css">
     <link rel="stylesheet" href="css/toast.css">
     <link rel="stylesheet" href="css/responsive.css">
     <style>
@@ -87,117 +88,6 @@
     }
     .context-bar-fill.warning { background: var(--accent-warning); }
     .context-bar-fill.danger { background: var(--accent-danger); }
-    .status-log-btn {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 10px;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-sm);
-      color: var(--text-secondary);
-      cursor: pointer;
-      font-size: 12px;
-      font-family: var(--font-family);
-      transition: var(--transition);
-      position: relative;
-    }
-    .status-log-btn:hover {
-      background: var(--bg-hover);
-      color: var(--text-primary);
-      border-color: var(--accent-primary);
-    }
-    .status-log-btn i { font-size: 12px; }
-    .log-badge {
-      position: absolute; top: -5px; right: -5px;
-      min-width: 16px; height: 16px;
-      padding: 0 4px;
-      background: var(--accent-danger); color: #fff;
-      border-radius: 8px; font-size: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 600; line-height: 1;
-    }
-    /* === AI 通信日志悬浮窗样式 === */
-    /* 悬浮窗容器：非模态，可拖动、可缩放 */
-    .floating-log {
-      position: fixed; right: 24px; bottom: 100px;
-      width: 520px; height: 400px; min-width: 320px; min-height: 240px;
-      background: var(--bg-primary); border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-      display: flex; flex-direction: column; z-index: 2000;
-      /* 缩放由 JS 控制柄（.floating-log-resize）实现，不用 CSS resize */
-      overflow: hidden;
-      animation: floatLogIn 0.18s ease;
-    }
-    @keyframes floatLogIn { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-    /* 拖拽标题栏 */
-    .floating-log-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px; border-bottom: 1px solid var(--border-color); flex-shrink: 0;
-      cursor: move; user-select: none; background: var(--bg-secondary);
-      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    }
-    .floating-log-header h3 {
-      font-size: 14px; font-weight: 600; color: var(--text-primary);
-      display: flex; align-items: center; gap: 8px; margin: 0;
-    }
-    .floating-log-header h3 i { color: var(--accent-primary); }
-    .floating-log-actions { display: flex; align-items: center; gap: 4px; }
-    .floating-log-actions button {
-      width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-      background: none; border: none; color: var(--text-secondary);
-      cursor: pointer; border-radius: var(--radius-sm); font-size: 13px; transition: var(--transition);
-    }
-    .floating-log-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
-    /* 缩放/放大缩小控制柄 */
-    .floating-log-resize {
-      position: absolute; right: 0; bottom: 0;
-      width: 18px; height: 18px; cursor: nwse-resize;
-      background: linear-gradient(135deg, transparent 50%, var(--text-muted) 50%);
-      border-bottom-right-radius: var(--radius-lg);
-      opacity: 0.5; transition: opacity 0.2s;
-    }
-    .floating-log:hover .floating-log-resize { opacity: 0.9; }
-    .floating-log-resize:hover { opacity: 1 !important; }
-    .log-list {
-      flex: 1; overflow-y: auto; padding: 12px 16px; min-height: 120px;
-    }
-    .log-empty { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 13px; }
-    .log-entry {
-      background: var(--bg-secondary); border: 1px solid var(--border-color);
-      border-radius: var(--radius-md); margin-bottom: 10px; overflow: hidden;
-    }
-    .log-entry-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 12px; background: var(--bg-tertiary);
-      border-bottom: 1px solid var(--border-color); font-size: 12px;
-      color: var(--text-muted); cursor: pointer; transition: var(--transition);
-    }
-    .log-entry-header:hover { background: var(--bg-hover); }
-    .log-entry-header .log-time { font-size: 11px; color: var(--text-muted); }
-    .log-entry-header .log-model { font-weight: 500; color: var(--text-secondary); }
-    .log-entry-header .log-tokens {
-      color: var(--text-muted); font-size: 11px; display: flex; align-items: center; gap: 8px;
-    }
-    .log-entry-header .log-expand { font-size: 10px; color: var(--text-muted); transition: transform 0.2s ease; }
-    .log-entry-header .log-expand.expanded { transform: rotate(90deg); }
-    .log-entry-body { padding: 10px 12px; font-size: 12px; line-height: 1.6; }
-    .log-section { margin-bottom: 8px; }
-    .log-section:last-child { margin-bottom: 0; }
-    .log-section-label {
-      font-size: 11px; font-weight: 600; color: var(--text-muted);
-      margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;
-    }
-    .log-section-content {
-      background: var(--bg-primary); padding: 8px 10px; border-radius: var(--radius-sm);
-      border: 1px solid var(--border-color); font-family: 'Courier New', monospace;
-      font-size: 11px; color: var(--text-secondary);
-      white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto;
-    }
-    .log-section-content.request { border-left: 3px solid var(--accent-primary); }
-    .log-section-content.response { border-left: 3px solid var(--accent-success); }
-    .log-section-content.tool-call { border-left: 3px solid var(--accent-purple); }
-    .log-section-content.error { border-left: 3px solid var(--accent-danger); color: var(--accent-danger); }
     </style>
 </head>
 <body>
@@ -317,21 +207,6 @@
         </div>
     </div>
     <div class="toast" id="toast"><i class="fas fa-info-circle"></i><span id="toastMessage">消息</span></div>
-    <!-- AI 通信日志悬浮窗（非模态，可拖动、可缩放） -->
-    <div class="floating-log" id="logModal" style="display:none;">
-        <div class="floating-log-header" id="logModalHeader">
-            <h3><i class="fas fa-clipboard-list"></i> AI 通信日志</h3>
-            <div class="floating-log-actions">
-                <button onclick="clearAILog()" title="清空日志"><i class="fas fa-trash-alt"></i></button>
-                <button onclick="toggleLogSize()" title="放大/缩小"><i class="fas fa-expand" id="logSizeIcon"></i></button>
-                <button onclick="closeAILog()" title="关闭"><i class="fas fa-times"></i></button>
-            </div>
-        </div>
-        <div class="log-list" id="logList">
-            <div class="log-empty">暂无日志记录</div>
-        </div>
-        <div class="floating-log-resize" id="logResizeHandle" title="拖动缩放"></div>
-    </div>
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/tools.js"></script>
@@ -346,6 +221,7 @@
     <script src="js/models.js"></script>
     <script src="js/skills.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/chat_log.js"></script>
     <script src="js/chat.js"></script>
     <script src="js/app.js"></script>
 </body>

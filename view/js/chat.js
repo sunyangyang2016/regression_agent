@@ -53,10 +53,12 @@ window.chatApp = {
             badge.textContent = this.aiLogs.length;
             badge.style.display = 'inline-flex';
         }
-        // 如果日志面板已打开，追加到列表
-        var modal = document.getElementById('logModal');
-        if (modal && modal.style.display !== 'none') {
-            renderLogEntry(entry);
+        // 如果日志面板已打开，交由 chat_log.js 渲染（应用时间过滤）
+        if (typeof renderFilteredLogs === 'function') {
+            var modal = document.getElementById('logModal');
+            if (modal && modal.style.display !== 'none') {
+                renderFilteredLogs();
+            }
         }
     },
 
@@ -193,11 +195,12 @@ window.chatApp = {
             badge.textContent = '0';
             badge.style.display = 'none';
         }
-        // 若日志面板已打开，显示空状态
-        var modal = document.getElementById('logModal');
-        if (modal && modal.style.display !== 'none') {
-            var list = document.getElementById('logList');
-            if (list) list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
+        // 若日志面板已打开，显示空状态（由 chat_log.js 渲染）
+        if (typeof renderFilteredLogs === 'function') {
+            var modal = document.getElementById('logModal');
+            if (modal && modal.style.display !== 'none') {
+                renderFilteredLogs();
+            }
         }
     },
 
@@ -274,217 +277,7 @@ window.onAddToolCall = function(toolName, argsJson, result) {
 };
 
 // ============================================
-// AI 通信日志 - 全局函数
-// ============================================
-
-// 渲染单条日志条目
-// - type: "raw" → 底层 AI 通信原始完整 JSON（含缩进格式化，不截断）
-// - 其他 → 概要日志（单行 JSON，含 role + timestamp）
-function renderLogEntry(entry) {
-    var list = document.getElementById('logList');
-    if (!list) return;
-    var empty = list.querySelector('.log-empty');
-    if (empty) empty.remove();
-    
-    var div = document.createElement('div');
-    div.className = 'log-entry';
-    div.style.marginBottom = '10px';
-    
-    // ====== 底层 AI 通信原始 JSON 日志（type: "raw"）======
-    if (entry.type === 'raw') {
-        var isReq = entry.direction === 'request';
-        var directionLabel = isReq ? '⬆️ 请求 (Request)' : '⬇️ 响应 (Response)';
-        var accentColor = isReq ? 'var(--accent-primary)' : 'var(--accent-success)';
-        
-        var headerHtml = '<div class="log-entry-header" style="cursor:default;">' +
-            '<div style="display:flex;align-items:center;gap:8px;">' +
-            '<span style="font-weight:600;color:' + accentColor + ';">' + directionLabel + '</span>' +
-            '<span class="log-model">' + escapeHtml(entry.model || 'AI') + '</span></div>' +
-            '<span class="log-time">' + new Date((entry.timestamp || Date.now()) * 1000).toLocaleString() + '</span></div>';
-        
-        var rawJson = JSON.stringify(entry.data || {}, null, 2);
-        var bodyHtml = '<div class="log-entry-body">' +
-            '<pre style="margin:0;padding:10px 12px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:var(--bg-primary);border:1px solid var(--border-color);border-left:3px solid ' + accentColor + ';border-radius:var(--radius-sm);max-height:400px;overflow-y:auto;color:var(--text-secondary);">' +
-            escapeHtml(rawJson) + '</pre></div>';
-        
-        div.innerHTML = headerHtml + bodyHtml;
-        list.appendChild(div);
-        list.scrollTop = list.scrollHeight;
-        return;
-    }
-    
-    // ====== 概要日志（原有逻辑）======
-    var raw = {
-        role: entry.role || 'assistant',
-        time: new Date(entry.timestamp || Date.now()).toISOString(),
-        model: entry.model || 'AI',
-        user: entry.request || '',
-        ai: entry.response || '',
-        inTokens: entry.inputTokens || 0,
-        outTokens: entry.outputTokens || 0,
-        tools: entry.toolCalls || [],
-        error: entry.error || ''
-    };
-    
-    div.innerHTML = '<div class="log-entry-body" style="display:block;"><pre style="margin:0;padding:8px 12px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;">' +
-        escapeHtml(JSON.stringify(raw)) + '</pre></div>';
-    list.appendChild(div);
-    list.scrollTop = list.scrollHeight;
-}
-
-// 切换日志条目展开/收起
-function toggleLogBody(headerEl) {
-    var body = headerEl.nextElementSibling;
-    var expand = headerEl.querySelector('.log-expand');
-    if (body) {
-        body.style.display = body.style.display === 'none' ? 'block' : 'none';
-    }
-    if (expand) {
-        expand.classList.toggle('expanded');
-    }
-}
-
-// 打开/关闭日志悬浮窗（非模态）
-function toggleAILog(event) {
-    if (event) event.stopPropagation();
-    var modal = document.getElementById('logModal');
-    if (!modal) return;
-    if (modal.style.display === 'none') {
-        openAILogWindow();
-    } else {
-        modal.style.display = 'none';
-    }
-}
-
-// 打开日志悬浮窗并渲染内容
-function openAILogWindow() {
-    var modal = document.getElementById('logModal');
-    if (!modal) return;
-    modal.style.display = 'flex';
-    var list = document.getElementById('logList');
-    if (list) {
-        list.innerHTML = '';
-        var logs = window.chatApp.aiLogs;
-        if (logs.length === 0) {
-            list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
-        } else {
-            logs.forEach(function(entry) { renderLogEntry(entry); });
-            list.scrollTop = list.scrollHeight;
-        }
-    }
-}
-
-// 关闭日志悬浮窗
-function closeAILog(event) {
-    var modal = document.getElementById('logModal');
-    if (modal) modal.style.display = 'none';
-}
-
-// 放大/缩小悬浮窗（切换预设尺寸）
-function toggleLogSize() {
-    var modal = document.getElementById('logModal');
-    if (!modal) return;
-    var icon = document.getElementById('logSizeIcon');
-    var isLarge = modal.dataset.size === 'large';
-    if (isLarge) {
-        modal.style.width = '520px';
-        modal.style.height = '400px';
-        modal.dataset.size = 'default';
-        if (icon) icon.className = 'fas fa-expand';
-    } else {
-        // 放大：按 1080p（1920×1080）比例计算，取视口 80%×88%（约 1536×950）
-        modal.style.width = Math.min(Math.floor(window.innerWidth * 0.8), 1680) + 'px';
-        modal.style.height = Math.min(Math.floor(window.innerHeight * 0.88), 950) + 'px';
-        modal.dataset.size = 'large';
-        if (icon) icon.className = 'fas fa-compress';
-    }
-}
-
-// 拖动：按住标题栏拖动悬浮窗
-function setupLogDrag() {
-    var modal = document.getElementById('logModal');
-    var header = document.getElementById('logModalHeader');
-    if (!modal || !header) return;
-    var dragging = false, offsetX = 0, offsetY = 0;
-
-    header.addEventListener('mousedown', function(e) {
-        if (e.target.closest('button')) return;
-        dragging = true;
-        var rect = modal.getBoundingClientRect();
-        offsetX = e.clientX - rect.left;
-        offsetY = e.clientY - rect.top;
-        e.preventDefault();
-    });
-    document.addEventListener('mousemove', function(e) {
-        if (!dragging) return;
-        var x = Math.max(0, Math.min(e.clientX - offsetX, window.innerWidth - 60));
-        var y = Math.max(0, Math.min(e.clientY - offsetY, window.innerHeight - 40));
-        modal.style.left = x + 'px';
-        modal.style.top = y + 'px';
-        modal.style.right = 'auto';
-        modal.style.bottom = 'auto';
-    });
-    document.addEventListener('mouseup', function() { dragging = false; });
-}
-
-// 缩放：拖拽右下角控制柄调整尺寸
-function setupLogResize() {
-    var modal = document.getElementById('logModal');
-    var handle = document.getElementById('logResizeHandle');
-    if (!modal || !handle) return;
-    var resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
-
-    handle.addEventListener('mousedown', function(e) {
-        resizing = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        var rect = modal.getBoundingClientRect();
-        startW = rect.width;
-        startH = rect.height;
-        e.preventDefault();
-        e.stopPropagation();
-    });
-    document.addEventListener('mousemove', function(e) {
-        if (!resizing) return;
-        modal.style.width = Math.max(320, startW + (e.clientX - startX)) + 'px';
-        modal.style.height = Math.max(240, startH + (e.clientY - startY)) + 'px';
-        modal.style.resize = 'none';
-        modal.dataset.size = 'custom';
-    });
-    document.addEventListener('mouseup', function() { resizing = false; });
-}
-
-// 初始化悬浮窗事件（页面加载完成后调用）
-function initLogFloatWindow() {
-    setupLogDrag();
-    setupLogResize();
-}
-
-// 清空日志
-function clearAILog() {
-    window.chatApp.aiLogs = [];
-    var badge = document.getElementById('logBadge');
-    if (badge) {
-        badge.style.display = 'none';
-        badge.textContent = '0';
-    }
-    var list = document.getElementById('logList');
-    if (list) list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
-    showToast('日志已清空', 'success');
-}
-
-// HTML 转义工具函数
-function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&' + 'amp;')
-        .replace(/</g, '&' + 'lt;')
-        .replace(/>/g, '&' + 'gt;')
-        .replace(/"/g, '&' + 'quot;');
-}
-
-// ============================================
-// 后端回调 — Token/日志更新
+// 后端回调 — Token 更新
 // ============================================
 
 // 由后端推送 token 统计数据
@@ -494,45 +287,6 @@ window.onTokenUpdate = function(stats) {
         try { stats = JSON.parse(stats); } catch(e) { return; }
     }
     window.chatApp.updateStatusBar(stats);
-};
-
-// 由后端推送 AI 通信日志条目
-window.onLogEntry = function(entry) {
-    // entry: { timestamp, model, request, response, inputTokens, outputTokens, toolCalls, error }
-    if (typeof entry === 'string') {
-        try { entry = JSON.parse(entry); } catch(e) { return; }
-    }
-    window.chatApp.addLogEntry(entry);
-};
-
-// 由后端加载历史会话的 AI 通信日志（切换历史会话时调用）
-window.loadConversationLogs = function(logsJson) {
-    // logsJson: JSON 字符串，是日志数组的序列化
-    if (typeof logsJson === 'string') {
-        try { logsJson = JSON.parse(logsJson); } catch(e) { logsJson = []; }
-    }
-    var logs = Array.isArray(logsJson) ? logsJson : [];
-    window.chatApp.aiLogs = logs;
-    // 更新日志徽章
-    var badge = document.getElementById('logBadge');
-    if (badge) {
-        badge.textContent = logs.length;
-        badge.style.display = logs.length > 0 ? 'inline-flex' : 'none';
-    }
-    // 如果日志面板已打开，重新渲染
-    var modal = document.getElementById('logModal');
-    if (modal && modal.style.display !== 'none') {
-        var list = document.getElementById('logList');
-        if (list) {
-            list.innerHTML = '';
-            if (logs.length === 0) {
-                list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
-            } else {
-                logs.forEach(function(entry) { renderLogEntry(entry); });
-                list.scrollTop = list.scrollHeight;
-            }
-        }
-    }
 };
 
 function handleInputKeydown(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.chatApp.sendMessage();} }
@@ -549,10 +303,3 @@ function newChat() {
 }
 function quickAction(text) { window.chatApp.quickAction(text); }
 function autoResize(t){t.style.height='auto';t.style.height=Math.min(t.scrollHeight,150)+'px';}
-
-// 页面加载完成后初始化悬浮窗（拖动/缩放）
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initLogFloatWindow);
-} else {
-    initLogFloatWindow();
-}

@@ -34,13 +34,46 @@ class BridgeLoader:
         webview.loadFinished.connect(self._on_page_loaded)
         self._load_page(webview)
 
+    @staticmethod
+    def _extract_log_modal_html():
+        """从独立日志模块 view/html/chat_log.html 中提取 #logModal 悬浮窗结构
+
+        日志模块已独立为 html/chat_log.html / css/chat_log.css / js/chat_log.js。
+        由于应用是单页架构（setHtml 加载 index.html），在这里将
+        #logModal 结构合并注入到 index.html。
+        使用 <!-- START_LOG_MODAL --> 与 <!-- END_LOG_MODAL --> 标记定位。
+        """
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        chat_log_path = os.path.join(base, "view", "html", "chat_log.html")
+        try:
+            with open(chat_log_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            start_marker = "<!-- START_LOG_MODAL -->"
+            end_marker = "<!-- END_LOG_MODAL -->"
+            start_idx = content.find(start_marker)
+            end_idx = content.find(end_marker)
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                return content[start_idx:end_idx + len(end_marker)].strip()
+        except Exception as e:
+            print(f"{LOG} ⚠️ 读取 view/html/chat_log.html 失败: {e}")
+        return None
+
     def _load_page(self, webview):
-        """读取自包含的 index.html 并通过 setHtml 注入"""
+        """读取自包含的 index.html（合并日志悬浮窗）并通过 setHtml 注入"""
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         html_path = os.path.join(base, "view", "index.html")
         
         with open(html_path, "r", encoding="utf-8") as f:
             html = f.read()
+        
+        # 合并日志悬浮窗结构：从独立日志模块 chat_log.html 提取 #logModal 注入到 index.html
+        if "id=\"logModal\"" not in html:
+            modal_html = self._extract_log_modal_html()
+            if modal_html:
+                html = html.replace("</body>", modal_html + "\n</body>")
+                print(f"{LOG} 🪟 已注入日志悬浮窗 (#logModal) 从 chat_log.html")
+            else:
+                print(f"{LOG} ⚠️ 未能注入日志悬浮窗（chat_log.html 提取失败）")
         
         print(f"{LOG} 直接加载 index.html ({len(html)} chars)")
         

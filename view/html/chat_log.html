@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 通信日志</title>
+    <link rel="stylesheet" href="../css/variables.css">
+    <link rel="stylesheet" href="../css/chat_log.css">
+</head>
+<body>
+    <!-- START_LOG_MODAL -->
+    <!-- AI 通信日志悬浮窗（非模态，可拖动、可缩放） -->
+    <div class="floating-log" id="logModal" style="display:none;">
+        <div class="floating-log-header" id="logModalHeader">
+            <h3><i class="fas fa-clipboard-list"></i> AI 通信日志</h3>
+            <div class="floating-log-actions">
+                <button onclick="clearAILog()" title="清空日志"><i class="fas fa-trash-alt"></i></button>
+                <button onclick="toggleLogSize()" title="放大/缩小"><i class="fas fa-expand" id="logSizeIcon"></i></button>
+                <button onclick="closeAILog()" title="关闭"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <!-- 时间戳过滤工具栏（step=1 允许精确到时分秒） -->
+        <div class="log-filter-bar">
+            <label>起始 <input type="datetime-local" id="logFilterStart" step="1"></label>
+            <label>结束 <input type="datetime-local" id="logFilterEnd" step="1"></label>
+            <button class="btn-filter" onclick="filterLogs()"><i class="fas fa-filter"></i> 过滤</button>
+            <button onclick="clearLogFilter()"><i class="fas fa-times"></i> 清除</button>
+            <span class="log-filter-count" id="logFilterCount"></span>
+        </div>
+        <div class="log-list" id="logList">
+            <div class="log-empty">暂无日志记录</div>
+        </div>
+        <div class="floating-log-resize" id="logResizeHandle" title="拖动缩放"></div>
+    </div>
+    <!-- END_LOG_MODAL -->
+    <script>
+    // 独立调试模式：没有主页面时，将悬浮窗显示出来便于预览
+    if (document.getElementById('logModal') && typeof window.chatApp === 'undefined') {
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('logModal').style.display = 'flex';
+            if (typeof initLogFloatWindow === 'function') initLogFloatWindow();
+        });
+    }
+    </script>
+</body>
+</html>
