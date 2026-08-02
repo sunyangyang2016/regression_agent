@@ -3,41 +3,53 @@
         {
             "id": "deepseek",
             "name": "deepseek-v4-flash",
-            "provider": "deepseek",
+            "provider": "DeepSeek",
             "model": "deepseek-v4-flash",
             "apiKey": "",
-            "baseUrl": "https://api.deepseek.com/v1",
+            "baseUrl": "https://api.deepseek.com",
             "temperature": 0.7,
             "maxTokens": 2000,
+            "pricePerMillionHitTokens": 0.02,
+            "pricePerMillionMissTokens": 1.0,
+            "pricePerMillionOutputTokens": 2.0,
             "active": true,
             "online": true,
-            "isDefault": true
+            "isDefault": true,
+            "maxContext": 1000000
         },
         {
-            "id": "claude",
+            "id": "openai",
+            "name": "gpt-4o",
+            "provider": "OpenAI",
+            "model": "gpt-4o",
+            "apiKey": "",
+            "baseUrl": "https://api.openai.com/v1",
+            "temperature": 0.7,
+            "maxTokens": 2000,
+            "pricePerMillionHitTokens": 1.25,
+            "pricePerMillionMissTokens": 2.5,
+            "pricePerMillionOutputTokens": 10.0,
+            "active": false,
+            "online": false,
+            "isDefault": false,
+            "maxContext": 65536
+        },
+        {
+            "id": "custom-claude",
             "name": "Claude 3",
-            "provider": "anthropic",
+            "provider": "自定义",
             "model": "Claude 3",
             "apiKey": "",
             "baseUrl": "https://api.anthropic.com/v1",
             "temperature": 0.7,
             "maxTokens": 2000,
+            "pricePerMillionHitTokens": 0.5,
+            "pricePerMillionMissTokens": 3.0,
+            "pricePerMillionOutputTokens": 15.0,
             "active": false,
             "online": false,
-            "isDefault": false
-        },
-        {
-            "id": "gpt4",
-            "name": "GPT-4",
-            "provider": "openai",
-            "model": "gpt-4",
-            "apiKey": "",
-            "baseUrl": "https://api.openai.com/v1",
-            "temperature": 0.7,
-            "maxTokens": 2000,
-            "active": false,
-            "online": false,
-            "isDefault": false
+            "isDefault": false,
+            "maxContext": 65536
         }
     ]
 }

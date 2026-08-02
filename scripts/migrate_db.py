@@ -14,6 +14,7 @@
     v1.0.1alpha 及以前（旧版）: schema_version = 0（无版本标记）
     v1.0.2alpha（新数据库存储）: schema_version = 1
     v1.0.3alpha（会话日志文件持久化）: schema_version = 2
+    v1.0.4alpha（命中/未命中/输出 token 分栏统计）: schema_version = 3
 """
 import json
 import os
@@ -27,7 +28,7 @@ AGENT_DB = os.path.join(DB_DIR, "agent.db")
 LEGACY_MCP_DB = os.path.join(DB_DIR, "mcp.db")
 
 # 当前数据库 schema 版本（与软件版本对应）
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # 迁移注册表: {目标版本: (描述, 迁移函数)}
 MIGRATIONS = {}
@@ -135,6 +136,31 @@ def migrate_v1(conn: sqlite3.Connection):
         print("  [迁移 v1] 无旧版 mcp.db 数据需要迁移（或已迁移）")
 
     conn.execute(f"PRAGMA user_version = 1")
+
+
+@register_migration(3, "为 history_sessions_index 表添加 hit/miss/output token 计数列（命中/未命中/输出 token 分栏统计）")
+def migrate_v3(conn: sqlite3.Connection):
+    """schema v3: 为会话索引表添加 3 个 token 分类计数列
+
+    - hit_token_count: 累计命中缓存输入 token
+    - miss_token_count: 累计未命中缓存输入 token
+    - output_token_count: 累计输出 token
+
+    现有 token_count 保留为总计（= hit + miss + output），兼容旧数据。
+    """
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(history_sessions_index)").fetchall()]
+    new_columns = {
+        "hit_token_count": "ALTER TABLE history_sessions_index ADD COLUMN hit_token_count INTEGER DEFAULT 0",
+        "miss_token_count": "ALTER TABLE history_sessions_index ADD COLUMN miss_token_count INTEGER DEFAULT 0",
+        "output_token_count": "ALTER TABLE history_sessions_index ADD COLUMN output_token_count INTEGER DEFAULT 0",
+    }
+    for col, sql in new_columns.items():
+        if col not in columns:
+            conn.execute(sql)
+            print(f"  [迁移 v3] history_sessions_index 已添加 {col} 列")
+        else:
+            print(f"  [迁移 v3] history_sessions_index 已存在 {col} 列，跳过")
+    conn.execute("PRAGMA user_version = 3")
 
 
 def _migrate_legacy_mcp_market(conn: sqlite3.Connection) -> int:

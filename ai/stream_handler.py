@@ -35,6 +35,75 @@ class StreamHandler:
         )
         return self.client
 
+    def test_connection(self, timeout: float = 15.0) -> tuple:
+        """真实连通性测试：发起一次最小 API 请求，验证配置是否可用
+
+        与 create_client 不同：
+        - create_client 仅实例化 AsyncOpenAI 对象，不发真实网络请求
+        - 本方法实际调用 chat.completions 最小请求，以确认 API Key / model / base_url 真实可用
+
+        Returns:
+            (True, "连接成功") 或 (False, 具体失败原因)
+        """
+        if not self.config.api_key:
+            return False, "请配置 API Key"
+        if not self.config.base_url:
+            return False, "请配置 Base URL"
+        try:
+            import asyncio as _asyncio
+            loop = _asyncio.new_event_loop()
+            _asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(self._async_test_connection(timeout))
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            return False, f"连通性测试失败: {e}"
+
+    async def _async_test_connection(self, timeout: float = 15.0) -> tuple:
+        """异步真实连通性测试（带分类错误信息）"""
+        try:
+            client = AsyncOpenAI(
+                base_url=self.config.base_url,
+                api_key=self.config.api_key,
+                timeout=timeout,
+                max_retries=0,
+            )
+            resp = await client.chat.completions.create(
+                model=self.config.model,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=1,
+                stream=False,
+            )
+            await client.close()
+            if resp and resp.choices:
+                return True, "连接成功"
+            return False, "连接失败：未返回有效响应"
+        except Exception as e:
+            try:
+                err_body = str(e)
+                status = getattr(e, "status_code", None)
+                if status == 401 or "authentication" in err_body.lower() or "invalid api key" in err_body.lower():
+                    return False, "API Key 无效或无权限 (401)"
+                if status == 403 or "permission" in err_body.lower():
+                    return False, "API Key 无权限 (403)"
+                if status == 404:
+                    return False, "模型不存在或接口路径错误 (404)"
+                if status == 400:
+                    return False, f"请求参数错误 (400): {err_body[:200]}"
+                if status == 429:
+                    return False, "请求过于频繁或被限流 (429)"
+                if "timeout" in err_body.lower() or "timed out" in err_body.lower():
+                    return False, f"连接超时 ({timeout}s)"
+                if hasattr(e, "code") and e.code == "connection_error":
+                    return False, "无法连接到服务器，请检查 Base URL"
+            except Exception:
+                pass
+            return False, f"连接失败: {str(e)[:300]}"
+
     def _emit_raw_log(self, direction: str, payload: dict):
         """发出底层 AI 通信原始 JSON 日志（request / response）
 
@@ -158,10 +227,19 @@ class StreamHandler:
                     "tool_calls": list(tool_calls_buffer.values()) if tool_calls_buffer else None,
                 }
                 if usage_info:
+                    # 提取缓存命中 token（cached_tokens），未提供时记为 0
+                    cached_tokens = 0
+                    try:
+                        details = getattr(usage_info, "prompt_tokens_details", None)
+                        if details is not None:
+                            cached_tokens = getattr(details, "cached_tokens", 0) or 0
+                    except Exception:
+                        cached_tokens = 0
                     response_payload["usage"] = {
                         "prompt_tokens": usage_info.prompt_tokens,
                         "completion_tokens": usage_info.completion_tokens,
-                        "total_tokens": usage_info.total_tokens
+                        "total_tokens": usage_info.total_tokens,
+                        "cached_tokens": cached_tokens,
                     }
                 self._emit_raw_log("response", response_payload)
                 
@@ -175,11 +253,19 @@ class StreamHandler:
                     # 将 usage 信息附加到 complete 事件
                     complete_data = collected_content
                     if usage_info:
+                        cached_tokens = 0
+                        try:
+                            details = getattr(usage_info, "prompt_tokens_details", None)
+                            if details is not None:
+                                cached_tokens = getattr(details, "cached_tokens", 0) or 0
+                        except Exception:
+                            cached_tokens = 0
                         extra = {
                             "_usage": {
                                 "prompt_tokens": usage_info.prompt_tokens,
                                 "completion_tokens": usage_info.completion_tokens,
-                                "total_tokens": usage_info.total_tokens
+                                "total_tokens": usage_info.total_tokens,
+                                "cached_tokens": cached_tokens,
                             }
                         }
                         complete_data = json.dumps({"content": collected_content, **extra})

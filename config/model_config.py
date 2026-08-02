@@ -73,6 +73,22 @@ class ModelConfig:
                 "model": model.get("model", self._get_fallback_value("model")),
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "max_context": model.get(
+                    "maxContext",
+                    self._get_fallback_value("maxContext", 65536),
+                ),
+                "price_per_million_hit_tokens": model.get(
+                    "pricePerMillionHitTokens",
+                    self._get_fallback_value("pricePerMillionHitTokens", 0.07),
+                ),
+                "price_per_million_miss_tokens": model.get(
+                    "pricePerMillionMissTokens",
+                    self._get_fallback_value("pricePerMillionMissTokens", 1.0),
+                ),
+                "price_per_million_output_tokens": model.get(
+                    "pricePerMillionOutputTokens",
+                    self._get_fallback_value("pricePerMillionOutputTokens", 2.0),
+                ),
             },
             "chat": {
                 "temperature": temperature,
@@ -109,6 +125,19 @@ class ModelConfig:
                     "baseUrl": api.get("base_url", target.get("baseUrl")),
                     "temperature": api.get("temperature", target.get("temperature", self._get_fallback_value("temperature", 0.7))),
                     "maxTokens": api.get("max_tokens", target.get("maxTokens", self._get_fallback_value("maxTokens", 2000))),
+                    "maxContext": api.get("max_context", target.get("maxContext", self._get_fallback_value("maxContext", 65536))),
+                    "pricePerMillionHitTokens": api.get(
+                        "price_per_million_hit_tokens",
+                        target.get("pricePerMillionHitTokens", self._get_fallback_value("pricePerMillionHitTokens", 0.07)),
+                    ),
+                    "pricePerMillionMissTokens": api.get(
+                        "price_per_million_miss_tokens",
+                        target.get("pricePerMillionMissTokens", self._get_fallback_value("pricePerMillionMissTokens", 1.0)),
+                    ),
+                    "pricePerMillionOutputTokens": api.get(
+                        "price_per_million_output_tokens",
+                        target.get("pricePerMillionOutputTokens", self._get_fallback_value("pricePerMillionOutputTokens", 2.0)),
+                    ),
                 })
             data["models"] = models
             # 写入 user/ 目录（defaults 目录不被修改）
@@ -142,17 +171,44 @@ class ModelConfig:
         """从 defaults/api_providers.json 读取 API 供应商预设表（只读，不硬编码）"""
         return load_default_api_providers()
 
+    def _find_provider(self, provider_name):
+        """查找供应商预设（精确优先，否则忽略大小写；兜底「自定义」）"""
+        providers = self._get_api_providers()
+        if not provider_name:
+            return providers.get("自定义", {})
+        if provider_name in providers:
+            return providers[provider_name]
+        lname = str(provider_name).lower()
+        for key, val in providers.items():
+            if str(key).lower() == lname:
+                return val
+        return providers.get("自定义", {})
+
     def get_provider_info(self, provider_name=None):
-        """获取供应商信息：从 defaults/api_providers.json 读取"""
+        """获取供应商信息：从 defaults/api_providers.json 读取（大小写不敏感）"""
         if provider_name is None:
             provider_name = self.get("api", "provider")
-        providers = self._get_api_providers()
-        return providers.get(provider_name, providers.get("自定义", {}))
+        return self._find_provider(provider_name)
 
     def get_provider_models(self, provider_name=None):
-        """获取供应商的模型列表"""
+        """获取供应商的模型列表（api_providers.json 中 models 为对象映射，键为模型名）"""
         info = self.get_provider_info(provider_name)
-        return info.get("models", [])
+        models = info.get("models", {})
+        return list(models.keys()) if isinstance(models, dict) else []
+
+    def get_provider_model_pricing(self, provider_name=None, model_name=None):
+        """获取供应商指定模型的三个 token 价格（命中/未命中/输出，USD/百万）
+        数据源：api_providers.json 中 models 对象映射；缺失返回 None"""
+        info = self.get_provider_info(provider_name)
+        models = info.get("models", {})
+        if isinstance(models, dict) and model_name:
+            return models.get(model_name)
+        return None
+
+    def get_provider_max_context(self, provider_name=None):
+        """获取供应商最大上下文（api_providers.json 中 max_context，缺失返回 None）"""
+        info = self.get_provider_info(provider_name)
+        return info.get("max_context")
 
     def get_provider_base_url(self, provider_name=None):
         """获取供应商的 base_url"""
@@ -163,9 +219,12 @@ class ModelConfig:
         """应用供应商预设（更新 base_url，不清除已有 key）"""
         info = self.get_provider_info(provider_name)
         self.set("api", "provider", provider_name)
-        if info["base_url"]:
+        if info.get("base_url"):
             self.set("api", "base_url", info["base_url"])
-        if info["models"]:
+        if info.get("max_context"):
+            self.set("api", "max_context", info["max_context"])
+        models = self.get_provider_models(provider_name)
+        if models:
             current_model = self.get("api", "model")
-            if current_model not in info["models"]:
-                self.set("api", "model", info["models"][0])
+            if current_model not in models:
+                self.set("api", "model", models[0])

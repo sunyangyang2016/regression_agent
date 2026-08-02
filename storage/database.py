@@ -30,15 +30,18 @@ class Database(BaseDatabase):
     TABLE_DDL = [
         """
         CREATE TABLE IF NOT EXISTS history_sessions_index (
-            id            TEXT PRIMARY KEY,
-            title         TEXT,
-            model         TEXT,
-            message_count INTEGER DEFAULT 0,
-            token_count   INTEGER DEFAULT 0,
-            status        TEXT DEFAULT 'active',
-            created_at    TEXT,
-            updated_at    TEXT,
-            log_file      TEXT
+            id                TEXT PRIMARY KEY,
+            title             TEXT,
+            model             TEXT,
+            message_count     INTEGER DEFAULT 0,
+            token_count       INTEGER DEFAULT 0,
+            hit_token_count   INTEGER DEFAULT 0,
+            miss_token_count  INTEGER DEFAULT 0,
+            output_token_count INTEGER DEFAULT 0,
+            status            TEXT DEFAULT 'active',
+            created_at        TEXT,
+            updated_at        TEXT,
+            log_file          TEXT
         )
         """,
         """

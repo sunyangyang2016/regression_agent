@@ -4,7 +4,7 @@ ModelBridge - 模型配置桥接
 """
 import json
 import os
-from PyQt5.QtCore import pyqtSlot
+from PyQt5.QtCore import pyqtSlot, pyqtSignal
 
 from .base import BridgeBase
 from config.user_config import USER_DIR, resolve_config_path, load_agent_info
@@ -12,6 +12,14 @@ from config.user_config import USER_DIR, resolve_config_path, load_agent_info
 
 class ModelBridge(BridgeBase):
     """模型配置桥接 — 模型/系统配置管理"""
+
+    # 连通性测试结果信号（跨线程 emit 安全，自动切回 GUI 线程）
+    test_result = pyqtSignal(bool, str)
+
+    def __init__(self, app_controller):
+        super().__init__(app_controller)
+        self.test_result.connect(self._emit_test_result)
+        print("[ModelBridge] ✅ test_result 信号已就绪")
 
     def _get_model_config(self):
         if self.app_controller and hasattr(self.app_controller, 'model_config'):
@@ -22,21 +30,41 @@ class ModelBridge(BridgeBase):
         # 用户配置写入目录：user_config/user/（默认配置在 defaults/ 下，只读不修改）
         return USER_DIR
 
+    def _get_fallback(self, key, default=""):
+        """从 defaults/models.json 激活模型读取兜底值（不再硬编码提供商/模型）"""
+        try:
+            from config.user_config import load_default_active_model
+            m = load_default_active_model()
+            if m and m.get(key) is not None:
+                return m.get(key)
+        except Exception:
+            pass
+        return default
+
     @pyqtSlot(str)
     def saveConfig(self, config_json):
-        """保存模型配置到后端 ConfigManager 并持久化到 config.yaml"""
+        """保存模型配置到后端 ConfigManager 内存（供 AI 客户端重连使用）
+
+        注意：这里不调用 mgr.save_config() 写回 models.json。
+        原因：save_config() 会按"active=true"找到激活模型并用当前配置覆盖它，
+        在多模型场景下会把 config 覆盖到错误的模型记录（如添加智谱模型时
+        覆盖了 deepseek）。模型列表的持久化完全由 saveModels() 负责。
+        """
         try:
             cfg = json.loads(config_json)
             mgr = self._get_model_config()
             if mgr:
-                mgr.set("api", "provider", cfg.get("provider", "deepseek"))
-                mgr.set("api", "model", cfg.get("model", "deepseek-chat"))
-                mgr.set("chat", "temperature", cfg.get("temperature", 0.7))
-                mgr.set("chat", "max_tokens", cfg.get("maxTokens", 2000))
+                mgr.set("api", "provider", cfg.get("provider") or self._get_fallback("provider", "DeepSeek"))
+                mgr.set("api", "model", cfg.get("model") or self._get_fallback("model", "deepseek-v4-flash"))
+                mgr.set("chat", "temperature", cfg.get("temperature", self._get_fallback("temperature", 0.7)))
+                mgr.set("chat", "max_tokens", cfg.get("maxTokens", self._get_fallback("maxTokens", 2000)))
                 mgr.set("api", "api_key", cfg.get("apiKey", ""))
-                mgr.set("api", "base_url", cfg.get("baseUrl", ""))
-                mgr.save_config()
-                print(f"[ModelBridge] ✅ 配置已保存: {cfg.get('provider')}/{cfg.get('model')}")
+                mgr.set("api", "base_url", cfg.get("baseUrl", self._get_fallback("baseUrl", "")))
+                mgr.set("api", "max_context", cfg.get("maxContext", self._get_fallback("maxContext", 65536)))
+                mgr.set("api", "price_per_million_hit_tokens", cfg.get("pricePerMillionHitTokens", self._get_fallback("pricePerMillionHitTokens", 0.07)))
+                mgr.set("api", "price_per_million_miss_tokens", cfg.get("pricePerMillionMissTokens", self._get_fallback("pricePerMillionMissTokens", 1.0)))
+                mgr.set("api", "price_per_million_output_tokens", cfg.get("pricePerMillionOutputTokens", self._get_fallback("pricePerMillionOutputTokens", 2.0)))
+                print(f"[ModelBridge] ✅ 运行时配置已更新: {cfg.get('provider')}/{cfg.get('model')}")
                 return True
         except Exception as e:
             print(f"[ModelBridge] ❌ 保存失败: {e}")
@@ -48,16 +76,20 @@ class ModelBridge(BridgeBase):
         mgr = self._get_model_config()
         if not mgr:
             return json.dumps({
-                "provider": "deepseek",
-                "model": "deepseek-chat",
-                "temperature": 0.7,
-                "maxTokens": 2000
+                "provider": self._get_fallback("provider", "DeepSeek"),
+                "model": self._get_fallback("model", "deepseek-v4-flash"),
+                "temperature": self._get_fallback("temperature", 0.7),
+                "maxTokens": self._get_fallback("maxTokens", 2000)
             })
         cfg = {
-            "provider": mgr.get("api", "provider") or "deepseek",
-            "model": mgr.get("api", "model") or "deepseek-chat",
-            "temperature": mgr.get("chat", "temperature") or 0.7,
-            "maxTokens": mgr.get("chat", "max_tokens") or 2000
+            "provider": mgr.get("api", "provider") or self._get_fallback("provider", "DeepSeek"),
+            "model": mgr.get("api", "model") or self._get_fallback("model", "deepseek-v4-flash"),
+            "temperature": mgr.get("chat", "temperature") or self._get_fallback("temperature", 0.7),
+            "maxTokens": mgr.get("chat", "max_tokens") or self._get_fallback("maxTokens", 2000),
+            "maxContext": mgr.get("api", "max_context") or self._get_fallback("maxContext", 65536),
+            "pricePerMillionHitTokens": mgr.get("api", "price_per_million_hit_tokens") or self._get_fallback("pricePerMillionHitTokens", 0.07),
+            "pricePerMillionMissTokens": mgr.get("api", "price_per_million_miss_tokens") or self._get_fallback("pricePerMillionMissTokens", 1.0),
+            "pricePerMillionOutputTokens": mgr.get("api", "price_per_million_output_tokens") or self._get_fallback("pricePerMillionOutputTokens", 2.0)
         }
         return json.dumps(cfg)
 
@@ -103,8 +135,8 @@ class ModelBridge(BridgeBase):
                 return
             ai_model = self.app_controller.ai_controller
 
-            if hasattr(self.app_controller, 'main_bridge') and self.app_controller.main_bridge:
-                bridge = self.app_controller.main_bridge
+            if hasattr(self.app_controller, '_bridge') and self.app_controller._bridge:
+                bridge = self.app_controller._bridge
                 bridge.execute_js("showToast('🔄 切换模型配置...', 'info');")
                 bridge.execute_js("""
                     if(window.chatApp){
@@ -123,8 +155,8 @@ class ModelBridge(BridgeBase):
             success, msg = ai_model.reconnect()
             print(f"[ModelBridge] 🔄 AI 重连: {'✅ ' + msg if success else '❌ ' + msg}")
 
-            if hasattr(self.app_controller, 'main_bridge') and self.app_controller.main_bridge:
-                bridge = self.app_controller.main_bridge
+            if hasattr(self.app_controller, '_bridge') and self.app_controller._bridge:
+                bridge = self.app_controller._bridge
                 if success:
                     bridge.execute_js("showToast('✅ AI 客户端已连接', 'success');")
                 else:
@@ -136,6 +168,69 @@ class ModelBridge(BridgeBase):
     def reconnectAI(self):
         """前端手动触发的 AI 重连"""
         self._reconnect_ai()
+
+    @pyqtSlot(str)
+    def testConnection(self, config_json):
+        """真实连通性测试：后台线程发起最小 API 请求验证配置，结果回调前端 JS
+
+        与 reconnectAI 不同：
+        - reconnectAI 仅重建客户端对象（不发真实请求），Key 错误也会"成功"
+        - testConnection 实际调用 chat.completions 最小请求，确认 Key 真实有效
+
+        前端通过 window.onModelTestResult(success, msg) 接收结果
+        """
+        import threading
+        try:
+            cfg = json.loads(config_json)
+        except Exception:
+            cfg = {}
+        print(f"[ModelBridge][测试] ① 收到测试请求: provider={cfg.get('provider')} model={cfg.get('model')} "
+              f"key={'***' if cfg.get('apiKey') else '空'} baseUrl={cfg.get('baseUrl')}")
+
+        def _run():
+            try:
+                from ai.protocol import ModelConfig as MC
+                from ai.stream_handler import StreamHandler
+                mcfg = MC(
+                    base_url=cfg.get("baseUrl", ""),
+                    api_key=cfg.get("apiKey", ""),
+                    model=cfg.get("model", ""),
+                    temperature=0.7,
+                    max_tokens=16,
+                    stream=False,
+                )
+                sh = StreamHandler(mcfg, None, None)
+                print("[ModelBridge][测试] ② 后台线程开始真实请求...")
+                success, msg = sh.test_connection(timeout=15.0)
+                print(f"[ModelBridge][测试] ③ 后台测试完成: success={success} msg={msg}")
+            except Exception as e:
+                success, msg = False, f"连接失败: {e}"
+                print(f"[ModelBridge][测试] ⚠️ 后台测试异常: {e}")
+            try:
+                # 用信号跨线程回传（线程安全，自动切回 GUI 线程）
+                self.test_result.emit(success, msg)
+                print(f"[ModelBridge][测试] ④ 已 emit test_result 信号: success={success} msg={msg}")
+            except Exception as e:
+                print(f"[ModelBridge][测试] ❌ emit 信号失败: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _emit_test_result(self, success, msg):
+        """把连通测试结果回传给前端 JS（由 test_result 信号触发，GUI 线程）"""
+        try:
+            # 注意：AppController 保存的是 self._bridge（ChatBridge 实例），不是 main_bridge 属性
+            has_main = bool(self.app_controller and hasattr(self.app_controller, '_bridge') and self.app_controller._bridge)
+            print(f"[ModelBridge][测试] ⑤ 回调前端: _bridge={'有' if has_main else '无'} success={success} msg={msg}")
+            if has_main:
+                bridge = self.app_controller._bridge
+                js = "window.onModelTestResult && window.onModelTestResult(%s, %s);" % (
+                    "true" if success else "false",
+                    json.dumps(msg, ensure_ascii=False),
+                )
+                bridge.execute_js(js)
+                print(f"[ModelBridge][测试] ⑥ JS 已注入: {js[:80]}...")
+        except Exception as e:
+            print(f"[ModelBridge][测试] ❌ 测试结果回调失败: {e}")
 
     @pyqtSlot(str, result=str)
     def getUserConfig(self, filename):

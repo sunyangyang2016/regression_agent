@@ -79,6 +79,15 @@ function loadAllData() {
                             appState.currentModel=appState.models.find(function(m){return m.active;})||appState.models[0];
                             console.log('[Models] 已加载',modelsStr.length,'个模型');
                             updateModelUI();renderModelList();
+                            // 启动后自动对激活模型发起真实连通性测试（解决"日志已连接但 UI 离线"）
+                            setTimeout(function(){
+                                if(typeof _testModelConnection==='function' && appState && appState.currentModel){
+                                    var cm=appState.currentModel;
+                                    if(cm.apiKey){
+                                        _testModelConnection(cm.provider, cm.model, cm.apiKey, cm.baseUrl||'', cm.id, true);
+                                    }
+                                }
+                            }, 800);
                             loadConfig();
                         }
                     }catch(e2){console.warn('[Models] 解析失败:',e2);}

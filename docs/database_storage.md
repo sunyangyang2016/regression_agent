@@ -22,6 +22,8 @@
 |---------|-------------------|------|
 | v1.0.1alpha 及以前 | 0（无版本标记） | 旧版（含 mcp.db） |
 | v1.0.2alpha、v0.2.0 | 1 | 新版统一数据库（本方案） |
+| v1.0.3alpha | 2 | 会话日志文件持久化（log_file 列） |
+| v1.0.4alpha | 3 | 命中/未命中/输出 token 分栏统计 |
 
 - **建表 = 启动时自动**：由 `storage/database.py` 的 `ensure_tables()` 执行（`CREATE TABLE IF NOT EXISTS` 幂等）
 - **数据迁移 = 手动脚本**：由 `scripts/migrate_db.py` 根据 `PRAGMA user_version` 执行
@@ -66,14 +68,17 @@ storage/
 **建表 SQL：**
 ```sql
 CREATE TABLE IF NOT EXISTS history_sessions_index (
-    id            TEXT PRIMARY KEY,                 -- 会话 ID（UUID）
-    title         TEXT,                             -- 会话标题
-    model         TEXT,                             -- 使用的 AI 模型
-    message_count INTEGER DEFAULT 0,                -- 消息总数
-    token_count   INTEGER DEFAULT 0,                -- Token 累计数
-    status        TEXT DEFAULT 'active',            -- 状态：active / archived / deleted
-    created_at    TEXT,                             -- 创建时间（ISO 8601）
-    updated_at    TEXT                              -- 更新时间（ISO 8601）
+    id                TEXT PRIMARY KEY,             -- 会话 ID（UUID）
+    title             TEXT,                         -- 会话标题
+    model             TEXT,                         -- 使用的 AI 模型
+    message_count     INTEGER DEFAULT 0,            -- 消息总数
+    token_count       INTEGER DEFAULT 0,            -- Token 累计总数（= hit + miss + output）
+    hit_token_count   INTEGER DEFAULT 0,            -- 命中缓存输入 token 累计
+    miss_token_count  INTEGER DEFAULT 0,            -- 未命中缓存输入 token 累计
+    output_token_count INTEGER DEFAULT 0,           -- 输出 token 累计
+    status            TEXT DEFAULT 'active',        -- 状态：active / archived / deleted
+    created_at        TEXT,                         -- 创建时间（ISO 8601）
+    updated_at        TEXT                          -- 更新时间（ISO 8601）
 );
 ```
 
@@ -85,7 +90,10 @@ CREATE TABLE IF NOT EXISTS history_sessions_index (
 | `title` | TEXT | - | ✅ | - | 会话标题，如"新对话"或首条消息摘要 |
 | `model` | TEXT | - | ✅ | - | AI 模型名称（如 `deepseek-chat`） |
 | `message_count` | INTEGER | - | ✅ | 0 | 该会话下的消息条数 |
-| `token_count` | INTEGER | - | ✅ | 0 | 该会话累计消耗的 Token 数 |
+| `token_count` | INTEGER | - | ✅ | 0 | 该会话累计消耗 Token 总数（= hit + miss + output） |
+| `hit_token_count` | INTEGER | - | ✅ | 0 | 命中缓存输入 token 累计（`cached_tokens`） |
+| `miss_token_count` | INTEGER | - | ✅ | 0 | 未命中缓存输入 token 累计（`prompt_tokens − cached_tokens`） |
+| `output_token_count` | INTEGER | - | ✅ | 0 | 输出 token 累计（`completion_tokens`） |
 | `status` | TEXT | - | ✅ | 'active' | 会话状态：`active`/`archived`/`deleted` |
 | `created_at` | TEXT | - | ✅ | - | 创建时间 |
 | `updated_at` | TEXT | - | ✅ | - | 最后更新时间 |

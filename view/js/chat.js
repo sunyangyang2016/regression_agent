@@ -10,10 +10,12 @@ window.chatApp = {
     tokenStats: {
         totalTokens: 0,
         inputTokens: 0,
+        hitTokens: 0,
+        missTokens: 0,
         outputTokens: 0,
         contextPercent: 0,
         cost: 0,
-        maxContext: 8192
+        maxContext: 65536
     },
 
     // AI 通信日志
@@ -24,6 +26,8 @@ window.chatApp = {
         if (stats) {
             this.tokenStats.totalTokens = stats.totalTokens || 0;
             this.tokenStats.inputTokens = stats.inputTokens || 0;
+            this.tokenStats.hitTokens = stats.hitTokens || 0;
+            this.tokenStats.missTokens = stats.missTokens || 0;
             this.tokenStats.outputTokens = stats.outputTokens || 0;
             this.tokenStats.contextPercent = stats.contextPercent || 0;
             this.tokenStats.cost = stats.cost || 0;
@@ -34,7 +38,14 @@ window.chatApp = {
         var barEl = document.getElementById('contextBarFill');
         var pctEl = document.getElementById('contextPercent');
         var costEl = document.getElementById('costDisplay');
+        // 命中/未命中/输出 分类显示（命中 = hit，未命中 = miss）
+        var hitTokenEl = document.getElementById('hitTokenCount');
+        var missTokenEl = document.getElementById('missTokenCount');
+        var outputTokenEl = document.getElementById('outputTokenCount');
         if (tokenEl) tokenEl.textContent = s.totalTokens >= 1000 ? (s.totalTokens/1000).toFixed(1)+'K' : s.totalTokens;
+        if (hitTokenEl) hitTokenEl.textContent = s.hitTokens >= 1000 ? (s.hitTokens/1000).toFixed(1)+'K' : s.hitTokens;
+        if (missTokenEl) missTokenEl.textContent = s.missTokens >= 1000 ? (s.missTokens/1000).toFixed(1)+'K' : s.missTokens;
+        if (outputTokenEl) outputTokenEl.textContent = s.outputTokens >= 1000 ? (s.outputTokens/1000).toFixed(1)+'K' : s.outputTokens;
         if (barEl) {
             var pct = Math.min(s.contextPercent, 100);
             barEl.style.width = pct + '%';
@@ -175,10 +186,12 @@ window.chatApp = {
         this.tokenStats = {
             totalTokens: 0,
             inputTokens: 0,
+            hitTokens: 0,
+            missTokens: 0,
             outputTokens: 0,
             contextPercent: 0,
             cost: 0,
-            maxContext: 8192
+            maxContext: 65536
         };
         this.updateStatusBar();
         // 清空日志（新对话无历史日志）
@@ -282,7 +295,7 @@ window.onAddToolCall = function(toolName, argsJson, result) {
 
 // 由后端推送 token 统计数据
 window.onTokenUpdate = function(stats) {
-    // stats: { totalTokens, inputTokens, outputTokens, contextPercent, cost, maxContext }
+    // stats: { totalTokens, inputTokens, hitTokens, missTokens, outputTokens, contextPercent, cost, maxContext }
     if (typeof stats === 'string') {
         try { stats = JSON.parse(stats); } catch(e) { return; }
     }

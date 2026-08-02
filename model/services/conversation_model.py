@@ -116,12 +116,29 @@ class ConversationModel(QObject):
     # ==========================================
 
     def get_token_count(self, conversation_id: str) -> int:
-        """从数据库获取指定对话的累计 token 数"""
+        """从数据库获取指定对话的累计 token 数（总计）"""
         with self._save_lock:
             conv = self._conv_repo.get(conversation_id)
             if conv:
                 return conv.token_count or 0
             return 0
+
+    def get_token_stats(self, conversation_id: str) -> dict:
+        """从数据库获取指定对话的 token 分类统计
+
+        Returns:
+            {"hit": int, "miss": int, "output": int, "total": int}
+        """
+        with self._save_lock:
+            conv = self._conv_repo.get(conversation_id)
+            if conv:
+                return {
+                    "hit": conv.hit_token_count or 0,
+                    "miss": conv.miss_token_count or 0,
+                    "output": conv.output_token_count or 0,
+                    "total": conv.token_count or 0,
+                }
+            return {"hit": 0, "miss": 0, "output": 0, "total": 0}
 
     def get_log_file(self, conversation_id: str) -> Optional[str]:
         """获取指定对话的 AI 通信日志文件路径（可能为 None）"""
@@ -143,13 +160,31 @@ class ConversationModel(QObject):
                 self._conv_repo.save(conv)
 
     def update_token_count(self, token_count: int):
-        """更新当前对话的累计 token 数到数据库"""
+        """更新当前对话的累计 token 数（总计）到数据库"""
         if not self._current_conversation_id:
             return
         with self._save_lock:
             conv = self._conv_repo.get(self._current_conversation_id)
             if conv:
                 conv.token_count = token_count
+                conv.updated_at = datetime.now()
+                self._conv_repo.save(conv)
+
+    def update_token_stats(self, hit_tokens: int, miss_tokens: int, output_tokens: int):
+        """更新当前对话的 token 分类统计到数据库
+
+        - hit_token_count / miss_token_count / output_token_count 分别累计
+        - token_count（总计）由三者之和推导，保证一致性
+        """
+        if not self._current_conversation_id:
+            return
+        with self._save_lock:
+            conv = self._conv_repo.get(self._current_conversation_id)
+            if conv:
+                conv.hit_token_count = hit_tokens
+                conv.miss_token_count = miss_tokens
+                conv.output_token_count = output_tokens
+                conv.token_count = hit_tokens + miss_tokens + output_tokens
                 conv.updated_at = datetime.now()
                 self._conv_repo.save(conv)
 

@@ -35,9 +35,10 @@ class ConversationRepository:
         )
         if existing:
             self.db.execute(
-                f"UPDATE {self.TABLE} SET title=?, model=?, message_count=?, token_count=?, status=?, updated_at=?, log_file=? WHERE id=?",
+                f"UPDATE {self.TABLE} SET title=?, model=?, message_count=?, token_count=?, hit_token_count=?, miss_token_count=?, output_token_count=?, status=?, updated_at=?, log_file=? WHERE id=?",
                 (data.get("title"), data.get("model"), data.get("message_count"),
-                 data.get("token_count"), data.get("status"), data.get("updated_at"),
+                 data.get("token_count"), data.get("hit_token_count"), data.get("miss_token_count"),
+                 data.get("output_token_count"), data.get("status"), data.get("updated_at"),
                  data.get("log_file"), data.get("id")),
             )
         else:
@@ -48,10 +49,12 @@ class ConversationRepository:
                 data["id"] = generated
                 item.id = generated  # 回写
             self.db.execute(
-                f"INSERT INTO {self.TABLE} (id, title, model, message_count, token_count, status, created_at, updated_at, log_file) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO {self.TABLE} (id, title, model, message_count, token_count, hit_token_count, miss_token_count, output_token_count, status, created_at, updated_at, log_file) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (data.get("id"), data.get("title"), data.get("model"),
-                 data.get("message_count"), data.get("token_count"), data.get("status"),
+                 data.get("message_count"), data.get("token_count"),
+                 data.get("hit_token_count"), data.get("miss_token_count"), data.get("output_token_count"),
+                 data.get("status"),
                  data.get("created_at"), data.get("updated_at"), data.get("log_file")),
             )
         return True

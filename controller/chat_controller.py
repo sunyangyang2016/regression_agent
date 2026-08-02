@@ -36,6 +36,10 @@ class ChatController(QObject):
         self._cost_tracker = None
         self._session_total_tokens = 0
         self._session_total_cost = 0.0
+        # 3 类 token 分类累计（命中 / 未命中 / 输出）
+        self._session_hit_tokens = 0
+        self._session_miss_tokens = 0
+        self._session_output_tokens = 0
 
         # ====== AI 通信日志持久化 ======
         # 当前会话累积的底层原始日志明细（内存缓存，落盘时写入 JSON 文件）
@@ -93,10 +97,16 @@ class ChatController(QObject):
     def handle_load_conversation(self, conversation_id: str):
         messages = self.conversation_model.load_conversation_messages(conversation_id)
         self.ai_controller.reset_messages()
-        # 从数据库加载已保存的 token 数据
-        self._session_total_tokens = self.conversation_model.get_token_count(conversation_id)
-        # 累计费用由累计 token 推导，确保 UI 上费用与 token 同步显示
-        self._session_total_cost = self._calculate_session_cost(self._session_total_tokens)
+        # 从数据库加载已保存的 token 数据（分类统计）
+        token_stats = self.conversation_model.get_token_stats(conversation_id)
+        self._session_total_tokens = token_stats["total"]
+        self._session_hit_tokens = token_stats["hit"]
+        self._session_miss_tokens = token_stats["miss"]
+        self._session_output_tokens = token_stats["output"]
+        # 累计费用由 3 类累计 token 按模型单价推导，确保 UI 上费用与 token 同步显示
+        self._session_total_cost = self._calculate_session_cost(
+            self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
+        )
         for m in messages:
             role = m.get("role", "user")
             content = m.get("content", "")
@@ -108,10 +118,16 @@ class ChatController(QObject):
         msgs_json = json.dumps(messages, ensure_ascii=False)
         if self.bridge:
             self.bridge.execute_js(f"loadConversationMessages({msgs_json});")
-            # 恢复会话的 token 统计显示
-            max_ctx = 8192
+            # 恢复会话的 token 统计显示（命中/未命中/输出 分类完整恢复）
+            max_ctx = self._get_max_context()
             ctx_pct = (self._session_total_tokens / max_ctx) * 100
-            self.push_token_stats(self._session_total_tokens, 0, 0, ctx_pct, self._session_total_cost, max_ctx)
+            self.push_token_stats(
+                self._session_total_tokens,
+                self._session_hit_tokens + self._session_miss_tokens,
+                self._session_output_tokens, ctx_pct,
+                self._session_total_cost, max_ctx,
+                self._session_hit_tokens, self._session_miss_tokens
+            )
 
         # ====== 加载该会话的历史 AI 通信日志 ======
         self._load_session_logs_from_db(conversation_id)
@@ -241,15 +257,22 @@ class ChatController(QObject):
         except Exception:
             return "新对话"
 
-    def _calculate_session_cost(self, tokens: int) -> float:
-        """根据累计 token 数计算累计费用（费用数据由 token 推导，保证 UI 同步）
+    def _get_max_context(self) -> int:
+        """获取当前激活模型配置的最大上下文 token 数（默认 65536，即 64K）"""
+        try:
+            val = self.model_config.get("api", "max_context")
+            return int(val) if val else 65536
+        except Exception:
+            return 65536
 
-        费用 = (累计 token / 1000) × 模型输出单价
+    def _calculate_session_cost(self, hit_tokens: int, miss_tokens: int, output_tokens: int) -> float:
+        """按当前激活模型的配置单价计算累计费用（每百万 token 计费）
+
+        费用 = 命中token/1M × 命中单价 + 未命中token/1M × 未命中单价 + 输出token/1M × 输出单价
         """
-        model_name = self.model_config.get("api", "model") or "deepseek-chat"
-        from ai.cost_tracker import MODEL_PRICING
-        pricing = MODEL_PRICING.get(model_name, {"input": 0.001, "output": 0.002})
-        return round((tokens / 1000) * pricing["output"], 4)
+        from ai.cost_tracker import get_model_pricing, calculate_cost
+        pricing = get_model_pricing(self.model_config)
+        return round(calculate_cost(hit_tokens, miss_tokens, output_tokens, pricing), 4)
 
     def _on_stream_chunk(self, content: str):
         self.update_message.emit("", content)
@@ -259,6 +282,7 @@ class ChatController(QObject):
         user_content = self.conversation_model.current_user_content or ""
         input_tokens = 0
         output_tokens = 0
+        cached_tokens = 0
         content = full_response
 
         if full_response.startswith('{"content"'):
@@ -268,6 +292,7 @@ class ChatController(QObject):
                 if usage:
                     input_tokens = usage.get("prompt_tokens", 0)
                     output_tokens = usage.get("completion_tokens", 0)
+                    cached_tokens = usage.get("cached_tokens", 0) or 0
                 content = parsed.get("content", full_response)
             except Exception:
                 pass
@@ -283,20 +308,37 @@ class ChatController(QObject):
             input_tokens = TokenCounter.count_text(user_content)
             output_tokens = TokenCounter.count_text(content)
 
-        round_tokens = output_tokens
-        self._session_total_tokens += round_tokens
+        # 命中 / 未命中 / 输出 3 类 token 拆分
+        # 命中 token = cached_tokens（缓存命中输入）
+        # 未命中 token = prompt_tokens - cached_tokens（未命中缓存的输入）
+        # 输出 token = completion_tokens
+        hit_tokens = min(cached_tokens, input_tokens) if input_tokens > 0 else 0
+        miss_tokens = max(input_tokens - hit_tokens, 0)
 
-        max_ctx = 8192
+        self._session_hit_tokens += hit_tokens
+        self._session_miss_tokens += miss_tokens
+        self._session_output_tokens += output_tokens
+        self._session_total_tokens += input_tokens + output_tokens
+
+        max_ctx = self._get_max_context()
         ctx_pct = (self._session_total_tokens / max_ctx) * 100
 
-        # 累计费用由累计 token 推导，确保 UI 上费用与 token 同步刷新
-        model_name = self.model_config.get("api", "model") or "deepseek-chat"
-        self._session_total_cost = self._calculate_session_cost(self._session_total_tokens)
+        # 累计费用由 3 类累计 token 按当前模型的配置单价推导，确保 UI 上费用与 token 同步刷新
+        self._session_total_cost = self._calculate_session_cost(
+            self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
+        )
 
-        # 保存 token 数到数据库
-        self.conversation_model.update_token_count(self._session_total_tokens)
+        # 保存 3 类 token 分类统计到数据库
+        self.conversation_model.update_token_stats(
+            self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
+        )
 
-        self.push_token_stats(self._session_total_tokens, input_tokens, output_tokens, ctx_pct, self._session_total_cost, max_ctx)
+        self.push_token_stats(
+            self._session_total_tokens,
+            self._session_hit_tokens + self._session_miss_tokens,
+            self._session_output_tokens, ctx_pct,
+            self._session_total_cost, max_ctx, self._session_hit_tokens, self._session_miss_tokens
+        )
         # 说明：不再推送概要日志（push_log_entry），
         # 因为底层原始 JSON 日志（raw 类型）已完整包含请求/响应载荷与 token 统计，
         # 避免日志对话框中「响应显示完成后又重复显示一条对话信息」。
@@ -377,11 +419,14 @@ class ChatController(QObject):
                 print(f"{LOG} ❌ 推送日志条目失败: {e}")
 
     def push_token_stats(self, total_tokens: int, input_tokens: int, output_tokens: int,
-                         context_percent: float, cost: float, max_context: int = 8192):
+                         context_percent: float, cost: float, max_context: int = 65536,
+                         hit_tokens: int = 0, miss_tokens: int = 0):
         stats = {
             "totalTokens": total_tokens,
             "inputTokens": input_tokens,
             "outputTokens": output_tokens,
+            "hitTokens": hit_tokens,
+            "missTokens": miss_tokens,
             "contextPercent": round(context_percent, 1),
             "cost": round(cost, 4),
             "maxContext": max_context

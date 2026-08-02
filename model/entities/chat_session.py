@@ -17,6 +17,9 @@ class ChatSession(BaseEntity):
         self.model: str = kwargs.get("model", "")
         self.message_count: int = kwargs.get("message_count", 0)
         self.token_count: int = kwargs.get("token_count", 0)
+        self.hit_token_count: int = kwargs.get("hit_token_count", 0)
+        self.miss_token_count: int = kwargs.get("miss_token_count", 0)
+        self.output_token_count: int = kwargs.get("output_token_count", 0)
         self.status: str = kwargs.get("status", "active")
         # AI 通信日志文件路径（logs/history 下的 JSON 文件）
         self.log_file: Optional[str] = kwargs.get("log_file") or None
@@ -32,6 +35,9 @@ class ChatSession(BaseEntity):
                 "model": data.get("model"),
                 "message_count": data.get("message_count"),
                 "token_count": data.get("token_count"),
+                "hit_token_count": data.get("hit_token_count") or 0,
+                "miss_token_count": data.get("miss_token_count") or 0,
+                "output_token_count": data.get("output_token_count") or 0,
                 "status": data.get("status"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
