@@ -275,6 +275,12 @@ class AppController(QObject):
                 # MD 技能已注册为 MdSkill 适配器（供 AI 工具调用），避免与下方 MD 文件列表重复显示
                 if isinstance(s, MdSkill):
                     continue
+                # 获取完整元数据作为详情展示
+                meta = {}
+                try:
+                    meta = s.get_metadata()
+                except Exception:
+                    pass
                 skills.append({
                     "name": s.name,
                     "description": s.description,
@@ -283,6 +289,16 @@ class AppController(QObject):
                     "source": "python",
                     "version": s.version,
                     "tags": s.tags,
+                    "detail": {
+                        "version": s.version,
+                        "category": s.category,
+                        "priority": meta.get("priority"),
+                        "tags": s.tags,
+                        "input_schema": meta.get("input_schema"),
+                        "triggers": meta.get("triggers"),
+                        "execution_count": meta.get("execution_count"),
+                        "created_at": meta.get("created_at"),
+                    },
                 })
             for s in self.skill_manager.get_md_skills():
                 skills.append({
@@ -293,6 +309,12 @@ class AppController(QObject):
                     "source": "markdown",
                     "version": "1.0.0",
                     "tags": [],
+                    "detail": {
+                        "content": s.get("content", ""),
+                        "filepath": s.get("filepath", ""),
+                        "version": "1.0.0",
+                        "category": "md",
+                    },
                 })
             return skills
         except Exception as e:

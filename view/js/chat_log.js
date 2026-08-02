@@ -143,6 +143,117 @@ document.addEventListener('keydown', function(e) {
 // 当前过滤条件（空表示不过滤）
 var logFilterState = { start: null, end: null };
 
+// ============================================
+// 自定义暗色日期时间选择面板（替代原生白色 picker）
+// ============================================
+var pickerTarget = null;          // 'start' | 'end'
+var pickerYear = 2026, pickerMonth = 0;  // 面板当前年月
+var pickerSelectedDay = null;     // 选中日期（1-31，null 未选）
+
+function _pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+// 打开日期选择面板，定位到触发输入框下方
+function openDatePicker(target) {
+    var input = document.getElementById(target === 'end' ? 'logFilterEnd' : 'logFilterStart');
+    var panel = document.getElementById('logDatePicker');
+    if (!input || !panel) return;
+    pickerTarget = target;
+
+    var now = new Date();
+    var val = input.value.trim();
+    var m = val.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+    if (m) {
+        pickerYear = parseInt(m[1], 10);
+        pickerMonth = parseInt(m[2], 10) - 1;
+        pickerSelectedDay = parseInt(m[3], 10);
+        document.getElementById('ldpHour').value = parseInt(m[4], 10);
+        document.getElementById('ldpMinute').value = parseInt(m[5], 10);
+        document.getElementById('ldpSecond').value = parseInt(m[6], 10);
+    } else {
+        pickerYear = now.getFullYear();
+        pickerMonth = now.getMonth();
+        pickerSelectedDay = null;
+        document.getElementById('ldpHour').value = now.getHours();
+        document.getElementById('ldpMinute').value = now.getMinutes();
+        document.getElementById('ldpSecond').value = now.getSeconds();
+    }
+
+    renderPickerCalendar();
+    positionDatePicker(input, panel);
+    panel.style.display = 'block';
+}
+
+// 面板 fixed 定位：输入框下方，避让视口边缘
+function positionDatePicker(input, panel) {
+    var rect = input.getBoundingClientRect();
+    var pw = panel.offsetWidth || 248;
+    var ph = panel.offsetHeight || 300;
+    var left = rect.left;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    var top = rect.bottom + 6;
+    if (top + ph > window.innerHeight - 8) top = rect.top - ph - 6;
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+}
+
+// 渲染月历
+function renderPickerCalendar() {
+    var title = document.getElementById('ldpTitle');
+    if (title) title.textContent = pickerYear + '-' + _pad2(pickerMonth + 1);
+    var container = document.getElementById('ldpDays');
+    if (!container) return;
+    var firstDay = new Date(pickerYear, pickerMonth, 1).getDay();
+    var daysInMonth = new Date(pickerYear, pickerMonth + 1, 0).getDate();
+    var today = new Date();
+    var html = '';
+    for (var i = 0; i < firstDay; i++) html += '<span class="ldp-day empty"></span>';
+    for (var d = 1; d <= daysInMonth; d++) {
+        var cls = 'ldp-day';
+        if (pickerYear === today.getFullYear() && pickerMonth === today.getMonth() && d === today.getDate()) cls += ' today';
+        if (pickerSelectedDay === d) cls += ' selected';
+        html += '<span class="' + cls + '" onclick="pickerSelectDay(' + d + ')">' + d + '</span>';
+    }
+    container.innerHTML = html;
+}
+
+function pickerSelectDay(day) { pickerSelectedDay = day; renderPickerCalendar(); }
+function pickerPrevMonth() { pickerMonth--; if (pickerMonth < 0) { pickerMonth = 11; pickerYear--; } renderPickerCalendar(); }
+function pickerNextMonth() { pickerMonth++; if (pickerMonth > 11) { pickerMonth = 0; pickerYear++; } renderPickerCalendar(); }
+
+// 确定：写入输入框并应用过滤
+function pickerConfirm() {
+    if (pickerSelectedDay === null) pickerSelectedDay = new Date().getDate();
+    var h = Math.max(0, Math.min(23, parseInt(document.getElementById('ldpHour').value, 10) || 0));
+    var mi = Math.max(0, Math.min(59, parseInt(document.getElementById('ldpMinute').value, 10) || 0));
+    var s = Math.max(0, Math.min(59, parseInt(document.getElementById('ldpSecond').value, 10) || 0));
+    var value = pickerYear + '-' + _pad2(pickerMonth + 1) + '-' + _pad2(pickerSelectedDay) +
+                ' ' + _pad2(h) + ':' + _pad2(mi) + ':' + _pad2(s);
+    var input = document.getElementById(pickerTarget === 'end' ? 'logFilterEnd' : 'logFilterStart');
+    if (input) input.value = value;
+    closeDatePicker();
+    filterLogs();
+}
+
+function pickerClear() {
+    var input = document.getElementById(pickerTarget === 'end' ? 'logFilterEnd' : 'logFilterStart');
+    if (input) input.value = '';
+    closeDatePicker();
+    filterLogs();
+}
+
+function closeDatePicker() {
+    var panel = document.getElementById('logDatePicker');
+    if (panel) panel.style.display = 'none';
+}
+
+// 点击面板外部关闭
+document.addEventListener('mousedown', function(e) {
+    var panel = document.getElementById('logDatePicker');
+    if (!panel || panel.style.display === 'none') return;
+    if (panel.contains(e.target)) return;
+    closeDatePicker();
+});
+
 // 将 datetime-local 输入值转换为秒级时间戳（本地时区）；空值返回 null
 function parseFilterTime(value, isEnd) {
     if (!value) return null;

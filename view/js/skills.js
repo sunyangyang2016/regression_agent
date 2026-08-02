@@ -8,6 +8,53 @@ function escHtml(str){
     return d.innerHTML;
 }
 
+function buildSkillDetailHtml(s){
+    var detail = s.detail || {};
+    var html = '';
+    if(s.source === 'markdown'){
+        // MD 技能：显示 Markdown 正文内容
+        var content = detail.content || '';
+        if(content){
+            html += '<div class="skill-detail-section">' +
+                '<div class="skill-detail-label"><i class="fas fa-file-alt"></i> 详细说明</div>' +
+                '<pre class="skill-detail-content">' + escHtml(content) + '</pre>' +
+            '</div>';
+        }
+        if(detail.filepath){
+            html += '<div class="skill-detail-row"><span class="skill-detail-label">文件路径</span><span class="skill-detail-value">' + escHtml(detail.filepath) + '</span></div>';
+        }
+    } else {
+        // Python 技能：显示元数据信息
+        var rows = [];
+        if(detail.version) rows.push(['版本', detail.version]);
+        if(detail.category) rows.push(['分类', detail.category]);
+        if(detail.priority !== undefined && detail.priority !== null) rows.push(['优先级', detail.priority]);
+        if(detail.execution_count !== undefined && detail.execution_count !== null) rows.push(['执行次数', detail.execution_count]);
+        if(detail.created_at) rows.push(['创建时间', detail.created_at]);
+        if(rows.length){
+            html += '<div class="skill-detail-section">' +
+                '<div class="skill-detail-label"><i class="fas fa-info-circle"></i> 基本信息</div>';
+            rows.forEach(function(r){
+                html += '<div class="skill-detail-row"><span class="skill-detail-label">' + escHtml(r[0]) + '</span><span class="skill-detail-value">' + escHtml(r[1]) + '</span></div>';
+            });
+            html += '</div>';
+        }
+        if(detail.input_schema){
+            html += '<div class="skill-detail-section">' +
+                '<div class="skill-detail-label"><i class="fas fa-keyboard"></i> 参数 Schema</div>' +
+                '<pre class="skill-detail-content">' + escHtml(JSON.stringify(detail.input_schema, null, 2)) + '</pre>' +
+            '</div>';
+        }
+        if(detail.triggers && detail.triggers.length > 0){
+            html += '<div class="skill-detail-section">' +
+                '<div class="skill-detail-label"><i class="fas fa-bolt"></i> 触发器</div>' +
+                '<pre class="skill-detail-content">' + escHtml(JSON.stringify(detail.triggers, null, 2)) + '</pre>' +
+            '</div>';
+        }
+    }
+    return html;
+}
+
 function renderSkills(){
     var c=document.getElementById('skillList');if(!c)return;
     var items=appState.skills||[];
@@ -15,12 +62,13 @@ function renderSkills(){
         c.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-muted);">暂无技能</div>';
         return;
     }
-    c.innerHTML=items.map(function(s){
-        var iconMap={development:'fa-code',data:'fa-chart-line',writing:'fa-pen-fancy',utility:'fa-tools',communication:'fa-envelope',productivity:'fa-check-double',creativity:'fa-lightbulb',analysis:'fa-search',general:'fa-file-alt'};
+    c.innerHTML=items.map(function(s, i){
+        var iconMap={development:'fa-code',data:'fa-chart-line',writing:'fa-pen-fancy',utility:'fa-tools',communication:'fa-envelope',productivity:'fa-check-double',creativity:'fa-lightbulb',analysis:'fa-search',general:'fa-file-alt',md:'fa-file-alt'};
         var iconName=iconMap[s.category]||'fa-file-alt';
         var sourceLabel=s.source==='python'?'Python 技能':'MD 技能';
         var sourceClass=s.source==='python'?'tag-blue':'tag-green';
-        return '<div class="item-row">'+
+        var detailHtml = buildSkillDetailHtml(s);
+        return '<div class="item-row" onclick="toggleSkillDetail('+i+')" style="cursor:pointer;">'+
             '<div class="icon builtin"><i class="fas '+iconName+'"></i></div>'+
             '<div class="info">'+
                 '<div class="name">'+escHtml(s.name)+'</div>'+
@@ -29,22 +77,24 @@ function renderSkills(){
                 (s.version?' <span class="tag">v'+s.version+'</span>':'')+
                 '</div>'+
             '</div>'+
-            '<label class="switch"><input type="checkbox" '+(s.enabled!==false?'checked':'')+' onchange="toggleSkill(\''+escHtml(s.name)+'\', this)"><span class="slider"></span></label>'+
-            '<button class="skill-remove-btn" title="删除技能" onclick="removeSkill(\''+escHtml(s.name)+'\')"><i class="fas fa-trash"></i></button>'+
-        '</div>';
+            '<label class="switch" onclick="event.stopPropagation()"><input type="checkbox" '+(s.enabled!==false?'checked':'')+' onchange="toggleSkill(\''+escHtml(s.name)+'\', this)"><span class="slider"></span></label>'+
+            '<button class="skill-remove-btn" title="删除技能" onclick="event.stopPropagation();removeSkill(\''+escHtml(s.name)+'\')"><i class="fas fa-trash"></i></button>'+
+            '<span class="skill-expand-icon"><i class="fas fa-chevron-down" id="skillIcon'+i+'"></i></span>'+
+        '</div>'+
+        (detailHtml ? '<div class="skill-detail" id="skillDetail'+i+'" style="display:none;">'+detailHtml+'</div>' : '');
     }).join('');
 }
 
-function loadSkillsFromBridge(){
-    if(!window.skill_bridge){console.warn('[Skills] skill_bridge not available');return;}
-    try{
-        var raw=window.skill_bridge.getSkills();
-        var data=JSON.parse(raw);
-        if(data&&data.length>0){
-            appState.skills=data;
-            renderSkills();
+function toggleSkillDetail(index){
+    var detail = document.getElementById('skillDetail' + index);
+    var icon = document.getElementById('skillIcon' + index);
+    if (detail) {
+        var isOpen = detail.style.display === 'block';
+        detail.style.display = isOpen ? 'none' : 'block';
+        if (icon) {
+            icon.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
         }
-    }catch(e){console.warn('[Skills] load error:',e);}
+    }
 }
 
 function toggleSkill(name, checkbox){

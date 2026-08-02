@@ -133,37 +133,243 @@
 /* === 时间戳过滤工具栏 === */
 .log-filter-bar {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary); flex-shrink: 0; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: linear-gradient(180deg, var(--bg-secondary), rgba(0, 0, 0, 0.02));
+  flex-shrink: 0; flex-wrap: wrap;
 }
-.log-filter-bar label {
+/* 时间选择胶囊：图标 + 文字 + 输入框组合 */
+.log-filter-bar .log-time-label {
   font-size: 11px; color: var(--text-muted);
-  display: flex; align-items: center; gap: 4px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+  padding: 3px 4px 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.log-filter-bar .log-time-label:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.log-filter-bar .log-time-label i {
+  font-size: 11px; color: var(--accent-primary); opacity: 0.85;
 }
 .log-filter-bar input[type="datetime-local"] {
-  background: var(--bg-primary); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); color: var(--text-secondary);
-  font-family: var(--font-family); font-size: 11px;
-  padding: 3px 6px; outline: none;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 11px;
+  padding: 3px 6px;
+  outline: none;
+  transition: border-color 0.2s ease;
+  /* color-scheme: dark 让原生弹出日历/时钟浮层按暗色渲染 */
+  color-scheme: dark;
+  -webkit-color-scheme: dark;
+}
+/* 美化输入框内部的日期时间字段显示（年月日 时分秒各段） */
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit {
+  color: var(--text-secondary);
+}
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
+}
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-text {
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-year-field,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-month-field,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-day-field,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-hour-field,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-minute-field,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-second-field,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-millisecond-field {
+  color: var(--text-secondary);
+  border-radius: 2px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-year-field:focus,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-month-field:focus,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-day-field:focus,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-hour-field:focus,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-minute-field:focus,
+.log-filter-bar input[type="datetime-local"]::-webkit-datetime-edit-second-field:focus {
+  background: var(--accent-primary);
+  color: #fff;
+}
+.log-filter-bar input[type="datetime-local"]:hover {
+  border-color: var(--text-muted);
 }
 .log-filter-bar input[type="datetime-local"]:focus {
   border-color: var(--accent-primary);
 }
+/* 自定义日历/时钟图标：给原生日历图标着色，配合暗色主题 */
+.log-filter-bar input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.6;
+  filter: invert(0.7) sepia(0.3) saturate(2);
+  transition: opacity 0.2s ease;
+}
+.log-filter-bar input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+/* 过滤 / 清除按钮 */
 .log-filter-bar button {
-  padding: 4px 12px; font-size: 11px; cursor: pointer;
-  border-radius: var(--radius-sm); border: 1px solid var(--border-color);
-  background: var(--bg-tertiary); color: var(--text-secondary);
-  font-family: var(--font-family); transition: var(--transition);
+  padding: 5px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: all 0.18s ease;
 }
-.log-filter-bar button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.log-filter-bar button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+  transform: translateY(-1px);
+}
+.log-filter-bar button:active {
+  transform: translateY(0);
+}
 .log-filter-bar button.btn-filter {
-  background: var(--accent-primary); border-color: var(--accent-primary); color: #fff;
+  background: linear-gradient(180deg, var(--accent-primary), rgba(0, 0, 0, 0.2));
+  background: -webkit-linear-gradient(top, var(--accent-primary), rgba(0, 0, 0, 0.2));
+  border-color: var(--accent-primary);
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.25);
 }
-.log-filter-bar button.btn-filter:hover { opacity: 0.85; }
+.log-filter-bar button.btn-filter:hover {
+  opacity: 0.9;
+  box-shadow: 0 3px 10px rgba(99, 102, 241, 0.35);
+}
+.log-filter-bar button.btn-clear:hover {
+  background: var(--accent-danger);
+  border-color: var(--accent-danger);
+  color: #fff;
+}
+/* 过滤计数徽标 */
 .log-filter-count {
   font-size: 11px; color: var(--text-muted);
-  display: flex; align-items: center; gap: 4px; margin-left: auto; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: auto; white-space: nowrap;
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full, 999px);
+  font-variant-numeric: tabular-nums;
 }
+
+/* ===== 自定义暗色日期时间选择面板（替代原生白色 picker） ===== */
+.log-datetime-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 11px;
+  padding: 3px 6px;
+  outline: none;
+  cursor: pointer;
+  min-width: 118px;
+  caret-color: transparent;
+  transition: border-color 0.2s ease;
+}
+.log-datetime-input:hover { border-color: var(--text-muted); }
+.log-datetime-input:focus { border-color: var(--accent-primary); }
+.log-datetime-input::placeholder { color: var(--text-muted); }
+
+.log-date-picker {
+  position: fixed;
+  z-index: 3500;
+  width: 248px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  padding: 10px 12px;
+  user-select: none;
+  animation: floatLogIn 0.15s ease;
+}
+.ldp-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ldp-header button {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ldp-header button:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-primary); }
+#ldpTitle { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.ldp-weekdays {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 2px; margin-bottom: 4px;
+}
+.ldp-weekdays span { text-align: center; font-size: 10px; color: var(--text-muted); padding: 2px 0; }
+.ldp-days {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.ldp-days .ldp-day {
+  text-align: center; font-size: 11px; padding: 4px 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.ldp-days .ldp-day:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ldp-days .ldp-day.empty { visibility: hidden; }
+.ldp-days .ldp-day.today { border: 1px solid var(--accent-primary); }
+.ldp-days .ldp-day.selected { background: var(--accent-primary); color: #fff; font-weight: 600; }
+.ldp-time { display: flex; gap: 8px; margin-top: 10px; justify-content: center; }
+.ldp-time-col { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ldp-time-col label { font-size: 10px; color: var(--text-muted); }
+.ldp-time-col input[type="number"] {
+  width: 52px; padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-family); font-size: 12px;
+  text-align: center;
+  outline: none;
+}
+.ldp-time-col input[type="number"]:focus { border-color: var(--accent-primary); }
+.ldp-time-col input[type="number"]::-webkit-inner-spin-button,
+.ldp-time-col input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.ldp-footer { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.ldp-footer button {
+  flex: 1; padding: 5px 0;
+  font-size: 11px; cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  transition: all 0.15s ease;
+}
+.ldp-clear-btn { background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-secondary); }
+.ldp-clear-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ldp-ok-btn {
+  background: linear-gradient(180deg, var(--accent-primary), rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--accent-primary);
+  color: #fff; font-weight: 500;
+}
+.ldp-ok-btn:hover { opacity: 0.9; }
 
 /* === 放大查看模态层（双击请求/响应 JSON 弹出） === */
 .log-detail-overlay {

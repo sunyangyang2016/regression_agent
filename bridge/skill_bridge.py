@@ -41,6 +41,11 @@ class SkillBridge(BridgeBase):
                 for s in mgr.registry.get_all():
                     if isinstance(s, MdSkill):
                         continue
+                    meta = {}
+                    try:
+                        meta = s.get_metadata()
+                    except Exception:
+                        pass
                     python_skills.append({
                         "name": s.name,
                         "description": s.description,
@@ -49,6 +54,16 @@ class SkillBridge(BridgeBase):
                         "source": "python",
                         "version": s.version,
                         "tags": s.tags,
+                        "detail": {
+                            "version": s.version,
+                            "category": s.category,
+                            "priority": meta.get("priority"),
+                            "tags": s.tags,
+                            "input_schema": meta.get("input_schema"),
+                            "triggers": meta.get("triggers"),
+                            "execution_count": meta.get("execution_count"),
+                            "created_at": meta.get("created_at"),
+                        },
                     })
             except Exception as e:
                 print(f"[SkillBridge] ⚠️ getSkills registry: {e}")
@@ -64,6 +79,12 @@ class SkillBridge(BridgeBase):
                         "source": "markdown",
                         "version": "1.0.0",
                         "tags": [],
+                        "detail": {
+                            "content": s.get("content", ""),
+                            "filepath": s.get("filepath", ""),
+                            "version": "1.0.0",
+                            "category": "md",
+                        },
                     })
             except Exception as e:
                 print(f"[SkillBridge] ⚠️ getSkills md: {e}")

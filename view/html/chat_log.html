@@ -19,18 +19,39 @@
                 <button onclick="closeAILog()" title="关闭"><i class="fas fa-times"></i></button>
             </div>
         </div>
-        <!-- 时间戳过滤工具栏（step=1 允许精确到时分秒） -->
+        <!-- 时间戳过滤工具栏（精确到时分秒；点击文本框弹出自定义暗色选择面板） -->
         <div class="log-filter-bar">
-            <label>起始 <input type="datetime-local" id="logFilterStart" step="1"></label>
-            <label>结束 <input type="datetime-local" id="logFilterEnd" step="1"></label>
+            <label class="log-time-label"><i class="fas fa-clock"></i> 起始 <input type="text" id="logFilterStart" class="log-datetime-input" readonly placeholder="YYYY-MM-DD HH:mm:ss" onclick="openDatePicker('start')"></label>
+            <label class="log-time-label"><i class="fas fa-hourglass-half"></i> 结束 <input type="text" id="logFilterEnd" class="log-datetime-input" readonly placeholder="YYYY-MM-DD HH:mm:ss" onclick="openDatePicker('end')"></label>
             <button class="btn-filter" onclick="filterLogs()"><i class="fas fa-filter"></i> 过滤</button>
-            <button onclick="clearLogFilter()"><i class="fas fa-times"></i> 清除</button>
+            <button class="btn-clear" onclick="clearLogFilter()"><i class="fas fa-times"></i> 清除</button>
             <span class="log-filter-count" id="logFilterCount"></span>
         </div>
         <div class="log-list" id="logList">
             <div class="log-empty">暂无日志记录</div>
         </div>
         <div class="floating-log-resize" id="logResizeHandle" title="拖动缩放"></div>
+    </div>
+    <!-- 自定义暗色日期时间选择面板（替代原生白色 picker，浮于悬浮窗之上） -->
+    <div class="log-date-picker" id="logDatePicker" style="display:none;">
+        <div class="ldp-header">
+            <button id="ldpPrev" onclick="pickerPrevMonth()" title="上个月"><i class="fas fa-chevron-left"></i></button>
+            <span id="ldpTitle">2026-08</span>
+            <button id="ldpNext" onclick="pickerNextMonth()" title="下个月"><i class="fas fa-chevron-right"></i></button>
+        </div>
+        <div class="ldp-weekdays">
+            <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div class="ldp-days" id="ldpDays"></div>
+        <div class="ldp-time">
+            <div class="ldp-time-col"><label>时</label><input type="number" id="ldpHour" min="0" max="23" value="0"></div>
+            <div class="ldp-time-col"><label>分</label><input type="number" id="ldpMinute" min="0" max="59" value="0"></div>
+            <div class="ldp-time-col"><label>秒</label><input type="number" id="ldpSecond" min="0" max="59" value="0"></div>
+        </div>
+        <div class="ldp-footer">
+            <button class="ldp-clear-btn" onclick="pickerClear()">清除</button>
+            <button class="ldp-ok-btn" onclick="pickerConfirm()">确定</button>
+        </div>
     </div>
     <!-- 放大查看模态层（双击请求/响应 JSON 弹出） -->
     <div class="log-detail-overlay" id="logDetailOverlay" style="display:none;" onclick="closeLogDetail(event)">

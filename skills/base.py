@@ -105,6 +105,7 @@ class BaseSkill(ABC):
             "tags": self.tags,
             "priority": self.priority,
             "input_schema": self.input_schema,
+            "triggers": self.triggers,
             "execution_count": self._execution_count,
             "created_at": self._created_at.isoformat(),
         }
