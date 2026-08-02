@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
     appState.currentModel = appState.models.find(m=>m.active)||appState.models[0];
     const t = localStorage.getItem('agent-theme')||'dark';
     setTheme(t);
+    if(typeof loadAgentConfigTheme==='function')loadAgentConfigTheme();
     updateModelUI(); renderMCPServers(); renderMCPLocalServers(); renderMCPMarket(); renderModelList();
     renderTools(); renderSkills(); renderPlugins(); updateMCPBadge(); updateModelCount();
     ['tabMCP','tabModels','tabTools','tabSkills','tabPlugins','tabSettings','tabAbout'].forEach(function(id){
@@ -56,11 +57,12 @@ function connectBridge() {
             window.tool_bridge=ch.objects.tool_bridge;
             window.skill_bridge=ch.objects.skill_bridge;
             window.mcp_bridge=ch.objects.mcp_bridge;
+            window.agent_config_bridge=ch.objects.agent_config_bridge;
             window._bridgeReady=true;
             console.log('[Bridge] OK');
             if(window.py_bridge) showToast('后端已连接','success');
             if (typeof startMCPStatusPolling === 'function') startMCPStatusPolling();
-            setTimeout(function(){loadAllData();}, 200);
+            setTimeout(function(){loadAllData(); if(typeof loadAgentConfigTheme==='function')loadAgentConfigTheme();}, 200);
         });
     }catch(e){console.error('[Bridge]',e);setTimeout(connectBridge,500);}
 }
@@ -235,3 +237,4 @@ function loadConfig() {
     updateModelUI();renderModelList();updateModelCount();
 }
 setTimeout(connectBridge,300);
+function loadAgentConfigTheme(){if(window.agent_config_bridge&&window.agent_config_bridge.getConfig){try{window.agent_config_bridge.getConfig().then(function(c){try{var cfg=typeof c==='string'?JSON.parse(c):c;if(cfg&&cfg.theme){localStorage.setItem('agent-theme',cfg.theme);if(typeof setTheme==='function')setTheme(cfg.theme);}}catch(e){}});}catch(e){}}}

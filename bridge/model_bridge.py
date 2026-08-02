@@ -150,6 +150,19 @@ class ModelBridge(BridgeBase):
             print(f"[ModelBridge] ❌ 读取 {filename} 失败: {e}")
             return "{}"
 
+    @pyqtSlot(str, str, result=bool)
+    def saveUserConfig(self, filename, config_json):
+        """通用方法：保存配置到 user_config/user/ 目录（defaults/ 不被修改）"""
+        try:
+            from config.user_config import save_config
+            parsed = json.loads(config_json) if isinstance(config_json, str) else config_json
+            path = save_config(filename, parsed)
+            print(f"[ModelBridge] ✅ 已保存 {filename} → {path}")
+            return True
+        except Exception as e:
+            print(f"[ModelBridge] ❌ 保存 {filename} 失败: {e}")
+            return False
+
     @pyqtSlot(result=str)
     def getAgentInfo(self):
         """获取 Agent 信息（关于界面详情，读取 defaults/agent_info.json）"""

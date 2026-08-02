@@ -95,12 +95,14 @@ class AppController(QObject):
 
     def _register_bridge_objects(self):
         from bridge import ChatBridge, ModelBridge, ToolBridge, SkillBridge, MCPBridge
+        from bridge.agent_config_bridge import AgentConfigBridge
 
         main_bridge = ChatBridge(self)
         config_bridge = ModelBridge(self)
         tool_bridge = ToolBridge(self)
         skill_bridge = SkillBridge(self)
         mcp_bridge = MCPBridge(self)
+        agent_config_bridge = AgentConfigBridge(self)
 
         # 注入 MCPBridge 到安装工具模块
         try:
@@ -126,6 +128,7 @@ class AppController(QObject):
             "tool_bridge": tool_bridge,
             "skill_bridge": skill_bridge,
             "mcp_bridge": mcp_bridge,
+            "agent_config_bridge": agent_config_bridge,
         }
         return main_bridge
 
