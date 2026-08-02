@@ -32,6 +32,19 @@
         </div>
         <div class="floating-log-resize" id="logResizeHandle" title="拖动缩放"></div>
     </div>
+    <!-- 放大查看模态层（双击请求/响应 JSON 弹出） -->
+    <div class="log-detail-overlay" id="logDetailOverlay" style="display:none;" onclick="closeLogDetail(event)">
+        <div class="log-detail-modal" onclick="event.stopPropagation()">
+            <div class="log-detail-header">
+                <h3 id="logDetailTitle"><i class="fas fa-clipboard-list"></i> 查看载荷</h3>
+                <div class="log-detail-actions">
+                    <button onclick="copyLogDetail()" title="复制 JSON"><i class="fas fa-copy"></i></button>
+                    <button onclick="closeLogDetail()" title="关闭"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <pre class="log-detail-content" id="logDetailContent"></pre>
+        </div>
+    </div>
     <!-- END_LOG_MODAL -->
     <script>
     // 独立调试模式：没有主页面时，将悬浮窗显示出来便于预览

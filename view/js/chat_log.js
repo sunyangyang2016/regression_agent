@@ -29,14 +29,112 @@ function renderLogEntry(entry) {
         '<span class="log-time">' + new Date((entry.timestamp || Date.now()) * 1000).toLocaleString() + '</span></div>';
 
     var rawJson = JSON.stringify(entry.data || {}, null, 2);
+    // 双击内容区弹出放大查看窗口（事件委托，见下方 logList dblclick 监听）
+    // 使用 data-log-direction / data-log-model 记录元数据，避免 JSON 拼入 HTML 属性被破坏
     var bodyHtml = '<div class="log-entry-body">' +
-        '<pre style="margin:0;padding:10px 12px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:var(--bg-primary);border:1px solid var(--border-color);border-left:3px solid ' + accentColor + ';border-radius:var(--radius-sm);max-height:400px;overflow-y:auto;color:var(--text-secondary);">' +
+        '<pre class="log-payload" data-log-direction="' + (isReq ? 'request' : 'response') +
+        '" data-log-model="' + escapeHtml(entry.model || 'AI') +
+        '" title="双击放大查看" style="cursor:zoom-in;margin:0;padding:10px 12px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:var(--bg-primary);border:1px solid var(--border-color);border-left:3px solid ' + accentColor + ';border-radius:var(--radius-sm);max-height:400px;overflow-y:auto;color:var(--text-secondary);">' +
         escapeHtml(rawJson) + '</pre></div>';
 
     div.innerHTML = headerHtml + bodyHtml;
     list.appendChild(div);
     list.scrollTop = list.scrollHeight;
 }
+
+// ============================================
+// 放大查看模态层（双击请求/响应 JSON 弹出）
+// ============================================
+
+// 打开放大查看窗口
+function openLogDetail(rawJson, direction, model) {
+    var overlay = document.getElementById('logDetailOverlay');
+    if (!overlay) return;
+    var titleEl = document.getElementById('logDetailTitle');
+    var contentEl = document.getElementById('logDetailContent');
+    var isReq = direction === 'request';
+    var accentColor = isReq ? 'var(--accent-primary)' : 'var(--accent-success)';
+    var directionLabel = isReq ? '⬆️ 请求 (Request)' : '⬇️ 响应 (Response)';
+    if (titleEl) {
+        titleEl.innerHTML = '<i class="fas fa-clipboard-list" style="color:' + accentColor + ';"></i> ' +
+            directionLabel + ' <span style="font-weight:400;font-size:12px;color:var(--text-muted);">' +
+            escapeHtml(model || 'AI') + '</span>';
+    }
+    if (contentEl) {
+        contentEl.textContent = beautifyJsonForDisplay(rawJson);
+        contentEl.scrollTop = 0;
+    }
+    overlay.style.display = 'flex';
+}
+
+// 将 JSON 文本中字符串字面量内的 \n \t 等转义序列显示为真实控制字符，
+// 便于放大查看时段落自动换行。逐个字符扫描，保持 JSON 结构不被破坏。
+function beautifyJsonForDisplay(text) {
+    if (!text) return '';
+    var out = '';
+    var inString = false;
+    var i = 0;
+    while (i < text.length) {
+        var ch = text.charAt(i);
+        if (inString) {
+            if (ch === '\\') {
+                var next = text.charAt(i + 1);
+                if (next === 'n') { out += '\n'; i += 2; continue; }
+                if (next === 't') { out += '\t'; i += 2; continue; }
+                if (next === 'r') { out += '\r'; i += 2; continue; }
+                if (next === '"' || next === '\\' || next === '/' ||
+                    next === 'b' || next === 'f' || next === 'u') {
+                    out += ch + next; i += 2; continue;
+                }
+                // 孤立反斜杠
+                out += ch; i += 1; continue;
+            }
+            out += ch;
+            if (ch === '"') inString = false;
+            i += 1;
+            continue;
+        }
+        // 不在字符串内
+        if (ch === '"') { inString = true; out += ch; i += 1; continue; }
+        out += ch;
+        i += 1;
+    }
+    return out;
+}
+
+// 关闭放大查看窗口
+function closeLogDetail(event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    var overlay = document.getElementById('logDetailOverlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+// 复制放大窗口中的 JSON 到剪贴板
+function copyLogDetail() {
+    var contentEl = document.getElementById('logDetailContent');
+    if (!contentEl) return;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(contentEl.textContent);
+        } else {
+            // 降级：创建临时 textarea 复制
+            var ta = document.createElement('textarea');
+            ta.value = contentEl.textContent;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
+        showToast('已复制 JSON', 'success');
+    } catch(e) {
+        showToast('复制失败: ' + e.message, 'error');
+    }
+}
+
+// Esc 关闭放大查看窗口
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeLogDetail();
+});
 
 // ============================================
 // 时间戳过滤
@@ -183,6 +281,8 @@ function toggleLogSize() {
 }
 
 // 拖动：按住标题栏拖动悬浮窗
+// 注意：CSS 使用 transform: translate(-50%,-50%) 实现默认居中，
+// 拖动时需将 transform 转换为物理 left/top 定位，避免位置偏移。
 function setupLogDrag() {
     var modal = document.getElementById('logModal');
     var header = document.getElementById('logModalHeader');
@@ -195,6 +295,22 @@ function setupLogDrag() {
         var rect = modal.getBoundingClientRect();
         offsetX = e.clientX - rect.left;
         offsetY = e.clientY - rect.top;
+        // 拖动开始时将 transform 居中转换为物理 left/top
+        var st = window.getComputedStyle ? window.getComputedStyle(modal) : null;
+        if (st && st.transform && st.transform !== 'none') {
+            var m = st.transform.match(/matrix\(([^)]+)\)/);
+            if (m && m[1]) {
+                var parts = m[1].split(',').map(function(v) { return parseFloat(v.trim()); });
+                if (parts.length === 6) {
+                    var tx = parts[4] || 0, ty = parts[5] || 0;
+                    modal.style.left = (rect.left - tx) + 'px';
+                    modal.style.top = (rect.top - ty) + 'px';
+                    modal.style.right = 'auto';
+                    modal.style.bottom = 'auto';
+                    modal.style.transform = 'none';
+                }
+            }
+        }
         e.preventDefault();
     });
     document.addEventListener('mousemove', function(e) {
@@ -311,14 +427,46 @@ window.loadConversationLogs = function(logsJson) {
 };
 
 // ============================================
-// 日志模块初始化（绑定悬浮窗拖动/缩放事件）
+// 日志模块初始化（绑定悬浮窗拖动/缩放事件 + 双击放大事件委托）
 // 悬浮窗 HTML 结构由 BridgeLoader 在加载页面时从
 // view/html/chat_log.html 合并注入到 index.html
 // ============================================
 (function initChatLogModule() {
+    // 双击日志载荷(.log-payload) → 弹出放大查看窗口
+    // 事件委托：直接读取 pre.textContent（浏览器已还原转义实体）与 data-* 属性
+    function setupLogListDblclick() {
+        var list = document.getElementById('logList');
+        if (!list || list.__logDblclickBound) return false;
+        list.__logDblclickBound = true;
+        list.addEventListener('dblclick', function(e) {
+            var payload = e.target && e.target.closest ? e.target.closest('.log-payload') : null;
+            if (!payload) return;
+            var rawJson = payload.textContent || '';
+            var direction = payload.getAttribute('data-log-direction') || '';
+            var model = payload.getAttribute('data-log-model') || '';
+            openLogDetail(rawJson, direction, model);
+        });
+        console.log('[chat_log] ✅ 双击放大事件已绑定');
+        return true;
+    }
+
+    function initAll() {
+        var ok = false;
+        if (document.getElementById('logModal')) initLogFloatWindow();
+        ok = setupLogListDblclick();
+        // #logList 尚未注入时（页面加载时序），延迟重试直到绑定成功
+        if (!ok) {
+            var tries = 0;
+            var timer = setInterval(function() {
+                tries++;
+                if (setupLogListDblclick() || tries > 50) clearInterval(timer);
+            }, 100);
+        }
+    }
+
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initLogFloatWindow);
+        document.addEventListener('DOMContentLoaded', initAll);
     } else {
-        initLogFloatWindow();
+        initAll();
     }
 })();

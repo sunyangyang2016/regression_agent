@@ -35,17 +35,24 @@
 }
 
 /* === AI 通信日志悬浮窗样式 === */
-/* 悬浮窗容器：非模态，可拖动、可缩放 */
+/* 悬浮窗容器：非模态，可拖动、可缩放；默认显示于主窗口正中 */
 .floating-log {
-  position: fixed; right: 24px; bottom: 100px;
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
   width: 520px; height: 400px; min-width: 320px; min-height: 240px;
   background: var(--bg-primary); border: 1px solid var(--border-color);
   border-radius: var(--radius-lg); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   display: flex; flex-direction: column; z-index: 2000;
   /* 缩放由 JS 控制柄（.floating-log-resize）实现，不用 CSS resize */
   overflow: hidden;
-  animation: floatLogIn 0.18s ease;
+  animation: floatLogInCentered 0.18s ease;
 }
+/* 日志悬浮窗居中入场动画：保留 translate(-50%,-50%) 避免弹跳偏移 */
+@keyframes floatLogInCentered {
+  from { transform: translate(-50%, -50%) scale(0.92); opacity: 0; }
+  to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+/* 通用缩放入场动画（供放大查看模态层等使用） */
 @keyframes floatLogIn { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 /* 拖拽标题栏 */
@@ -156,4 +163,57 @@
 .log-filter-count {
   font-size: 11px; color: var(--text-muted);
   display: flex; align-items: center; gap: 4px; margin-left: auto; white-space: nowrap;
+}
+
+/* === 放大查看模态层（双击请求/响应 JSON 弹出） === */
+.log-detail-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 3000;
+}
+.log-detail-modal {
+  width: 86vw; max-width: 1100px;
+  height: 88vh; max-height: 900px;
+  margin: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  animation: floatLogIn 0.18s ease;
+}
+.log-detail-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+.log-detail-header h3 {
+  margin: 0; font-size: 14px; font-weight: 600; color: var(--text-primary);
+  display: flex; align-items: center; gap: 8px;
+}
+.log-detail-header h3 i { color: var(--accent-primary); }
+.log-detail-actions { display: flex; align-items: center; gap: 4px; }
+.log-detail-actions button {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--text-secondary);
+  cursor: pointer; border-radius: var(--radius-sm); font-size: 13px;
+  transition: var(--transition);
+}
+.log-detail-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.log-detail-content {
+  flex: 1; margin: 0;
+  padding: 16px 20px;
+  overflow: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 12px; line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;   /* 保留格式 + 超长行自动换行 */
+  word-break: break-word;  /* 长单词/URL 在必要时断开，避免撑出横向滚动 */
+  background: var(--bg-primary);
 }
