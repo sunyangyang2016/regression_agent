@@ -152,7 +152,7 @@ MCP（Model Context Protocol，模型上下文协议）是本系统中连接外�
 │     │     📁 = 目录（跳过）| 📄 = 普通文件（可读取）                  │
 │     ├─ 2. file_ops(Open): 打开读取关键文件内容                      │
 │     │     （.mcp.json / package.json / pyproject.toml / 入口文件）  │
-│     ├─ 3. run_command: 自动安装依赖                                │
+│     ├─ 3. execute_system_command: 自动安装依赖                      │
 │     │     requirements.txt → pip install /                        │
 │     │     package.json → npm install /                            │
 │     │     pyproject.toml → pip install -e .                       │
@@ -364,7 +364,7 @@ MCP（Model Context Protocol，模型上下文协议）是本系统中连接外�
 |------|------|
 | `directory_ops(Readdir)` | 列出服务器目录文件（AI 流程第 1 步） |
 | `file_ops(Open)` | 读取服务器文件内容（AI 流程第 2 步） |
-| `run_command` | 在服务器目录执行安装依赖命令（AI 流程第 3 步） |
+| `execute_system_command` | 在服务器目录执行安装依赖命令（AI 流程第 3 步） |
 | `mcp_env_setup(server_id)` | 请求 API Key → 触发前端弹窗（AI 流程第 4 步） |
 | `mcp_finalize_install(config_json)` | 完成安装：写配置 + 启动（AI 流程第 5 步） |
 | `confirmEnvVars(server_id, env_json)` | 用户确认环境变量后的回调保存 |

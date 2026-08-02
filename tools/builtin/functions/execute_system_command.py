@@ -1,5 +1,5 @@
 """
-Shell 命令执行工具 — 让 AI 可以执行 Git clone、npm install 等命令
+系统指令执行器工具 — 让 AI 可以执行 Git clone、npm install 等命令
 修复：Windows pipe 阻塞问题，使用行读取 + 超时 kill 机制
 """
 import subprocess
@@ -10,14 +10,14 @@ import time
 import queue
 import threading
 
-NAME = "run_command"
+NAME = "execute_system_command"
 DESCRIPTION = "执行 Shell 命令（如 git clone、npm install、pip install、ls、dir 等），返回命令输出结果"
 
 TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "run_command",
+            "name": "execute_system_command",
             "description": "在本地系统执行 Shell 命令（如 git clone、npm install、pip install、dir、ls 等），返回命令的标准输出和错误输出。注意：长时间运行的命令会有超时限制。",
             "parameters": {
                 "type": "object",
@@ -37,6 +37,11 @@ TOOLS = [
                 },
                 "required": ["command"]
             }
+        },
+        "display": {
+            "name_cn": "系统指令执行器",
+            "description_cn": "在本地系统执行 Shell 命令（如 git clone、npm install、pip install 等），返回命令输出",
+            "icon": "fa-terminal"
         }
     }
 ]
@@ -138,7 +143,7 @@ def _read_output(process, timeout: int, on_line: callable = None) -> str:
     return "\n".join(output_lines)
 
 
-def run_command(arguments: dict) -> str:
+def execute_system_command(arguments: dict) -> str:
     """执行 Shell 命令并返回输出，同时将输出打印到 UI 日志"""
     command = arguments.get("command", "")
     cwd = arguments.get("cwd", None)
@@ -150,9 +155,9 @@ def run_command(arguments: dict) -> str:
     def log(msg):
         print(msg)
     
-    log(f"[run_command] 执行: {command}")
+    log(f"[execute_system_command] 执行: {command}")
     if cwd:
-        log(f"[run_command] 工作目录: {cwd}")
+        log(f"[execute_system_command] 工作目录: {cwd}")
     
     process = None
     try:
@@ -187,10 +192,10 @@ def run_command(arguments: dict) -> str:
                 return_code = -1
         
         if return_code == 0:
-            log(f"[run_command] ✅ 成功 (code=0)")
+            log(f"[execute_system_command] ✅ 成功 (code=0)")
             return f"✅ 命令执行成功 (code=0):\n{output[:4000]}"
         else:
-            log(f"[run_command] ⚠️ 返回 code={return_code}")
+            log(f"[execute_system_command] ⚠️ 返回 code={return_code}")
             return f"⚠️ 命令返回 code={return_code}:\n{output[:4000]}"
             
     except Exception as e:

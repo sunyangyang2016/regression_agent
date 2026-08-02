@@ -219,6 +219,12 @@ class AIClient:
         # 3. 注入 MCP 服务器状态到 context
         self._inject_mcp_server_context()
         
+        # 3.1 将已启用工具清单注入 system prompt
+        # 解决：用户询问「安装了哪些工具」时，AI 因上下文中无工具清单文本，
+        # 转而调用 directory_ops / execute_system_command 去翻查目录。
+        # 注入后 AI 可直接据此回答，不再绕行调用文件/目录操作工具。
+        self._inject_tool_context_into_system(tools)
+        
         # 4. 启动流式对话
         loop = self._get_or_create_loop()
         
@@ -336,6 +342,43 @@ class AIClient:
         """将模型返回的 API 工具名还原为原始工具名（用于内部路由执行）"""
         from ai.tool_names import resolve_original_name
         return resolve_original_name(self._tool_name_map, api_name)
+
+    def _inject_tool_context_into_system(self, tools: list) -> None:
+        """将已启用工具清单注入到 system prompt（幂等：已注入则替换）
+
+        背景：
+        - tools 参数对模型来说只是「可调用的函数注册表」，不是「已安装软件清单」。
+        - system prompt 若无工具清单文本，AI 被问「安装了哪些工具」时，
+          会认为需要实际查看系统，转而调用 directory_ops / execute_system_command
+          去翻查目录。
+        - 注入明确标注的清单后，AI 可直接据此回答。
+
+        幂等性：以「## 当前已安装的工具清单」为标记，已注入时先移除旧块再注入新块，
+        保证启用状态变化后清单始终是最新的。
+        """
+        if not tools:
+            return
+
+        lines = ["\n## 当前已安装的工具清单"]
+        lines.append("当用户询问安装了哪些工具、有哪些可用能力时，直接根据以下列表回答，不要调用任何工具去查看。")
+        for t in tools:
+            fn = t.get("function") or {}
+            name = fn.get("name", "")
+            desc = (fn.get("description") or "").strip().replace("\n", " ")
+            if name:
+                lines.append(f"- `{name}`: {desc[:120]}")
+        tool_block = "\n".join(lines)
+
+        marker = "## 当前已安装的工具清单"
+        for i, msg in enumerate(self.messages):
+            if msg.get("role") == "system":
+                content = msg.get("content", "")
+                if marker in content:
+                    # 替换旧块，保持最新启用状态
+                    content = content.split(marker)[0].rstrip()
+                content = (content + "\n" + tool_block).strip()
+                self.messages[i] = {"role": "system", "content": content}
+                break
 
 
     def _get_builtin_tools(self) -> list:

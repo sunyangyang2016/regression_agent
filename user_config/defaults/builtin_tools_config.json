@@ -1,6 +1,6 @@
 {
   "enabled_tools": [
-    "run_command",
+    "execute_system_command",
     "current_time",
     "file_ops",
     "mcp_finalize_install",

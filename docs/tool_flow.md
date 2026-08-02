@@ -61,7 +61,7 @@
 
 | 工具名 | 功能 | 处理函数 |
 |--------|------|---------|
-| `run_command` | 执行 Shell 命令（git clone、npm install 等），支持超时 kill | `run_command()` |
+| `execute_system_command` | 执行 Shell 命令（git clone、npm install 等），支持超时 kill | `execute_system_command()` |
 | `github_get_issue` | 获取 GitHub Issue 详情 | `github_get_issue()` |
 | `get_weather` | 查询天气 | `get_weather()` |
 | `current_time` | 获取当前时间 | `current_time()` |
@@ -89,7 +89,7 @@
 | `mcp_env_setup.py` | `mcp_env_setup` | MCP 环境变量设置 |
 | `mcp_server_install.py` | `mcp_finalize_install` | MCP 安装完成 |
 | `network_checker.py` | `network_checker` | 网络连通性检测 |
-| `run_command.py` | `run_command` | Shell 命令执行 |
+| `execute_system_command.py` | `execute_system_command` | Shell 命令执行 |
 | `string_processor.py` | `string_processor` | 字符串处理 |
 | `system_inspector.py` | `system_inspector` | 系统信息检查 |
 | `time_helper.py` | `time_helper` | 时间工具 |
@@ -225,7 +225,7 @@ Controller/ToolBridge ──► BuiltinManager ──► functions/*.py（TOOLS 
 ```json
 {
   "enabled_tools": [
-    "run_command",
+    "execute_system_command",
     "github_get_issue",
     "get_weather",
     "current_time",
@@ -269,7 +269,7 @@ ToolBridge.toggleTool(name, enabled)
 ### 6.1 单工具调用
 
 ```
-LLM 返回 tool_call (function: run_command)
+LLM 返回 tool_call (function: execute_system_command)
     │
     ▼
 ToolDispatcher.execute(tool_name, arguments)
@@ -287,19 +287,19 @@ ToolDispatcher.execute(tool_name, arguments)
     └─ 成功 → 返回结果字符串
 ```
 
-### 6.2 执行链（以 run_command 为例）
+### 6.2 执行链（以 execute_system_command 为例）
 
 ```
-ToolDispatcher.execute("run_command", {command: "git clone ...", cwd: "..."})
+ToolDispatcher.execute("execute_system_command", {command: "git clone ...", cwd: "..."})
     │
     ▼
-BuiltinManager.execute_tool("run_command", args)
+BuiltinManager.execute_tool("execute_system_command", args)
     │
-    ├─ 校验 enabled_tools 包含 "run_command"？否 → 返回未启用提示
+    ├─ 校验 enabled_tools 包含 "execute_system_command"？否 → 返回未启用提示
     ├─ _tool_handlers 为空 → 懒加载 get_tools_for_api()
     │
     ▼
-handler = run_command(args)
+handler = execute_system_command(args)
     │
     ▼
 subprocess.Popen(shell=True, stdout=PIPE, stderr=STDOUT, text=True)
@@ -343,7 +343,7 @@ ALLOWED_MODULES = {
 - **超时保护**：默认 10 秒，超时返回 `执行超时`
 - **临时文件清理**：执行完毕自动删除临时 .py 文件
 
-### 7.3 命令执行安全（run_command）
+### 7.3 命令执行安全（execute_system_command）
 
 - **超时限制**：默认 60 秒，最大 300 秒，超时强制 `process.kill()`
 - **实时输出**：行读取模式（支持 `\r` 进度条），避免 Windows 管道阻塞
@@ -360,9 +360,9 @@ ALLOWED_MODULES = {
 | 工具处理器不存在 | `BuiltinManager.execute_tool` | `⚠️ 工具 'xxx' 未实现处理器` |
 | 执行超时 | `ToolDispatcher.execute`（30s） | `❌ 内建工具 'xxx' 执行超时（30s）` |
 | 执行异常 | `ToolDispatcher.execute` 捕获 Exception | `❌ 内建工具 'xxx' 执行失败: {error}` |
-| 命令未提供 | `run_command` | `❌ 请提供要执行的命令` |
-| 命令执行失败 | `run_command` returncode != 0 | `⚠️ 命令返回 code={code}: {output}` |
-| 命令执行超时 | `run_command` 超时 kill | `⏱️ 命令执行超时 ({timeout}秒)，已强制终止` |
+| 命令未提供 | `execute_system_command` | `❌ 请提供要执行的命令` |
+| 命令执行失败 | `execute_system_command` returncode != 0 | `⚠️ 命令返回 code={code}: {output}` |
+| 命令执行超时 | `execute_system_command` 超时 kill | `⏱️ 命令执行超时 ({timeout}秒)，已强制终止` |
 | 沙箱模块越权 | `ToolSandbox` AST 检查 | `不允许导入模块: {module}` |
 | 沙箱语法错误 | `ToolSandbox` AST 解析 | `语法错误: {error}` |
 

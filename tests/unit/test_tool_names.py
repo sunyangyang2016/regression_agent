@@ -111,7 +111,7 @@ def test_get_tools_for_api_sanitizes_all_sources_and_maps(monkeypatch):
     def fake_builtin():
         return [
             {"type": "function", "function": {"name": "calculate", "description": "d", "parameters": {}}},
-            {"type": "function", "function": {"name": "run.command", "description": "d", "parameters": {}}},
+            {"type": "function", "function": {"name": "execute.system_command", "description": "d", "parameters": {}}},
         ]
 
     def fake_mcp():
@@ -135,7 +135,7 @@ def test_get_tools_for_api_sanitizes_all_sources_and_maps(monkeypatch):
 
     # 模型回调名 → 原始工具名 的还原
     assert client._resolve_tool_api_name("calculate") == "calculate"
-    assert client._resolve_tool_api_name("run_command") == "run.command"
+    assert client._resolve_tool_api_name("execute_system_command") == "execute.system_command"
     assert client._resolve_tool_api_name("mcp_tool_1") == "mcp/tool 1"
     assert client._resolve_tool_api_name("skill") == "skill_查询"
     # 未注册名原样返回
