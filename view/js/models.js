@@ -258,7 +258,7 @@ function deleteModel(id){
         renderModelList();
         updateModelCount();
         showToast('已删除: '+model.name,'info');
-    }, {title:'删除模型', confirmText:'删除', cancelText:'取消', danger:true, icon:'\uD83D\uDDD1\uFE0F'});
+    }, {title:'删除模型', confirmText:'删除', cancelText:'取消', danger:true, icon:'🗑️'});
 }
 
 function testCurrentModel(){

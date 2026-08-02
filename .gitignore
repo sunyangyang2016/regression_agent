@@ -48,6 +48,7 @@ user_config/defaults/models.json
 user_config/defaults/mcp_servers.json
 
 # Database
+user_config/database/
 *.db
 *.sqlite
 *.sqlite3

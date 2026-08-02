@@ -1,0 +1,37 @@
+"""
+会话实体 — ChatSession
+对应数据库表 history_sessions_index 的业务对象
+"""
+from datetime import datetime
+from typing import Optional
+
+from model.entities.base import BaseEntity
+
+
+class ChatSession(BaseEntity):
+    """会话实体"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.title: str = kwargs.get("title", "新对话")
+        self.model: str = kwargs.get("model", "")
+        self.message_count: int = kwargs.get("message_count", 0)
+        self.token_count: int = kwargs.get("token_count", 0)
+        self.status: str = kwargs.get("status", "active")
+
+    def to_dict(self, for_db: bool = False) -> dict:
+        """转 dict（可选：仅含数据库字段）"""
+        data = super().to_dict()
+        if for_db:
+            # 仅保留 history_sessions_index 表字段
+            return {
+                "id": data.get("id"),
+                "title": data.get("title"),
+                "model": data.get("model"),
+                "message_count": data.get("message_count"),
+                "token_count": data.get("token_count"),
+                "status": data.get("status"),
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+            }
+        return data

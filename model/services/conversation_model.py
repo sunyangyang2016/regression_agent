@@ -1,6 +1,7 @@
 """
 ConversationModel - 会话模型
 管理会话数据与持久化逻辑（SQLite 数据库）
+业务层面向业务实体（ChatSession / ChatMessage），经 Repository 持久化
 """
 import uuid
 import threading
@@ -9,8 +10,8 @@ from typing import Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from model.entities.conversation import ConversationModel as ConversationEntity
-from model.entities.message import MessageModel as MessageEntity
+from model.entities.chat_session import ChatSession
+from model.entities.chat_message import ChatMessage
 
 
 class ConversationModel(QObject):
@@ -27,8 +28,8 @@ class ConversationModel(QObject):
         self._current_user_content: Optional[str] = None
         self._save_lock = threading.Lock()
         # Lazy import to avoid circular import
-        from data.repositories.conversation_repo import ConversationRepository
-        from data.repositories.message_repo import MessageRepository
+        from storage.repositories.conversation_repo import ConversationRepository
+        from storage.repositories.message_repo import MessageRepository
         self._conv_repo = ConversationRepository()
         self._msg_repo = MessageRepository()
 
@@ -44,7 +45,7 @@ class ConversationModel(QObject):
         conv_id = str(uuid.uuid4())
         now = datetime.now()
         
-        conv = ConversationEntity(
+        conv = ChatSession(
             id=conv_id,
             title="新对话",
             model=model_name,
@@ -79,8 +80,8 @@ class ConversationModel(QObject):
             return
         
         now = datetime.now()
-        msg = MessageEntity(
-            conversation_id=self._current_conversation_id,
+        msg = ChatMessage(
+            session_id=self._current_conversation_id,
             role=role,
             content=content,
             created_at=now
@@ -130,7 +131,6 @@ class ConversationModel(QObject):
             conv = self._conv_repo.get(self._current_conversation_id)
             if conv:
                 conv.token_count = token_count
-                from datetime import datetime
                 conv.updated_at = datetime.now()
                 self._conv_repo.save(conv)
 
@@ -163,7 +163,7 @@ class ConversationModel(QObject):
         return self._get_sidebar_data()
 
     def _get_sidebar_data(self):
-        """获取侧边栏对话列表（直接查 SQLite）"""
+        """获取侧边栏对话列表"""
         with self._save_lock:
             all_convs = self._conv_repo.get_all()
         

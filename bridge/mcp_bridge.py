@@ -39,20 +39,12 @@ class MCPBridge(BridgeBase):
         self._log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "mcp")
         os.makedirs(self._log_dir, exist_ok=True)
         self._log_paths: dict = {}  # item_id → log file path
-        self._init_market_db()
         
         # 注册 MCPHost 状态变化回调 — 推模式，不轮询
         from tools.mcp.host import MCPHost
         def _on_mcp_status():
             self.execute_js("loadMCPServers();")
         MCPHost.on_status_change(_on_mcp_status)
-
-    def _init_market_db(self):
-        try:
-            from data.mcp_db import MCPDatabase
-            MCPDatabase()
-        except Exception as e:
-            print(f"[MCPBridge] ⚠️ 初始化市场数据库失败: {e}")
 
     def _get_log_path(self, item_id: str) -> str:
         """获取日志文件路径。优先使用注册的自定义路径，否则使用默认日志目录"""
@@ -713,7 +705,7 @@ class MCPBridge(BridgeBase):
     @pyqtSlot(result=str)
     def getMCPMarket(self):
         try:
-            from data.repositories.mcp_market_repo import MCPMarketRepository
+            from storage.repositories.mcp_market_repo import MCPMarketRepository
             repo = MCPMarketRepository()
             count = repo.count()
             if count > 0:
@@ -778,7 +770,7 @@ class MCPBridge(BridgeBase):
                 cached.append({"id": full_item["id"], "name": full_item["name"], "githubRepoUrl": full_item["githubRepoUrl"]})
         self._cached_market_items = cached
         try:
-            from data.repositories.mcp_market_repo import MCPMarketRepository
+            from storage.repositories.mcp_market_repo import MCPMarketRepository
             repo = MCPMarketRepository()
             repo.upsert_many(items)
             self._js_log("market", f"💾 已保存 {len(items)} 条市场数据到数据库")
@@ -794,7 +786,7 @@ class MCPBridge(BridgeBase):
                     item["installed"] = True
                     # 同步 installed 到数据库持久化
                     try:
-                        from data.repositories.mcp_market_repo import MCPMarketRepository
+                        from storage.repositories.mcp_market_repo import MCPMarketRepository
                         _repo = MCPMarketRepository()
                         _repo.upsert(item)
                     except Exception:
@@ -811,7 +803,7 @@ class MCPBridge(BridgeBase):
             if citem.get("id") == item_id:
                 return citem
         try:
-            from data.repositories.mcp_market_repo import MCPMarketRepository
+            from storage.repositories.mcp_market_repo import MCPMarketRepository
             repo = MCPMarketRepository()
             return repo.get_by_id(item_id)
         except Exception:
@@ -947,7 +939,7 @@ class MCPBridge(BridgeBase):
                 install_name = market_item.get("name", item_id)
             else:
                 try:
-                    from data.repositories.mcp_market_repo import MCPMarketRepository
+                    from storage.repositories.mcp_market_repo import MCPMarketRepository
                     repo = MCPMarketRepository()
                     db_item = repo.get_by_id(item_id)
                     if db_item:
@@ -1360,7 +1352,7 @@ class MCPBridge(BridgeBase):
                 self.execute_js("loadMCPServers();")
             # 持久化 installed 状态到数据库
             try:
-                from data.repositories.mcp_market_repo import MCPMarketRepository
+                from storage.repositories.mcp_market_repo import MCPMarketRepository
                 repo = MCPMarketRepository()
                 db_item = repo.get_by_id(ctx.get("item_id", "")) if hasattr(repo, 'get_by_id') else {}
                 if db_item:
@@ -1411,7 +1403,7 @@ class MCPBridge(BridgeBase):
             self.execute_js("loadMCPServers();")
             # 持久化 installed 状态到数据库
             try:
-                from data.repositories.mcp_market_repo import MCPMarketRepository
+                from storage.repositories.mcp_market_repo import MCPMarketRepository
                 repo = MCPMarketRepository()
                 db_item = repo.get_by_id(item_id)
                 if db_item:

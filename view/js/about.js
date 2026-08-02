@@ -7,7 +7,7 @@ function renderAbout() {
     var aboutBody = document.getElementById('tabAbout');
     if (!aboutBody) { console.warn('[About] tabAbout not found'); return; }
     
-    var version = '1.0.1alpha';
+    var version = '1.0.2alpha';
     var author = '孙洋洋';
     var license = 'MIT License';
     
@@ -17,11 +17,11 @@ function renderAbout() {
         '<span class="about-logo">⚡</span>' +
         '<div class="about-title">Agent</div>' +
         '<div class="about-version" id="aboutVersion">版本 ' + version + '</div>' +
-        '<div class="about-release">发布日期: 2026年7月19日</div>' +
+        '<div class="about-release">发布日期: 2026年8月1日</div>' +
         '<hr class="about-divider">' +
         '<div class="about-info-grid">' +
             '<div class="about-info-item"><div class="label">软件版本</div><div class="value" id="aboutVersionItem">' + version + '</div></div>' +
-            '<div class="about-info-item"><div class="label">发布日期</div><div class="value">2026-07-19</div></div>' +
+            '<div class="about-info-item"><div class="label">发布日期</div><div class="value">2026-08-01</div></div>' +
             '<div class="about-info-item"><div class="label">作者</div><div class="value" id="aboutAuthor">' + author + '</div></div>' +
             '<div class="about-info-item"><div class="label">许可证</div><div class="value" id="aboutLicense">' + license + '</div></div>' +
             '<div class="about-info-item"><div class="label">GitHub</div><div class="value"><a href="https://github.com/sunyangyang2016/regression_agent" target="_blank" onclick="event.preventDefault();window.mcp_bridge && window.mcp_bridge.openExternalUrl(\'https://github.com/sunyangyang2016/regression_agent\');">github.com/sunyangyang2016/regression_agent</a></div></div>' +

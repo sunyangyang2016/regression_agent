@@ -40,13 +40,13 @@ function showConfirmDialog(message, onConfirm, opts){
     var dangerColor=opts.danger?'#e5484d':'var(--accent-color,#8ab4f8)';
     dialog.innerHTML=
         '<div style="display:flex;align-items:center;margin-bottom:14px;">'+
-            '<div style="font-size:20px;margin-right:10px;">'+(opts.icon||'\u26A0\uFE0F')+'</div>'+
-            '<div style="font-size:15px;font-weight:600;color:var(--text-primary,#e8eaed);">'+esc(opts.title||'\u64CD\u4F5C\u786E\u8BA4')+'</div>'+
+            '<div style="font-size:20px;margin-right:10px;">'+(opts.icon||'⚠️')+'</div>'+
+            '<div style="font-size:15px;font-weight:600;color:var(--text-primary,#e8eaed);">'+esc(opts.title||'操作确认')+'</div>'+
         '</div>'+
         '<div style="font-size:13px;line-height:1.7;color:var(--text-secondary,#b0b6c0);word-break:break-all;margin-bottom:18px;">'+esc(message)+'</div>'+
         '<div style="display:flex;gap:10px;justify-content:flex-end;border-top:1px solid var(--border-color,#2d3240);padding-top:14px;">'+
-            '<button id="confirmDialogCancel" style="padding:8px 20px;border:1px solid var(--border-color,#2d3240);border-radius:6px;background:var(--bg-secondary,#22252b);color:var(--text-primary,#e8eaed);cursor:pointer;font-size:13px;">'+esc(opts.cancelText||'\u53D6\u6D88')+'</button>'+
-            '<button id="confirmDialogOk" style="padding:8px 20px;border:none;border-radius:6px;background:'+dangerColor+';color:#fff;cursor:pointer;font-size:14px;font-weight:600;">'+esc(opts.confirmText||'\u786E\u5B9A')+'</button>'+
+            '<button id="confirmDialogCancel" style="padding:8px 20px;border:1px solid var(--border-color,#2d3240);border-radius:6px;background:var(--bg-secondary,#22252b);color:var(--text-primary,#e8eaed);cursor:pointer;font-size:13px;">'+esc(opts.cancelText||'取消')+'</button>'+
+            '<button id="confirmDialogOk" style="padding:8px 20px;border:none;border-radius:6px;background:'+dangerColor+';color:#fff;cursor:pointer;font-size:14px;font-weight:600;">'+esc(opts.confirmText||'确定')+'</button>'+
         '</div>';
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);

@@ -9,15 +9,7 @@ from .base import BridgeBase
 
 
 class SkillBridge(BridgeBase):
-    """技能桥接 — 技能管理"""
-
-    def _get_repo(self):
-        try:
-            from data.repositories.skill_repo import SkillRepository
-            return SkillRepository()
-        except Exception as e:
-            print(f"[SkillBridge] ❌ 获取技能仓库失败: {e}")
-            return None
+    """技能桥接 — 技能管理（技能数据由文件系统加载，不写入数据库）"""
 
     def _get_skill_mgr(self):
         if self.app_controller and hasattr(self.app_controller, 'skill_manager'):
@@ -75,24 +67,6 @@ class SkillBridge(BridgeBase):
                     })
             except Exception as e:
                 print(f"[SkillBridge] ⚠️ getSkills md: {e}")
-
-        # 如果 registry 为空，尝试从仓库加载
-        if not python_skills and not md_skills:
-            try:
-                repo = self._get_repo()
-                if repo:
-                    for s in repo.get_all():
-                        python_skills.append({
-                            "name": s.name,
-                            "description": s.description,
-                            "category": s.category,
-                            "enabled": s.enabled,
-                            "source": s.source or "python",
-                            "version": "1.0.0",
-                            "tags": [],
-                        })
-            except Exception as e:
-                print(f"[SkillBridge] ⚠️ getSkills repo: {e}")
 
         result = python_skills + md_skills
         return json.dumps(result, ensure_ascii=False)

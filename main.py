@@ -49,6 +49,11 @@ sys.excepthook = _global_excepthook
 
 def main():
     try:
+        # ★ 数据库全局初始化（在任何组件创建前）
+        # 集中封装：建连接 + 注入模型 + 确保 4 张表存在（幂等建表，不做数据迁移）
+        from storage.initializer import DatabaseInitializer
+        DatabaseInitializer.initialize()
+
         from core.agent import Agent
         agent = Agent()
         agent.run()

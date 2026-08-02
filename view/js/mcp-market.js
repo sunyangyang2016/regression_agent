@@ -111,7 +111,7 @@ function renderMCPMarket() {
     if (appState.mcpMarket.length === 0) {
         c.innerHTML = '<div style="text-align:center;padding:30px 20px;color:var(--text-muted);">'
             + '<div style="font-size:36px;margin-bottom:10px;">📦</div>'
-            + '<div style="font-size:14px;color:var(--text-secondary);">暂无市场数据，加载 GitHub Marketplace 中...</div></div>';
+            + '<div style="font-size:14px;color:var(--text-secondary);">暂无市场数据，点击"刷新市场"从 GitHub 加载</div></div>';
         if (statsEl) statsEl.textContent = '';
         return;
     }
