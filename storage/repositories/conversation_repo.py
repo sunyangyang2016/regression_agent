@@ -35,10 +35,10 @@ class ConversationRepository:
         )
         if existing:
             self.db.execute(
-                f"UPDATE {self.TABLE} SET title=?, model=?, message_count=?, token_count=?, status=?, updated_at=? WHERE id=?",
+                f"UPDATE {self.TABLE} SET title=?, model=?, message_count=?, token_count=?, status=?, updated_at=?, log_file=? WHERE id=?",
                 (data.get("title"), data.get("model"), data.get("message_count"),
                  data.get("token_count"), data.get("status"), data.get("updated_at"),
-                 data.get("id")),
+                 data.get("log_file"), data.get("id")),
             )
         else:
             # 若无 id 自动生成，并回写到实体对象（业务层可直接取用）
@@ -48,11 +48,11 @@ class ConversationRepository:
                 data["id"] = generated
                 item.id = generated  # 回写
             self.db.execute(
-                f"INSERT INTO {self.TABLE} (id, title, model, message_count, token_count, status, created_at, updated_at) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO {self.TABLE} (id, title, model, message_count, token_count, status, created_at, updated_at, log_file) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (data.get("id"), data.get("title"), data.get("model"),
                  data.get("message_count"), data.get("token_count"), data.get("status"),
-                 data.get("created_at"), data.get("updated_at")),
+                 data.get("created_at"), data.get("updated_at"), data.get("log_file")),
             )
         return True
 

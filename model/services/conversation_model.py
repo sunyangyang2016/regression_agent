@@ -123,6 +123,25 @@ class ConversationModel(QObject):
                 return conv.token_count or 0
             return 0
 
+    def get_log_file(self, conversation_id: str) -> Optional[str]:
+        """获取指定对话的 AI 通信日志文件路径（可能为 None）"""
+        with self._save_lock:
+            conv = self._conv_repo.get(conversation_id)
+            if conv:
+                return conv.log_file or None
+            return None
+
+    def update_log_file(self, log_file: str):
+        """更新当前对话的 AI 通信日志文件路径到数据库"""
+        if not self._current_conversation_id:
+            return
+        with self._save_lock:
+            conv = self._conv_repo.get(self._current_conversation_id)
+            if conv:
+                conv.log_file = log_file
+                conv.updated_at = datetime.now()
+                self._conv_repo.save(conv)
+
     def update_token_count(self, token_count: int):
         """更新当前对话的累计 token 数到数据库"""
         if not self._current_conversation_id:

@@ -23,10 +23,8 @@ env/
 .DS_Store
 Thumbs.db
 
-# Logs
-logs/*.log
-logs/archive/
-logs/mcp/
+# Logs（logs 目录下所有文件均不纳入版本库，含会话 AI 通信日志 history/）
+logs/
 
 # MCP Server
 tools/mcp/server/

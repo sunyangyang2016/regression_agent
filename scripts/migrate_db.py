@@ -13,6 +13,7 @@
 版本对照（软件版本 → 数据库 schema 版本）:
     v1.0.1alpha 及以前（旧版）: schema_version = 0（无版本标记）
     v1.0.2alpha（新数据库存储）: schema_version = 1
+    v1.0.3alpha（会话日志文件持久化）: schema_version = 2
 """
 import json
 import os
@@ -26,7 +27,7 @@ AGENT_DB = os.path.join(DB_DIR, "agent.db")
 LEGACY_MCP_DB = os.path.join(DB_DIR, "mcp.db")
 
 # 当前数据库 schema 版本（与软件版本对应）
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # 迁移注册表: {目标版本: (描述, 迁移函数)}
 MIGRATIONS = {}
@@ -43,6 +44,19 @@ def register_migration(version, description):
 # ==========================================
 # 迁移函数（按版本顺序）
 # ==========================================
+
+@register_migration(2, "为 history_sessions_index 表添加 log_file 列（AI 通信日志文件路径）")
+def migrate_v2(conn: sqlite3.Connection):
+    """schema v2: 为会话索引表添加 log_file 列，存储 AI 通信日志 JSON 文件路径"""
+    # 注意：main() 中连接未设置 row_factory，PRAGMA 返回元组，用 [1] 取列名
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(history_sessions_index)").fetchall()]
+    if "log_file" not in columns:
+        conn.execute("ALTER TABLE history_sessions_index ADD COLUMN log_file TEXT")
+        print("  [迁移 v2] history_sessions_index 已添加 log_file 列")
+    else:
+        print("  [迁移 v2] history_sessions_index 已存在 log_file 列，跳过")
+    conn.execute("PRAGMA user_version = 2")
+
 
 @register_migration(1, "创建 4 张数据表 + 从旧版 mcp.db 迁移市场数据")
 def migrate_v1(conn: sqlite3.Connection):
@@ -219,12 +233,18 @@ def run_migrations(conn: sqlite3.Connection):
         print(f"\n执行迁移 -> v{version}: {desc}")
         try:
             # 每个迁移独立事务
+            # 注意：migrate_v1 内部使用 executescript() 会隐式提交挂起事务，
+            #       因此迁移函数完后需用 in_transaction 判断是否仍有活动事务。
             conn.execute("BEGIN")
             func(conn)
-            conn.execute("COMMIT")
+            if conn.in_transaction:
+                conn.execute("COMMIT")
+            else:
+                print(f"  [提示] v{version} 内部已隐式提交事务（executescript）")
             print(f"  [完成] schema v{version}")
         except Exception as e:
-            conn.execute("ROLLBACK")
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
             print(f"  [失败] schema v{version}: {e}")
             raise
 

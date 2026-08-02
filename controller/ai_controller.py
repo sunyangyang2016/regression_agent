@@ -13,6 +13,7 @@ class AIController(QObject):
     stream_complete = pyqtSignal(str)
     stream_error = pyqtSignal(str)
     tool_call_received = pyqtSignal(str, str, str)
+    raw_log = pyqtSignal(str)  # 底层 AI 通信原始 JSON 日志（request/response）
 
     def __init__(self, ai_client, model_config, parent=None):
         super().__init__(parent)
@@ -21,6 +22,12 @@ class AIController(QObject):
         self.messages = self._get_initial_messages()
         self._connected = False
         self._stream_buffer = ""
+        # 将底层原始日志回调注入到 AIClient
+        self.ai_client.on_raw_log = self._on_raw_log
+
+    def _on_raw_log(self, raw_json: str):
+        """接收底层 AI 通信原始 JSON 日志并从 Qt 信号发出去"""
+        self.raw_log.emit(raw_json)
 
     def _get_initial_messages(self):
         system_prompt = self.model_config.get("chat", "system_prompt")

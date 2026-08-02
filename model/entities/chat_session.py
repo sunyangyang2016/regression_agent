@@ -18,6 +18,8 @@ class ChatSession(BaseEntity):
         self.message_count: int = kwargs.get("message_count", 0)
         self.token_count: int = kwargs.get("token_count", 0)
         self.status: str = kwargs.get("status", "active")
+        # AI 通信日志文件路径（logs/history 下的 JSON 文件）
+        self.log_file: Optional[str] = kwargs.get("log_file") or None
 
     def to_dict(self, for_db: bool = False) -> dict:
         """转 dict（可选：仅含数据库字段）"""
@@ -33,5 +35,6 @@ class ChatSession(BaseEntity):
                 "status": data.get("status"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
+                "log_file": data.get("log_file") or None,
             }
         return data

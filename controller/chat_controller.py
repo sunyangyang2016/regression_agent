@@ -3,7 +3,12 @@ ChatController - 聊天控制器
 接收用户交互事件，调用 Model 更新数据，决定 View 如何刷新
 """
 import json
+import os
+import re
 import threading
+import time
+from datetime import datetime
+from typing import Optional
 from PyQt5.QtCore import QObject, pyqtSignal
 
 LOG = "[ChatController]"
@@ -32,10 +37,19 @@ class ChatController(QObject):
         self._session_total_tokens = 0
         self._session_total_cost = 0.0
 
+        # ====== AI 通信日志持久化 ======
+        # 当前会话累积的底层原始日志明细（内存缓存，落盘时写入 JSON 文件）
+        self._session_logs: list = []
+        # 当前会话的日志文件绝对路径（首次落盘时确定，之后各轮追加写同一文件）
+        self._log_file_path: Optional[str] = None
+        # 日志保存锁（避免多线程并发写文件）
+        self._log_lock = threading.Lock()
+
         self.ai_controller.stream_chunk.connect(self._on_stream_chunk)
         self.ai_controller.stream_complete.connect(self._on_stream_complete)
         self.ai_controller.stream_error.connect(self._on_stream_error)
         self.ai_controller.tool_call_received.connect(self._on_tool_call)
+        self.ai_controller.raw_log.connect(self._on_raw_log)
         self.token_update.connect(self._on_token_update)
         self.log_entry.connect(self._on_log_entry)
 
@@ -99,6 +113,134 @@ class ChatController(QObject):
             ctx_pct = (self._session_total_tokens / max_ctx) * 100
             self.push_token_stats(self._session_total_tokens, 0, 0, ctx_pct, self._session_total_cost, max_ctx)
 
+        # ====== 加载该会话的历史 AI 通信日志 ======
+        self._load_session_logs_from_db(conversation_id)
+
+    # ==========================================
+    # AI 通信日志持久化
+    # ==========================================
+
+    def _load_session_logs_from_db(self, conversation_id: str):
+        """从数据库读取会话的日志文件路径，加载历史日志到前端"""
+        log_file = self.conversation_model.get_log_file(conversation_id)
+        logs = []
+        if log_file and os.path.exists(log_file):
+            logs = self._read_log_file(log_file)
+        self._log_file_path = log_file if (log_file and os.path.exists(log_file)) else None
+        self._session_logs = list(logs)
+
+        if self.bridge:
+            try:
+                self.bridge.execute_js(
+                    f"window.loadConversationLogs({json.dumps(json.dumps(logs, ensure_ascii=False), ensure_ascii=False)});"
+                )
+            except Exception as e:
+                print(f"{LOG} ❌ 推送历史日志失败: {e}")
+
+    def _read_log_file(self, log_file: str) -> list:
+        """读取日志 JSON 文件，返回 logs 数组（异常返回空列表）"""
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("logs", []) if isinstance(data, dict) else []
+        except Exception as e:
+            print(f"{LOG} ⚠️ 读取日志文件失败: {e}")
+            return []
+
+    def _save_session_logs(self):
+        """将当前会话累积的日志写入日志文件（幂等：首轮创建文件，后续轮追加内容）
+
+        文件名规则：{会话标题}_{时间戳}.json，保存到项目 logs/history/ 目录。
+        会话标题在首条回复完成后已确定，因此首轮落盘时使用当时的标题。
+        """
+        if not self._session_logs:
+            return
+
+        with self._log_lock:
+            try:
+                cid = self.conversation_model.current_conversation_id
+                if not cid:
+                    return
+
+                # 首次落盘：确定日志文件路径（之后沿用同一文件）
+                if not self._log_file_path:
+                    self._log_file_path = self._make_log_file_path()
+
+                # 读取现有文件（若存在）保留原始创建时间元数据
+                existing = {}
+                if os.path.exists(self._log_file_path):
+                    try:
+                        with open(self._log_file_path, "r", encoding="utf-8") as f:
+                            existing = json.load(f)
+                    except Exception:
+                        existing = {}
+                    logs = existing.get("logs", []) if isinstance(existing, dict) else []
+                else:
+                    logs = []
+
+                # 合并本次新增日志（按内容去重防重复追加）
+                existing_ts = {json.dumps(l, ensure_ascii=False, sort_keys=True) for l in logs}
+                for entry in self._session_logs:
+                    key = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+                    if key not in existing_ts:
+                        logs.append(entry)
+                        existing_ts.add(key)
+
+                title = self._get_conversation_title(cid)
+                data = {
+                    "session_id": cid,
+                    "title": title,
+                    "model": self.model_config.get("api", "model") or "deepseek-chat",
+                    "updated_at": datetime.now().isoformat(),
+                    "logs": logs,
+                }
+                if isinstance(existing, dict) and existing.get("created_at"):
+                    data["created_at"] = existing.get("created_at")
+                else:
+                    data["created_at"] = datetime.now().isoformat()
+
+                # 写入文件
+                with open(self._log_file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+
+                # 将日志文件路径保存到数据库
+                self.conversation_model.update_log_file(self._log_file_path)
+                print(f"{LOG} 💾 会话日志已保存: {self._log_file_path} ({len(logs)} 条)")
+
+            except Exception as e:
+                print(f"{LOG} ❌ 保存会话日志失败: {e}")
+
+    def _make_log_file_path(self) -> str:
+        """生成日志文件路径：logs/history/{标题}_{时间戳}.json"""
+        from core.path_manager import get_path_manager
+        pm = get_path_manager()
+        history_dir = pm.ensure_dir("logs", "history")
+
+        title = self._get_conversation_title(self.conversation_model.current_conversation_id) or "新对话"
+        safe_title = self._sanitize_filename(title)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_title}_{ts}.json"
+        return str(history_dir / filename)
+
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        """清理文件名中的非法字符（Windows/Linux 通用）"""
+        name = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", name)
+        name = name.strip(" .")
+        name = name[:50]
+        return name or "对话"
+
+    def _get_conversation_title(self, cid: str) -> str:
+        """从会话仓库中获取标题"""
+        try:
+            if hasattr(self.conversation_model, "_conv_repo") and self.conversation_model._conv_repo:
+                conv = self.conversation_model._conv_repo.get(cid)
+                if conv and conv.title:
+                    return conv.title
+            return "新对话"
+        except Exception:
+            return "新对话"
+
     def _calculate_session_cost(self, tokens: int) -> float:
         """根据累计 token 数计算累计费用（费用数据由 token 推导，保证 UI 同步）
 
@@ -155,13 +297,10 @@ class ChatController(QObject):
         self.conversation_model.update_token_count(self._session_total_tokens)
 
         self.push_token_stats(self._session_total_tokens, input_tokens, output_tokens, ctx_pct, self._session_total_cost, max_ctx)
-        self.push_log_entry(
-            model=model_name,
-            request=user_content,
-            response=content,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens
-        )
+        # 说明：不再推送概要日志（push_log_entry），
+        # 因为底层原始 JSON 日志（raw 类型）已完整包含请求/响应载荷与 token 统计，
+        # 避免日志对话框中「响应显示完成后又重复显示一条对话信息」。
+        # push_log_entry 方法保留，供其他场景需要时调用。
 
         # 首条回复完成后更新标题（基于用户第一条消息）
         if self._first_reply:
@@ -170,6 +309,9 @@ class ChatController(QObject):
             if content:
                 self.conversation_model.update_title(content)
                 self.sync_conversations_to_view()
+
+        # ====== 将本轮的 AI 通信日志写入日志文件 ======
+        self._save_session_logs()
 
     def _on_stream_error(self, error_msg: str):
         self.update_message.emit("", f"❌ {error_msg}")
@@ -200,6 +342,22 @@ class ChatController(QObject):
             except Exception as e:
                 print(f"{LOG} ❌ 显示工具调用失败: {e}")
 
+    def _on_raw_log(self, raw_json: str):
+        """接收底层 AI 通信原始 JSON 日志，转发到前端日志对话框"""
+        # 缓存到当前会话（落到日志文件）
+        try:
+            entry = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+            self._session_logs.append(entry)
+        except Exception:
+            pass
+
+        if self.bridge:
+            try:
+                # 通过 onLogEntry 统一推送到前端（前端会识别 type: "raw" 渲染）
+                self._on_log_entry(raw_json)
+            except Exception as e:
+                print(f"{LOG} ❌ 推送底层原始日志失败: {e}")
+
     def _on_token_update(self, stats_json: str):
         if self.bridge:
             safe = stats_json.replace("'", "\\'").replace("\\", "\\\\")
@@ -211,9 +369,9 @@ class ChatController(QObject):
 
     def _on_log_entry(self, entry_json: str):
         if self.bridge:
-            safe = entry_json.replace("'", "\\'").replace("\\", "\\\\")
-            js = f"window.onLogEntry('{safe}');"
+            # 用 json.dumps 生成 JS 安全的字符串字面量，避免特殊字符（引号/反斜杠/换行等）破坏 JS 语法
             try:
+                js = f"window.onLogEntry({json.dumps(entry_json, ensure_ascii=False)});"
                 self.bridge.execute_js(js)
             except Exception as e:
                 print(f"{LOG} ❌ 推送日志条目失败: {e}")

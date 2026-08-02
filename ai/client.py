@@ -29,6 +29,8 @@ class AIClient:
         self._connected = False
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
+        # 底层 AI 通信原始 JSON 日志回调（由 AIController 注入）
+        self.on_raw_log: Optional[Callable[[str], None]] = None
         
         # ========== 工具调度系统 ==========
         # 1. 内建工具调度器 — 处理本地工具（calculate, docker_ps 等）
@@ -85,6 +87,9 @@ class AIClient:
                 self.mcp_dispatcher,
                 name_resolver=self._resolve_tool_api_name
             )
+            # 注入底层原始 JSON 日志回调
+            if self.on_raw_log:
+                self.stream_handler.on_raw_log = self.on_raw_log
             client = self.stream_handler.create_client()
             
             if client is None:
@@ -118,6 +123,9 @@ class AIClient:
                 self.mcp_dispatcher,
                 name_resolver=self._resolve_tool_api_name
             )
+            # 注入底层原始 JSON 日志回调（热切换后重建 StreamHandler 需重新注入）
+            if self.on_raw_log:
+                self.stream_handler.on_raw_log = self.on_raw_log
             client = self.stream_handler.create_client()
             if client is None:
                 return False, "客户端创建失败"

@@ -37,7 +37,8 @@ class Database(BaseDatabase):
             token_count   INTEGER DEFAULT 0,
             status        TEXT DEFAULT 'active',
             created_at    TEXT,
-            updated_at    TEXT
+            updated_at    TEXT,
+            log_file      TEXT
         )
         """,
         """

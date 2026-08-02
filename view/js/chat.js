@@ -179,8 +179,26 @@ window.chatApp = {
             maxContext: 8192
         };
         this.updateStatusBar();
+        // 清空日志（新对话无历史日志）
+        this.clearLogs();
         document.getElementById('messageInput').focus();
         showToast('新对话已创建', 'success');
+    },
+
+    // 清空当前日志及徽章
+    clearLogs: function() {
+        this.aiLogs = [];
+        var badge = document.getElementById('logBadge');
+        if (badge) {
+            badge.textContent = '0';
+            badge.style.display = 'none';
+        }
+        // 若日志面板已打开，显示空状态
+        var modal = document.getElementById('logModal');
+        if (modal && modal.style.display !== 'none') {
+            var list = document.getElementById('logList');
+            if (list) list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
+        }
     },
 
     quickAction: function(text) {
@@ -259,7 +277,9 @@ window.onAddToolCall = function(toolName, argsJson, result) {
 // AI 通信日志 - 全局函数
 // ============================================
 
-// 渲染单条日志条目（单行 JSON，包含 role + timestamp）
+// 渲染单条日志条目
+// - type: "raw" → 底层 AI 通信原始完整 JSON（含缩进格式化，不截断）
+// - 其他 → 概要日志（单行 JSON，含 role + timestamp）
 function renderLogEntry(entry) {
     var list = document.getElementById('logList');
     if (!list) return;
@@ -268,8 +288,32 @@ function renderLogEntry(entry) {
     
     var div = document.createElement('div');
     div.className = 'log-entry';
+    div.style.marginBottom = '10px';
     
-    // 单行 JSON，含 role、用户原文和 AI 回复
+    // ====== 底层 AI 通信原始 JSON 日志（type: "raw"）======
+    if (entry.type === 'raw') {
+        var isReq = entry.direction === 'request';
+        var directionLabel = isReq ? '⬆️ 请求 (Request)' : '⬇️ 响应 (Response)';
+        var accentColor = isReq ? 'var(--accent-primary)' : 'var(--accent-success)';
+        
+        var headerHtml = '<div class="log-entry-header" style="cursor:default;">' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span style="font-weight:600;color:' + accentColor + ';">' + directionLabel + '</span>' +
+            '<span class="log-model">' + escapeHtml(entry.model || 'AI') + '</span></div>' +
+            '<span class="log-time">' + new Date((entry.timestamp || Date.now()) * 1000).toLocaleString() + '</span></div>';
+        
+        var rawJson = JSON.stringify(entry.data || {}, null, 2);
+        var bodyHtml = '<div class="log-entry-body">' +
+            '<pre style="margin:0;padding:10px 12px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:var(--bg-primary);border:1px solid var(--border-color);border-left:3px solid ' + accentColor + ';border-radius:var(--radius-sm);max-height:400px;overflow-y:auto;color:var(--text-secondary);">' +
+            escapeHtml(rawJson) + '</pre></div>';
+        
+        div.innerHTML = headerHtml + bodyHtml;
+        list.appendChild(div);
+        list.scrollTop = list.scrollHeight;
+        return;
+    }
+    
+    // ====== 概要日志（原有逻辑）======
     var raw = {
         role: entry.role || 'assistant',
         time: new Date(entry.timestamp || Date.now()).toISOString(),
@@ -377,6 +421,36 @@ window.onLogEntry = function(entry) {
         try { entry = JSON.parse(entry); } catch(e) { return; }
     }
     window.chatApp.addLogEntry(entry);
+};
+
+// 由后端加载历史会话的 AI 通信日志（切换历史会话时调用）
+window.loadConversationLogs = function(logsJson) {
+    // logsJson: JSON 字符串，是日志数组的序列化
+    if (typeof logsJson === 'string') {
+        try { logsJson = JSON.parse(logsJson); } catch(e) { logsJson = []; }
+    }
+    var logs = Array.isArray(logsJson) ? logsJson : [];
+    window.chatApp.aiLogs = logs;
+    // 更新日志徽章
+    var badge = document.getElementById('logBadge');
+    if (badge) {
+        badge.textContent = logs.length;
+        badge.style.display = logs.length > 0 ? 'inline-flex' : 'none';
+    }
+    // 如果日志面板已打开，重新渲染
+    var modal = document.getElementById('logModal');
+    if (modal && modal.style.display !== 'none') {
+        var list = document.getElementById('logList');
+        if (list) {
+            list.innerHTML = '';
+            if (logs.length === 0) {
+                list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
+            } else {
+                logs.forEach(function(entry) { renderLogEntry(entry); });
+                list.scrollTop = list.scrollHeight;
+            }
+        }
+    }
 };
 
 function handleInputKeydown(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.chatApp.sendMessage();} }

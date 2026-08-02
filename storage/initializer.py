@@ -16,7 +16,7 @@ class DatabaseInitializer:
     """数据库初始化管理器"""
 
     # 当前数据库 Schema 版本（与软件版本对应，见 scripts/migrate_db.py）
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     @staticmethod
     def initialize() -> dict:

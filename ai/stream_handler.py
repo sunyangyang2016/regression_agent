@@ -22,6 +22,8 @@ class StreamHandler:
         self.name_resolver = name_resolver           # API 名 → 原始名 还原回调
         self._tool_name_map: dict = {}               # API 名 → 原始名 映射（stream_chat 内建）
         self._client_lock = asyncio.Lock()
+        # 底层 AI 通信原始 JSON 日志回调（由 AIClient/AIController 注入）
+        self.on_raw_log: Optional[Callable[[str], None]] = None
     
     def create_client(self):
         """创建异步客户端"""
@@ -32,6 +34,28 @@ class StreamHandler:
             api_key=self.config.api_key
         )
         return self.client
+
+    def _emit_raw_log(self, direction: str, payload: dict):
+        """发出底层 AI 通信原始 JSON 日志（request / response）
+
+        Args:
+            direction: "request"（发送给 AI 的载荷）| "response"（AI 返回的载荷）
+            payload:   完整的 JSON 载荷（messages/tools 或 content/tool_calls/usage）
+        """
+        if not self.on_raw_log:
+            return
+        import time
+        try:
+            entry = {
+                "timestamp": time.time(),
+                "type": "raw",
+                "direction": direction,
+                "model": self.config.model or "",
+                "data": payload
+            }
+            self.on_raw_log(json.dumps(entry, ensure_ascii=False, default=str))
+        except Exception as e:
+            print(f"[StreamHandler] ⚠️ 底层原始日志发出失败: {e}")
     
     async def stream_chat(
         self,
@@ -75,6 +99,17 @@ class StreamHandler:
                 tool_calls_buffer = {}
                 usage_info = None
                 
+                # ====== 底层日志：捕获发送给 AI 的完整请求载荷 ======
+                self._emit_raw_log("request", {
+                    "model": self.config.model,
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                    "stream": True,
+                    "messages": current_messages,
+                    "tools": tools if tools else None,
+                    "tool_choice": "auto" if tools else None,
+                })
+                
                 stream = await self.client.chat.completions.create(
                     model=self.config.model,
                     messages=current_messages,
@@ -116,6 +151,19 @@ class StreamHandler:
                                     tool_calls_buffer[idx]["function"]["name"] = tc.function.name
                                 if tc.function.arguments:
                                     tool_calls_buffer[idx]["function"]["arguments"] += tc.function.arguments
+                
+                # ====== 底层日志：捕获 AI 返回的完整响应载荷 ======
+                response_payload = {
+                    "content": collected_content,
+                    "tool_calls": list(tool_calls_buffer.values()) if tool_calls_buffer else None,
+                }
+                if usage_info:
+                    response_payload["usage"] = {
+                        "prompt_tokens": usage_info.prompt_tokens,
+                        "completion_tokens": usage_info.completion_tokens,
+                        "total_tokens": usage_info.total_tokens
+                    }
+                self._emit_raw_log("response", response_payload)
                 
                 # 检查是否有工具调用
                 if not tool_calls_buffer:
@@ -271,6 +319,15 @@ class StreamHandler:
         
         # 达到最大轮数，获取最终回复
         try:
+            # ====== 底层日志：捕获最终请求载荷 ======
+            self._emit_raw_log("request", {
+                "model": self.config.model,
+                "temperature": self.config.temperature,
+                "max_tokens": self.config.max_tokens,
+                "stream": False,
+                "messages": current_messages,
+            })
+            
             final = await self.client.chat.completions.create(
                 model=self.config.model,
                 messages=current_messages,
@@ -279,6 +336,8 @@ class StreamHandler:
                 stream=False,
             )
             final_content = final.choices[0].message.content or ""
+            # ====== 底层日志：捕获最终响应载荷 ======
+            self._emit_raw_log("response", {"content": final_content})
             current_messages.append({"role": "assistant", "content": final_content})
             yield AIStreamEvent(type="complete", data=final_content)
             messages.clear()
