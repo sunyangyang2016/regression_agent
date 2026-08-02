@@ -1,12 +1,11 @@
 """
 技能管理器 - 技能系统统一入口（Facade 门面模式）
-整合加载、注册、执行、验证、MD 管理等功能
+整合加载、注册、执行、验证、MD 技能目录管理等功能
 """
 import os
 import json
 from typing import Any, Dict, List, Optional
 
-from PyQt5.QtCore import QObject, pyqtSlot
 from skills.base import BaseSkill, SkillResult
 from skills.context import SkillContext
 from skills.registry import SkillRegistry
@@ -15,100 +14,16 @@ from skills.executor import SkillExecutor
 from skills.validator import SkillValidator
 
 
-class SkillManager(QObject):
+class SkillManager:
     """技能管理器 - 统一管理所有技能操作"""
 
-    def __init__(self, webview_or_md_dir=None, md_dir: str = None, parent=None):
-        super().__init__(parent)
-        # 兼容旧 API: SkillManager(webview) 或 SkillManager(md_dir) 或 SkillManager()
-        if md_dir is None and isinstance(webview_or_md_dir, str):
-            md_dir = webview_or_md_dir
-            self.webview = None
-        else:
-            self.webview = webview_or_md_dir if not isinstance(webview_or_md_dir, str) else None
-            if self.webview is not None:
-                md_dir = md_dir
-
+    def __init__(self, md_dir: str = None):
         self.registry = SkillRegistry()
         self.loader = SkillLoader(md_dir)
         self.executor = SkillExecutor()
         self.validator = SkillValidator()
         self._initialized = False
         self._cached_skills = []
-
-        if self.webview:
-            self._sync_to_js()
-    
-    # ---- 旧 API 兼容方法（前端 QWebChannel 桥接） ----
-    
-    def _sync_to_js(self):
-        """同步技能数据到前端 JS（写入 appState.skills，与 AppController 推送路径一致）"""
-        if not self.webview:
-            return
-        skills_json = json.dumps(self.get_skills_for_js())
-        js = f"""
-        if (typeof appState !== 'undefined') {{
-            appState.skills = {skills_json};
-            if (typeof renderSkills === 'function') renderSkills();
-        }}
-        """
-        self.webview.page().runJavaScript(js)
-
-    def add_token_count(self, count: int):
-        """增加 Token 计数"""
-        if not self.webview:
-            return
-        js = f"""
-        if (window.state) {{
-            window.state.tokenValue += {count};
-            if (window.renderAll) window.renderAll();
-        }}
-        """
-        self.webview.page().runJavaScript(js)
-
-    @pyqtSlot(str)
-    def on_add_skill(self, name: str):
-        """前端调用：添加技能"""
-        success = self.add_md_skill(name, "", "")
-        if success:
-            self._sync_to_js()
-            self._add_message(f'✅ 技能 "{name}" 已添加。', 'agent')
-        else:
-            self._add_message(f'⚠️ 技能 "{name}" 已存在或名称无效。', 'agent')
-
-    @pyqtSlot(str)
-    def on_remove_skill(self, name: str):
-        """前端调用：删除技能"""
-        success = self.remove_md_skill(name)
-        if success:
-            self._sync_to_js()
-            self._add_message(f'🗑️ 技能 "{name}" 已删除。', 'agent')
-
-    @pyqtSlot(str)
-    def on_toggle_skill(self, name: str):
-        """前端调用：切换技能状态"""
-        skill = self.loader.parse_md_file(
-            os.path.join(self.loader.md_dir, f"{name}.md")
-        )
-        if skill:
-            was_enabled = skill.get("enabled", True)
-            self.toggle_md_skill(name)
-            self._sync_to_js()
-            status = "启用" if not was_enabled else "禁用"
-            self._add_message(f'🔄 技能 "{name}" 已{status}。', 'agent')
-
-    def _add_message(self, content: str, role: str = 'agent'):
-        """添加消息到对话"""
-        if not self.webview:
-            return
-        safe_content = json.dumps(content)
-        safe_role = json.dumps(role)
-        js = f"""
-        if (typeof window.chat !== 'undefined' && typeof window.chat.addMessage === 'function') {{
-            window.chat.addMessage({safe_content}, {safe_role});
-        }}
-        """
-        self.webview.page().runJavaScript(js)
 
     # ---- 生命周期 ----
 
@@ -164,7 +79,7 @@ class SkillManager(QObject):
         """获取已启用的技能"""
         return self.registry.get_enabled()
 
-    # ---- MD 技能管理 ----
+    # ---- MD 技能目录管理 ----
 
     def get_md_skills(self) -> list:
         """获取所有 MD 技能"""
@@ -200,42 +115,56 @@ class SkillManager(QObject):
                 count += 1
         return count
 
+    def add_md_skill(self, name: str, files: dict) -> bool:
+        """添加 MD 技能目录（目录化结构）
 
-    def add_md_skill(self, name: str, description: str = "", content: str = "") -> bool:
-        """添加 MD 技能文件"""
-        filepath = os.path.join(self.loader.md_dir, f"{name}.md")
-        if os.path.exists(filepath):
+        参数：
+            name:  技能名称（目录名）
+            files: {相对路径: 文件内容} 字典，必须包含 SKILL.md
+        """
+        import shutil
+        if not name or not isinstance(files, dict) or "SKILL.md" not in files:
+            print("[SkillManager] 添加 MD 技能失败: 缺少 SKILL.md 或参数无效")
             return False
 
-        md_content = (
-            f"---\nname: {name}\nenabled: true\n"
-            f"description: {description}\n---\n\n"
-            f"{content or f'# {name}\n\n（请在此编写技能提示词）'}\n"
-        )
+        skill_dir = os.path.join(self.loader.md_dir, name)
+        if os.path.exists(skill_dir):
+            return False
+
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(md_content)
+            base_real = os.path.realpath(skill_dir) + os.sep
+            for rel_path, content in files.items():
+                # 防路径穿越：规范化并确保仍位于技能目录内
+                full_path = os.path.realpath(os.path.join(skill_dir, rel_path))
+                if full_path != os.path.realpath(skill_dir) and not full_path.startswith(base_real):
+                    print(f"[SkillManager] ⚠️ 跳过非法路径: {rel_path}")
+                    continue
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(str(content))
             return True
         except Exception as e:
-            print(f"[SkillManager] 创建 MD 技能失败: {e}")
+            print(f"[SkillManager] 创建 MD 技能目录失败: {e}")
+            shutil.rmtree(skill_dir, ignore_errors=True)
             return False
 
     def remove_md_skill(self, name: str) -> bool:
-        """删除 MD 技能文件"""
-        filepath = os.path.join(self.loader.md_dir, f"{name}.md")
+        """删除 MD 技能目录（递归）"""
+        import shutil
+        skill_dir = os.path.join(self.loader.md_dir, name)
         try:
-            if os.path.exists(filepath):
-                os.remove(filepath)
+            if os.path.isdir(skill_dir):
+                shutil.rmtree(skill_dir)
                 return True
         except Exception as e:
-            print(f"[SkillManager] 删除 MD 技能失败: {e}")
+            print(f"[SkillManager] 删除 MD 技能目录失败: {e}")
         return False
 
     def toggle_md_skill(self, name: str) -> bool:
-        """切换 MD 技能的启用状态"""
+        """切换 MD 技能的启用状态（修改 SKILL.md 中的 enabled 字段）"""
         import re
-        filepath = os.path.join(self.loader.md_dir, f"{name}.md")
-        skill = self.loader.parse_md_file(filepath)
+        filepath = os.path.join(self.loader.md_dir, name, "SKILL.md")
+        skill = self.loader._parse_skill_dir_cached(os.path.dirname(filepath))
         if not skill:
             return False
 
@@ -251,12 +180,14 @@ class SkillManager(QObject):
             )
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
+            # 清除该文件的 mtime 缓存，确保后续重新解析最新状态
+            self.loader._md_cache.pop(filepath, None)
             return True
         except Exception as e:
             print(f"[SkillManager] 切换技能状态失败: {e}")
             return False
 
-    # ---- 前端桥接 ----
+    # ---- 前端数据 ----
 
     def get_skills_for_js(self) -> list:
         """获取前端格式的技能列表（统一数据源：Python 技能 + MD 技能）"""
@@ -284,9 +215,19 @@ class SkillManager(QObject):
                 "source": "markdown",
                 "version": "1.0.0",
                 "tags": [],
+                "detail": {
+                    "content": s.get("content", ""),
+                    "filepath": s.get("filepath", ""),
+                    "skill_dir": s.get("skill_dir", ""),
+                    "scripts": s.get("scripts", []),
+                    "references": s.get("references", []),
+                    "assets": s.get("assets", []),
+                    "version": "1.0.0",
+                    "category": "md",
+                },
             })
         return result
-    
+
     def get_status(self) -> Dict[str, Any]:
         """获取技能系统状态"""
         return {

@@ -82,6 +82,10 @@ class SkillBridge(BridgeBase):
                         "detail": {
                             "content": s.get("content", ""),
                             "filepath": s.get("filepath", ""),
+                            "skill_dir": s.get("skill_dir", ""),
+                            "scripts": s.get("scripts", []),
+                            "references": s.get("references", []),
+                            "assets": s.get("assets", []),
                             "version": "1.0.0",
                             "category": "md",
                         },
@@ -128,23 +132,37 @@ class SkillBridge(BridgeBase):
             except Exception as e:
                 print(f"[SkillBridge] ⚠️ 刷新前端失败: {e}")
 
-    @pyqtSlot(str)
-    @pyqtSlot(str, str, str, result=bool)
-    def on_upload_md(self, name, description, content):
-        """上传 MD 技能文件（持久化到 skills/md/*.md）"""
+    @pyqtSlot(str, str, result=bool)
+    def on_upload_skill_dir(self, name, files_json):
+        """上传技能目录（目录化结构）
+
+        参数：
+            name:      技能名称（目录名）
+            files_json: JSON 字符串，格式 {"相对路径": "文件内容", ...}，必须包含 SKILL.md
+        """
         mgr = self._get_skill_mgr()
         if not mgr:
             return False
-        ok = mgr.add_md_skill(name, description or "", content or "")
+        try:
+            files = json.loads(files_json)
+            if not isinstance(files, dict):
+                return False
+        except Exception as e:
+            print(f"[SkillBridge] ⚠️ 解析上传目录 JSON 失败: {e}")
+            return False
+
+        ok = mgr.add_md_skill(name, files)
         if ok:
             self._sync_md_tools()
         self._refresh_frontend()
         return ok
 
+    @pyqtSlot(str)
     def on_add_skill(self, name):
+        """添加简单技能（仅创建 SKILL.md）"""
         mgr = self._get_skill_mgr()
         if mgr:
-            mgr.on_add_skill(name)
+            mgr.add_md_skill(name, {"SKILL.md": f"# {name}\n\n（技能提示词正文）\n"})
             self._sync_md_tools()
             self._refresh_frontend()
 
@@ -152,7 +170,7 @@ class SkillBridge(BridgeBase):
     def on_remove_skill(self, name):
         mgr = self._get_skill_mgr()
         if mgr:
-            mgr.on_remove_skill(name)
+            mgr.remove_md_skill(name)
             self._sync_md_tools()
             self._refresh_frontend()
 
@@ -160,6 +178,6 @@ class SkillBridge(BridgeBase):
     def on_toggle_skill(self, name):
         mgr = self._get_skill_mgr()
         if mgr:
-            mgr.on_toggle_skill(name)
+            mgr.toggle_md_skill(name)
             self._sync_md_tools()
             self._refresh_frontend()

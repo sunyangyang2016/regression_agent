@@ -312,6 +312,10 @@ class AppController(QObject):
                     "detail": {
                         "content": s.get("content", ""),
                         "filepath": s.get("filepath", ""),
+                        "skill_dir": s.get("skill_dir", ""),
+                        "scripts": s.get("scripts", []),
+                        "references": s.get("references", []),
+                        "assets": s.get("assets", []),
                         "version": "1.0.0",
                         "category": "md",
                     },

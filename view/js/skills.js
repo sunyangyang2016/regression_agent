@@ -1,5 +1,5 @@
 // ============================================
-// Skills - 技能管理
+// Skills - 技能管理（内建/注册双 tab + 目录上传）
 // ============================================
 
 function escHtml(str){
@@ -12,7 +12,7 @@ function buildSkillDetailHtml(s){
     var detail = s.detail || {};
     var html = '';
     if(s.source === 'markdown'){
-        // MD 技能：显示 Markdown 正文内容
+        // MD 技能：显示 SKILL.md 正文内容
         var content = detail.content || '';
         if(content){
             html += '<div class="skill-detail-section">' +
@@ -21,8 +21,26 @@ function buildSkillDetailHtml(s){
             '</div>';
         }
         if(detail.filepath){
-            html += '<div class="skill-detail-row"><span class="skill-detail-label">文件路径</span><span class="skill-detail-value">' + escHtml(detail.filepath) + '</span></div>';
+            html += '<div class="skill-detail-row"><span class="skill-detail-label">SKILL.md</span><span class="skill-detail-value">' + escHtml(detail.filepath) + '</span></div>';
         }
+        // 资源文件列表
+        var sections = [
+            {key:'scripts', label:'脚本 (scripts)', icon:'fa-terminal'},
+            {key:'references', label:'参考文档 (references)', icon:'fa-book'},
+            {key:'assets', label:'资源文件 (assets)', icon:'fa-paperclip'}
+        ];
+        sections.forEach(function(sec){
+            var files = detail[sec.key] || [];
+            if(files.length > 0){
+                html += '<div class="skill-detail-section">' +
+                    '<div class="skill-detail-label"><i class="fas ' + sec.icon + '"></i> ' + sec.label + '</div>' +
+                    '<div class="skill-detail-files">';
+                files.forEach(function(f){
+                    html += '<div class="skill-detail-file"><i class="fas fa-file"></i>' + escHtml(f) + '</div>';
+                });
+                html += '</div></div>';
+            }
+        });
     } else {
         // Python 技能：显示元数据信息
         var rows = [];
@@ -55,44 +73,91 @@ function buildSkillDetailHtml(s){
     return html;
 }
 
-function renderSkills(){
-    var c=document.getElementById('skillList');if(!c)return;
-    var items=appState.skills||[];
-    if(items.length===0){
-        c.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-muted);">暂无技能</div>';
-        return;
-    }
-    c.innerHTML=items.map(function(s, i){
-        var iconMap={development:'fa-code',data:'fa-chart-line',writing:'fa-pen-fancy',utility:'fa-tools',communication:'fa-envelope',productivity:'fa-check-double',creativity:'fa-lightbulb',analysis:'fa-search',general:'fa-file-alt',md:'fa-file-alt'};
-        var iconName=iconMap[s.category]||'fa-file-alt';
-        var sourceLabel=s.source==='python'?'Python 技能':'MD 技能';
-        var sourceClass=s.source==='python'?'tag-blue':'tag-green';
-        var detailHtml = buildSkillDetailHtml(s);
-        return '<div class="item-row" onclick="toggleSkillDetail('+i+')" style="cursor:pointer;">'+
-            '<div class="icon builtin"><i class="fas '+iconName+'"></i></div>'+
-            '<div class="info">'+
-                '<div class="name">'+escHtml(s.name)+'</div>'+
-                '<div class="desc">'+escHtml(s.description||'')+'</div>'+
-                '<div class="tags"><span class="tag active">'+(s.category||'general')+'</span><span class="tag '+sourceClass+'">'+sourceLabel+'</span>'+
-                (s.version?' <span class="tag">v'+s.version+'</span>':'')+
-                '</div>'+
+function buildSkillItemHtml(s){
+    var iconMap={development:'fa-code',data:'fa-chart-line',writing:'fa-pen-fancy',utility:'fa-tools',communication:'fa-envelope',productivity:'fa-check-double',creativity:'fa-lightbulb',analysis:'fa-search',general:'fa-file-alt',md:'fa-folder'};
+    var iconName=iconMap[s.category]||'fa-file-alt';
+    var sourceLabel=s.source==='python'?'Python 技能':'MD 技能';
+    var sourceClass=s.source==='python'?'tag-blue':'tag-green';
+    var detailHtml = buildSkillDetailHtml(s);
+    // 内建技能（python）不显示删除按钮，仅注册技能（markdown）可删除
+    var removeBtn = (s.source === 'markdown')
+        ? '<button class="skill-remove-btn" title="删除技能" onclick="event.stopPropagation();removeSkill(\''+escHtml(s.name)+'\')"><i class="fas fa-trash"></i></button>'
+        : '';
+    return '<div class="item-row" onclick="toggleSkillDetail(\''+escHtml(s.name)+'\')" style="cursor:pointer;">'+
+        '<div class="icon builtin"><i class="fas '+iconName+'"></i></div>'+
+        '<div class="info">'+
+            '<div class="name">'+escHtml(s.name)+'</div>'+
+            '<div class="desc">'+escHtml(s.description||'')+'</div>'+
+            '<div class="tags"><span class="tag active">'+(s.category||'general')+'</span><span class="tag '+sourceClass+'">'+sourceLabel+'</span>'+
+            (s.version?' <span class="tag">v'+s.version+'</span>':'')+
             '</div>'+
-            '<label class="switch" onclick="event.stopPropagation()"><input type="checkbox" '+(s.enabled!==false?'checked':'')+' onchange="toggleSkill(\''+escHtml(s.name)+'\', this)"><span class="slider"></span></label>'+
-            '<button class="skill-remove-btn" title="删除技能" onclick="event.stopPropagation();removeSkill(\''+escHtml(s.name)+'\')"><i class="fas fa-trash"></i></button>'+
-            '<span class="skill-expand-icon"><i class="fas fa-chevron-down" id="skillIcon'+i+'"></i></span>'+
         '</div>'+
-        (detailHtml ? '<div class="skill-detail" id="skillDetail'+i+'" style="display:none;">'+detailHtml+'</div>' : '');
-    }).join('');
+        '<label class="switch" onclick="event.stopPropagation()"><input type="checkbox" '+(s.enabled!==false?'checked':'')+' onchange="toggleSkill(\''+escHtml(s.name)+'\', this)"><span class="slider"></span></label>'+
+        removeBtn+
+        '<span class="skill-expand-icon"><i class="fas fa-chevron-down" data-skill-name="'+escHtml(s.name)+'"></i></span>'+
+    '</div>'+
+    (detailHtml ? '<div class="skill-detail" data-skill-name="'+escHtml(s.name)+'" style="display:none;">'+detailHtml+'</div>' : '');
 }
 
-function toggleSkillDetail(index){
-    var detail = document.getElementById('skillDetail' + index);
-    var icon = document.getElementById('skillIcon' + index);
-    if (detail) {
-        var isOpen = detail.style.display === 'block';
-        detail.style.display = isOpen ? 'none' : 'block';
-        if (icon) {
-            icon.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+function renderSkills(){
+    var builtinEl=document.getElementById('skillListBuiltin');
+    var registeredEl=document.getElementById('skillListRegistered');
+    if(!builtinEl&&!registeredEl)return;
+    var items=appState.skills||[];
+    var builtin=[],registered=[];
+    items.forEach(function(s){
+        if(s.source==='markdown'){
+            registered.push(s);
+        } else {
+            builtin.push(s);
+        }
+    });
+    if(builtinEl){
+        builtinEl.innerHTML=builtin.length===0
+            ? '<div style="text-align:center;padding:20px;color:var(--text-muted);">暂无内建技能</div>'
+            : builtin.map(buildSkillItemHtml).join('');
+    }
+    if(registeredEl){
+        registeredEl.innerHTML=registered.length===0
+            ? '<div style="text-align:center;padding:20px;color:var(--text-muted);">暂无注册技能（上传技能目录后显示）</div>'
+            : registered.map(buildSkillItemHtml).join('');
+    }
+}
+
+function switchSkillSubTab(tab){
+    // 技能面板内的子 tab 通过容器定位：先找 skillListBuiltin/skillListRegistered 祖先
+    var builtinBtn=null,registeredBtn=null;
+    var builtinEl=document.getElementById('skillListBuiltin');
+    if(builtinEl){
+        var btns=builtinEl.parentElement.querySelectorAll('.mcp-sub-tab');
+        btns.forEach(function(b){
+            if(b.dataset.subtab==='builtin')builtinBtn=b;
+            if(b.dataset.subtab==='registered')registeredBtn=b;
+        });
+    }
+    if(builtinBtn)builtinBtn.classList.toggle('active',tab==='builtin');
+    if(registeredBtn)registeredBtn.classList.toggle('active',tab==='registered');
+    var bEl=document.getElementById('skillListBuiltin');
+    var rEl=document.getElementById('skillListRegistered');
+    if(bEl)bEl.style.display=tab==='builtin'?'block':'none';
+    if(rEl)rEl.style.display=tab==='registered'?'block':'none';
+    // 上传技能目录区域仅显示在"注册技能" tab 下
+    var uploadEl=document.getElementById('skillUploadSection');
+    if(uploadEl)uploadEl.style.display=tab==='registered'?'block':'none';
+}
+
+function toggleSkillDetail(name){
+    var detail=null,icon=null;
+    // 查两个列表中的详情容器和箭头图标（按 data-skill-name 定位）
+    var detailEls=document.querySelectorAll('.skill-detail[data-skill-name="'+name+'"]');
+    if(detailEls.length>0)detail=detailEls[0];
+    var iconEls=document.querySelectorAll('.skill-expand-icon i[data-skill-name="'+name+'"]');
+    if(iconEls.length>0)icon=iconEls[0];
+    if(detail){
+        var isOpen=detail.style.display==='block';
+        detail.style.display=isOpen?'none':'block';
+        if(icon){
+            icon.style.transform=isOpen?'rotate(0deg)':'rotate(180deg)';
         }
     }
 }
@@ -126,39 +191,111 @@ function removeSkill(name){
     }, {title:'删除技能', confirmText:'删除', cancelText:'取消', danger:true, icon:'🗑️'});
 }
 
-function skillFileChanged(input){
-    var nameEl=document.getElementById('skillFileName');
-    if(nameEl){nameEl.textContent=(input.files&&input.files[0])?input.files[0].name:'未选择文件';}
+// ============================================
+// 目录上传技能包
+// ============================================
+
+function skillDirChanged(input){
+    var nameEl=document.getElementById('skillDirName');
+    if(nameEl){
+        var files = input.files || [];
+        if(files.length > 0){
+            // 取第一个文件的相对路径的第一段作为目录名
+            var firstRel = files[0].webkitRelativePath || '';
+            var dirName = firstRel.split('/')[0];
+            nameEl.textContent = dirName ? ('已选: ' + dirName + ' (' + files.length + ' 个文件)') : '已选择目录';
+        } else {
+            nameEl.textContent='未选择目录';
+        }
+    }
 }
 
-function uploadSkillMD(){
-    var fileInput=document.getElementById('skillFileInput');
-    var nameInput=document.getElementById('skillNameInput');
-    var descInput=document.getElementById('skillDescInput');
-    var file=fileInput.files[0];
-    if(!file){showToast('请选择一个 .md 文件','error');return;}
-    if(!file.name.endsWith('.md')){showToast('请上传 .md 格式的 Markdown 文件','error');return;}
-    var reader=new FileReader();
-    reader.onload=function(e){
-        var content=e.target.result;
-        var finalName=nameInput.value.trim()||file.name.replace('.md','');
-        var skillDesc=descInput.value.trim()||'从 Markdown 文件导入的技能';
-        var newSkill={name:finalName,description:skillDesc,source:'markdown',category:'general',enabled:true,version:'1.0.0',tags:[]};
-        if(window.skill_bridge && typeof window.skill_bridge.on_upload_md==='function'){
-            var ok=window.skill_bridge.on_upload_md(finalName, skillDesc, content);
-            if(ok===false){
-                showToast('⚠️ 技能 "'+finalName+'" 已存在或上传失败','error');
-                return;
-            }
-            setTimeout(loadSkillsFromBridge, 150);
-        } else {
-            appState.skills.push(newSkill);
-            renderSkills();
+function uploadSkillDir(){
+    var fileInput=document.getElementById('skillDirInput');
+    var files=fileInput.files;
+    if(!files || files.length===0){
+        showToast('请先选择技能目录','error');
+        return;
+    }
+    // 从 webkitRelativePath 提取顶层目录名
+    var firstRel = files[0].webkitRelativePath || '';
+    var dirName = firstRel.split('/')[0];
+    if(!dirName){
+        showToast('无法识别目录名','error');
+        return;
+    }
+
+    // 检查是否存在 SKILL.md
+    var hasSkillMd = false;
+    for(var i=0; i<files.length; i++){
+        var rel = files[i].webkitRelativePath || '';
+        var parts = rel.split('/');
+        parts.shift(); // 移除顶层目录名
+        var relPath = parts.join('/');
+        if(relPath === 'SKILL.md'){
+            hasSkillMd = true;
+            break;
         }
-        nameInput.value='';descInput.value='';fileInput.value='';
-        var nameEl=document.getElementById('skillFileName');if(nameEl){nameEl.textContent='未选择文件';}
-        showToast('✅ 技能 "'+finalName+'" 已从 '+file.name+' 导入','success');
-    };
-    reader.onerror=function(){showToast('读取文件失败，请重试','error');};
-    reader.readAsText(file);
+    }
+    if(!hasSkillMd){
+        showToast('⚠️ 技能目录中必须包含 SKILL.md 文件','error');
+        return;
+    }
+
+    // 递归读取所有文件为 {相对路径: 内容}
+    var fileMap = {};
+    var pendingCount = files.length;
+    var readError = false;
+
+    files.forEach(function(file){
+        var rel = file.webkitRelativePath || file.name;
+        var parts = rel.split('/');
+        parts.shift(); // 移除顶层目录名
+        var relPath = parts.join('/');
+        var reader = new FileReader();
+        reader.onload = function(e){
+            fileMap[relPath] = e.target.result;
+            pendingCount--;
+            if(pendingCount === 0){
+                if(readError){
+                    showToast('部分文件读取失败','error');
+                    return;
+                }
+                doSubmitSkillDir(dirName, fileMap);
+            }
+        };
+        reader.onerror = function(){
+            readError = true;
+            pendingCount--;
+            if(pendingCount === 0){
+                showToast('部分文件读取失败','error');
+            }
+        };
+        reader.readAsText(file);
+    });
+}
+
+function doSubmitSkillDir(name, fileMap){
+    if(!window.skill_bridge){
+        showToast('❌ 技能桥接不可用','error');
+        return;
+    }
+    try{
+        var filesJson = JSON.stringify(fileMap);
+        var ok = window.skill_bridge.on_upload_skill_dir(name, filesJson);
+        if(ok === false){
+            showToast('⚠️ 技能 "'+name+'" 已存在或上传失败','error');
+            return;
+        }
+        // 清空选择
+        var fileInput=document.getElementById('skillDirInput');
+        if(fileInput) fileInput.value='';
+        var nameEl=document.getElementById('skillDirName');
+        if(nameEl) nameEl.textContent='未选择目录';
+        setTimeout(loadSkillsFromBridge, 150);
+        showToast('✅ 技能 "'+name+'" 已上传 ('+Object.keys(fileMap).length+' 个文件)','success');
+    }catch(e){
+        console.warn('[Skills] upload error:',e);
+        showToast('❌ 上传失败: '+e.message,'error');
+    }
 }

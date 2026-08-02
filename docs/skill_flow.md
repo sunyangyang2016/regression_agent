@@ -142,7 +142,7 @@ SkillValidator.validate_skill() 校验（name/description/validate()）
 |------|------|------|
 | 内建技能（Python） | `skills/builtin/*.py` | 内置技能：翻译、总结、代码助手、文档写作、邮件、会议纪要、头脑风暴、问题求解、数据导出、数据分析、网页抓取 |
 | 自定义技能（Python） | `skills/custom/**/*.py` | 递归扫描子目录，支持分层模块 |
-| MD 技能（提示词） | `skills/md/*.md` | 通过 YAML Frontmatter（`name/enabled/description`）声明，正文为提示词 |
+| MD 技能（目录化） | `skills/md/<name>/SKILL.md` | 目录化技能包：SKILL.md 为必需核心指令，可选 scripts/references/assets 子目录 |
 
 ---
 
@@ -288,19 +288,30 @@ LLM 决定调用工具？
 对应实现：`SkillBridge`（`bridge/skill_bridge.py`）+ `SkillManager` MD 相关方法（`skills/manager.py`）
 
 ```
-┌────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌────────────────────┐
-│ 前端技能面板 │ → │ SkillBridge       │ → │ SkillManager      │ → │ 文件系统 skills/md/ │
-│            │ ← │ (QWebChannel)     │ ← │                  │ ← │                    │
-└────────────┘   └──────────────────┘   └──────────────────┘   └────────────────────┘
- getSkills              getSkills()          get_skills_for_js()     解析 *.md
- on_add_skill           on_add_skill()       add_md_skill()          创建 xxx.md
- on_remove_skill        on_remove_skill()    remove_md_skill()       删除 xxx.md
- on_toggle_skill        on_toggle_skill()    toggle_md_skill()       修改 enabled
+┌────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌────────────────────────────┐
+│ 前端技能面板 │ → │ SkillBridge       │ → │ SkillManager      │ → │ 文件系统 skills/md/<name>/ │
+│            │ ← │ (QWebChannel)     │ ← │                  │ ← │                            │
+└────────────┘   └──────────────────┘   └──────────────────┘   └────────────────────────────┘
+ getSkills              getSkills()          get_skills_for_js()     解析 <name>/SKILL.md
+ on_upload_skill_dir    on_upload_skill_dir() add_md_skill(name, files) 创建 <name>/ 目录
+ on_remove_skill        on_remove_skill()    remove_md_skill()       删除 <name>/ 目录
+ on_toggle_skill        on_toggle_skill()    toggle_md_skill()       修改 SKILL.md enabled
 ```
 
 **运行时注册到 AI**：上传 / 删除 / 启用切换后，`SkillBridge` 会调用 `AppController._resync_md_skill_tools()`：先把当前已注册的 MD 适配器注销，再将磁盘上已启用的 MD 技能重新注册为可执行适配器（`SkillManager.sync_md_skills_to_registry()`），并同步 `skill_<name>` 工具处理器到 `ai_client.tool_dispatcher`，使 AI 能即时感知新增 / 禁用 / 删除的技能（无需重启应用）。
 
-**MD 技能文件格式：**
+**MD 技能目录结构（Claude Skill 风格）：**
+
+```
+skills/md/
+  <skill-name>/
+    SKILL.md          # 必需：核心指令与元数据（YAML Frontmatter）
+    scripts/          # 可选：可执行的脚本（.py, .sh）
+    references/       # 可选：供 AI 参考的详细文档
+    assets/           # 可选：模板、图片等静态资源
+```
+
+**SKILL.md 文件格式：**
 
 ```markdown
 ---
@@ -312,13 +323,24 @@ description: 代码审查技能提示词
 （技能提示词正文，将被注入系统提示词）
 ```
 
+**资源文件说明：**
+
+| 子目录 | 说明 | 加载行为 |
+|--------|------|---------|
+| `scripts/` | 可执行脚本 | 文件名列表注入提示词，由 AI 决定是否读取/执行 |
+| `references/` | 参考文档 | 文件名列表注入提示词，由 AI 决定是否读取 |
+| `assets/` | 附加资源 | 文件名列表注入提示词 |
+
+**目录上传：** 支持通过前端"上传技能目录"功能上传完整技能包（使用 `webkitdirectory` 选择目录，前端递归读取全部文件后通过 `on_upload_skill_dir` 桥接上传）。
+
 **管理操作与前端消息反馈：**
 
-| 操作 | 方法 | 成功反馈 | 失败反馈 |
-|------|------|---------|---------|
-| 添加 | `on_add_skill` | `✅ 技能 "x" 已添加。` | `⚠️ 技能 "x" 已存在或名称无效。` |
-| 删除 | `on_remove_skill` | `🗑️ 技能 "x" 已删除。` | — |
-| 切换 | `on_toggle_skill` | `🔄 技能 "x" 已启用/禁用。` | — |
+| 操作 | 方法 | 说明 |
+|------|------|------|
+| 上传技能目录 | `on_upload_skill_dir(name, files_json)` | 上传完整技能包（必须含 SKILL.md），后端创建 `<name>/` 目录 |
+| 添加简单技能 | `on_add_skill(name)` | 仅创建含 SKILL.md 的最小技能目录 |
+| 删除 | `on_remove_skill(name)` | 递归删除 `<name>/` 目录 |
+| 切换 | `on_toggle_skill(name)` | 修改 SKILL.md 的 `enabled` 字段 |
 
 ---
 
@@ -413,13 +435,13 @@ description: 代码审查技能提示词
 | `SkillResult` | `skills/base.py` | 执行结果数据类（success/output/error/duration_ms/metadata） |
 | `SkillContext` | `skills/context.py` | 执行上下文（用户输入、会话、参数、变量、调度器引用） |
 | `SkillRegistry` | `skills/registry.py` | 单例注册中心，技能按名称注册/查找/分类，生命周期钩子 + EventBus 事件 |
-| `SkillLoader` | `skills/loader.py` | 加载 Python 技能类 + 解析 MD 技能文件（mtime 缓存） |
+| `SkillLoader` | `skills/loader.py` | 加载 Python 技能类 + 解析 MD 技能目录（mtime 缓存） |
 | `SkillExecutor` | `skills/executor.py` | 技能执行器（批量/分类并发执行，超时保护） |
 | `SkillValidator` | `skills/validator.py` | 技能配置与执行参数校验 |
 | `SkillManager` | `skills/manager.py` | 统一门面：加载/注册/执行/MD 管理/前端桥接 |
 | `SkillDispatcher` | `ai/skill_dispatcher.py` | AI 工具化调度：Tool 描述生成 + 异步执行 + 执行历史 |
 | `TriggerEngine` | `skills/trigger_engine.py` | 触发评估引擎：6 类触发器（关键词/意图/正则/上下文/时间/事件）+ 自动执行 |
-| `MdSkill` | `skills/md_skill.py` | MD 技能适配器：将 Markdown 技能包装为可执行 BaseSkill |
+| `MdSkill` | `skills/md_skill.py` | MD 技能适配器：将技能目录（SKILL.md + 资源）包装为可执行 BaseSkill |
 | `SkillBridge` | `bridge/skill_bridge.py` | QWebChannel 桥接，前端技能管理接口 |
 
 ---

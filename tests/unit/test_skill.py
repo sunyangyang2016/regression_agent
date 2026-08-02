@@ -241,8 +241,10 @@ def test_execute_success_and_result_format():
 # ---------------------------------------------------------------------------
 
 def test_md_cache_and_invalidation(tmp_path):
-    """MD 文件未变更时命中缓存，变更后自动失效"""
-    md_path = tmp_path / "demo.md"
+    """SKILL.md 未变更时命中缓存，变更后自动失效"""
+    skill_dir = tmp_path / "demo"
+    skill_dir.mkdir()
+    md_path = skill_dir / "SKILL.md"
     md_path.write_text("---\nname: demo\nenabled: true\n---\n内容A", encoding="utf-8")
 
     loader = SkillLoader(md_dir=str(tmp_path))
@@ -539,9 +541,12 @@ def test_md_skill_adapter_execute():
 
 
 def test_loader_load_md_skill_adapters(tmp_path):
-    """SkillLoader.load_md_skill_adapters 加载真实/临时 MD 技能为适配器"""
-    md_path = tmp_path / "review.md"
-    md_path.write_text("---\nname: review\nenabled: true\n---\n审查内容", encoding="utf-8")
+    """SkillLoader.load_md_skill_adapters 加载临时 MD 技能目录为适配器"""
+    skill_dir = tmp_path / "review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\nenabled: true\n---\n审查内容", encoding="utf-8"
+    )
     loader = SkillLoader(md_dir=str(tmp_path))
     adapters = loader.load_md_skill_adapters()
     assert len(adapters) == 1
@@ -573,8 +578,9 @@ def test_manager_get_skills_for_js_aggregates_python_and_md(tmp_path):
     SkillRegistry().register(make_skill(name="py_skill", description="d"))
     # 创建带 MD 技能的 manager
     md_dir = tmp_path / "md"
-    md_dir.mkdir()
-    (md_dir / "review.md").write_text(
+    review_dir = md_dir / "review"
+    review_dir.mkdir(parents=True)
+    (review_dir / "SKILL.md").write_text(
         "---\nname: review\nenabled: true\n---\n审查内容", encoding="utf-8"
     )
     mgr = SkillManager(md_dir=str(md_dir))
@@ -592,8 +598,9 @@ def test_get_skills_for_js_dedups_md_adapter_in_registry(tmp_path):
     reg = SkillRegistry()
     reg.unregister("review_dup")
     md_dir = tmp_path / "md"
-    md_dir.mkdir()
-    (md_dir / "review_dup.md").write_text(
+    dup_dir = md_dir / "review_dup"
+    dup_dir.mkdir(parents=True)
+    (dup_dir / "SKILL.md").write_text(
         "---\nname: review_dup\nenabled: true\n---\n审查内容", encoding="utf-8"
     )
     # 模拟真实运行状态：MD 技能已作为适配器注册进 SkillRegistry（供 AI 工具调用）
@@ -612,7 +619,7 @@ def test_get_skills_for_js_dedups_md_adapter_in_registry(tmp_path):
 def test_app_controller_get_skills_data_dedups_md(tmp_path):
     """AppController._get_skills_data 不重复显示已注册为适配器的 MD 技能（回归：UI 显示两条）"""
     ctrl = _make_app_controller(tmp_path)
-    assert ctrl.skill_manager.add_md_skill("review-dup", "审查", "内容") is True
+    assert ctrl.skill_manager.add_md_skill("review-dup", {"SKILL.md": "---\nname: review-dup\nenabled: true\n---\n内容"}) is True
     # 模拟 _init_skill_system：将 MD 技能注册为可执行适配器（进入共享 SkillRegistry）
     for adapter in ctrl.skill_manager.loader.load_md_skill_adapters():
         assert ctrl.skill_dispatcher.register_skill(adapter) is True
@@ -627,8 +634,9 @@ def test_app_controller_get_skills_data_dedups_md(tmp_path):
 
 def test_md_skill_adapter_end_to_end(tmp_path):
     """MD 技能 -> 适配器 -> Dispatcher 全链路（供 AI 工具调用）"""
-    md_path = tmp_path / "review.md"
-    md_path.write_text(
+    skill_dir = tmp_path / "review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
         "---\nname: review\nenabled: true\n---\n审查内容", encoding="utf-8"
     )
     loader = SkillLoader(md_dir=str(tmp_path))
@@ -648,14 +656,15 @@ def test_md_skill_adapter_end_to_end(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_add_md_skill_persists_file(tmp_path):
-    """SkillManager.add_md_skill 持久化 MD 技能文件并可重新解析"""
+    """SkillManager.add_md_skill 持久化 MD 技能目录并可重新解析"""
     from skills.manager import SkillManager
     mgr = SkillManager(md_dir=str(tmp_path))
-    assert mgr.add_md_skill("my-skill", "我的技能", "技能内容") is True
+    files = {"SKILL.md": "---\nname: my-skill\nenabled: true\n---\n技能内容"}
+    assert mgr.add_md_skill("my-skill", files) is True
     # 重复添加失败
-    assert mgr.add_md_skill("my-skill", "", "") is False
+    assert mgr.add_md_skill("my-skill", files) is False
 
-    fpath = tmp_path / "my-skill.md"
+    fpath = tmp_path / "my-skill" / "SKILL.md"
     assert fpath.exists()
     content = fpath.read_text(encoding="utf-8")
     assert "name: my-skill" in content
@@ -705,10 +714,11 @@ def _make_app_controller(tmp_path):
 
 
 def test_manager_sync_md_skills_to_registry(tmp_path):
-    """add_md_skill persists the file; sync_md_skills_to_registry registers enabled MD adapters"""
+    """add_md_skill persists the directory; sync_md_skills_to_registry registers enabled MD adapters"""
     from skills.manager import SkillManager
     mgr = SkillManager(md_dir=str(tmp_path))
-    assert mgr.add_md_skill("code-review", "Code review skill", "Review line by line") is True
+    files = {"SKILL.md": "---\nname: code-review\nenabled: true\n---\nReview line by line"}
+    assert mgr.add_md_skill("code-review", files) is True
     # Persisting the file alone must NOT register the adapter
     assert mgr.registry.get("code-review") is None
 
@@ -730,7 +740,8 @@ def test_manager_sync_md_skills_to_registry(tmp_path):
 def test_app_controller_resync_md_skill_tools(tmp_path):
     """_resync_md_skill_tools registers uploaded MD skill as an AI-callable tool; remove/disable drops it"""
     ctrl = _make_app_controller(tmp_path)
-    assert ctrl.skill_manager.add_md_skill("code-review", "Code review skill", "Review rules") is True
+    files = {"SKILL.md": "---\nname: code-review\nenabled: true\n---\nReview rules"}
+    assert ctrl.skill_manager.add_md_skill("code-review", files) is True
 
     # Before sync: invisible to AI
     assert ctrl.skill_dispatcher.get_skill("code-review") is None
@@ -753,12 +764,14 @@ def test_app_controller_resync_md_skill_tools(tmp_path):
 
 
 def test_skill_bridge_upload_registers_to_ai(tmp_path):
-    """SkillBridge.on_upload_md registers the MD skill with SkillDispatcher and the AI ToolDispatcher"""
+    """SkillBridge.on_upload_skill_dir registers the MD skill with SkillDispatcher and the AI ToolDispatcher"""
+    import json
     from bridge.skill_bridge import SkillBridge
     ctrl = _make_app_controller(tmp_path)
     bridge = SkillBridge(ctrl)
+    files = {"SKILL.md": "---\nname: code-review\nenabled: true\n---\nReview content"}
 
-    assert bridge.on_upload_md("code-review", "Code review skill", "Review content") is True
+    assert bridge.on_upload_skill_dir("code-review", json.dumps(files)) is True
     assert ctrl.skill_dispatcher.get_skill("code-review") is not None
     assert ctrl.ai_client.tool_dispatcher.has_tool("skill_code-review")
 
@@ -768,7 +781,7 @@ def test_skill_bridge_upload_registers_to_ai(tmp_path):
     assert not ctrl.ai_client.tool_dispatcher.has_tool("skill_code-review")
 
     # Upload again, then toggle off -> AI invisible; toggle on -> AI visible
-    assert bridge.on_upload_md("code-review", "Code review skill", "Review content") is True
+    assert bridge.on_upload_skill_dir("code-review", json.dumps(files)) is True
     assert ctrl.ai_client.tool_dispatcher.has_tool("skill_code-review")
     bridge.on_toggle_skill("code-review")
     assert ctrl.skill_dispatcher.get_skill("code-review") is None
