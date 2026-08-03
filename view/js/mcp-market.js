@@ -150,15 +150,27 @@ function renderMCPMarket() {
         var btnClass = i.installed ? 'installed' : '';
         var btnText = i.installed ? '🗑️ 卸载' : '📦 安装';
         var installBtn = '<button class="' + btnClass + '" onclick="event.stopPropagation();toggleMCPInstall(\'' + i.id + '\')">' + btnText + '</button>';
-        var server = appState.mcpServers.find(function(s) { return s.id === i.id; });
+        // 匹配服务器：优先按 serverId（市场表新增字段），回退按 githubRepoUrl 规范化后比较
+        var server = null;
+        if (i.serverId) {
+            server = appState.mcpServers.find(function(s) { return s.id === i.serverId; });
+        }
+        if (!server && i.githubRepoUrl) {
+            var normUrl = function(u) { return (u || '').replace(/\/+$/, '').replace(/\.git$/, '').toLowerCase(); };
+            var targetUrl = normUrl(i.githubRepoUrl);
+            server = appState.mcpServers.find(function(s) {
+                return s.githubRepoUrl && normUrl(s.githubRepoUrl) === targetUrl;
+            });
+        }
         var statusHtml = ''; var controlBtns = ''; var toolListHtml = '';
         if (server) {
+            var serverId = server.id;  // 服务器真实 ID（配置 key）
             var statusClass = server.online ? 'online' : 'offline';
             var statusText = server.online ? '● 在线' : '● 离线';
             statusHtml = '<span class="server-status ' + statusClass + '" style="margin-left:8px;font-size:12px;">' + statusText + '</span>';
-            if (server.online) controlBtns += '<button class="btn-action btn-stop" onclick="event.stopPropagation();stopMCPServer(\'' + i.id + '\')" title="停止" style="font-size:10px;padding:2px 6px;">⏹ 停止</button>';
-            else controlBtns += '<button class="btn-action btn-start" onclick="event.stopPropagation();startMCPServer(\'' + i.id + '\')" title="启动" style="font-size:10px;padding:2px 6px;">▶ 启动</button>';
-            controlBtns += '<button class="btn-action btn-restart" onclick="event.stopPropagation();restartMCPServer(\'' + i.id + '\')" title="重启" style="font-size:10px;padding:2px 6px;">🔄 重启</button>';
+            if (server.online) controlBtns += '<button class="btn-action btn-stop" onclick="event.stopPropagation();stopMCPServer(\'' + serverId + '\')" title="停止" style="font-size:10px;padding:2px 6px;">⏹ 停止</button>';
+            else controlBtns += '<button class="btn-action btn-start" onclick="event.stopPropagation();startMCPServer(\'' + serverId + '\')" title="启动" style="font-size:10px;padding:2px 6px;">▶ 启动</button>';
+            controlBtns += '<button class="btn-action btn-restart" onclick="event.stopPropagation();restartMCPServer(\'' + serverId + '\')" title="重启" style="font-size:10px;padding:2px 6px;">🔄 重启</button>';
             if (server.tools && server.tools.length > 0) toolListHtml = '<div style="font-size:9px;color:var(--text-muted);margin-top:2px;">🔧 ' + server.tools.map(function(t){return t.name;}).join(', ') + '</div>';
             else if (server.toolCount > 0) toolListHtml = '<div style="font-size:9px;color:var(--text-muted);margin-top:2px;">🔧 ' + server.toolCount + ' 个工具</div>';
         }
@@ -227,7 +239,18 @@ function toggleMCPInstall(id) {
         if (window._pendingUninstallIds) window._pendingUninstallIds[id] = true;
         if (window.mcp_bridge && window._bridgeReady) window.mcp_bridge.uninstallMCPFromMarket(id, '');
         item.installed = false;
-        appState.mcpServers = appState.mcpServers.filter(function(s) { return s.id !== id; });
+        // 按真实 server_id 移除服务器列表中的对应项（不匹配则稍后 loadMCPServers 刷新）
+        var uninstallServerId = item.serverId || '';
+        item.serverId = '';   // ★ 取完 serverId 后再清残留，避免后续 loadMCPMarket merge 误判为已安装
+        if (uninstallServerId) {
+            appState.mcpServers = appState.mcpServers.filter(function(s) { return s.id !== uninstallServerId; });
+        } else if (item.githubRepoUrl) {
+            var normUrl = function(u) { return (u || '').replace(/\/+$/, '').replace(/\.git$/, '').toLowerCase(); };
+            var targetUrl = normUrl(item.githubRepoUrl);
+            appState.mcpServers = appState.mcpServers.filter(function(s) {
+                return !(s.githubRepoUrl && normUrl(s.githubRepoUrl) === targetUrl);
+            });
+        }
         renderMCPMarket();
         if (typeof renderMCPServers === 'function') renderMCPServers();
         if (typeof renderMCPLocalServers === 'function') renderMCPLocalServers();

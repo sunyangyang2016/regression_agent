@@ -71,7 +71,8 @@ class Database(BaseDatabase):
             labels          TEXT,
             created_at      TEXT,
             raw_issue       TEXT,
-            fetched_at      TEXT
+            fetched_at      TEXT,
+            server_id       TEXT
         )
         """,
         """
@@ -85,6 +86,7 @@ class Database(BaseDatabase):
             duration    REAL,
             server_name TEXT,
             repo_url    TEXT,
+            market_id   TEXT,
             created_at  TEXT,
             updated_at  TEXT
         )

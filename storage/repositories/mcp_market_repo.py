@@ -66,24 +66,27 @@ class MCPMarketRepository:
             self.db.execute(
                 f"UPDATE {self.TABLE} SET name=?, title=?, github_repo_url=?, logo=?, "
                 f"description=?, author=?, issue_number=?, installed=?, tested=?, "
-                f"server_type=?, labels=?, created_at=?, raw_issue=?, fetched_at=? WHERE id=?",
+                f"server_type=?, labels=?, created_at=?, raw_issue=?, fetched_at=?, "
+                f"server_id=? WHERE id=?",
                 (data.get("name"), data.get("title"), data.get("github_repo_url"),
                  data.get("logo"), data.get("description"), data.get("author"),
                  data.get("issue_number"), data.get("installed"), data.get("tested"),
                  data.get("server_type"), data.get("labels"), data.get("created_at"),
-                 data.get("raw_issue"), data.get("fetched_at"), item_id),
+                 data.get("raw_issue"), data.get("fetched_at"), data.get("server_id"),
+                 item_id),
             )
         else:
             self.db.execute(
                 f"INSERT INTO {self.TABLE} (id, name, title, github_repo_url, logo, "
                 f"description, author, issue_number, installed, tested, server_type, "
-                f"labels, created_at, raw_issue, fetched_at) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"labels, created_at, raw_issue, fetched_at, server_id) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (data.get("id"), data.get("name"), data.get("title"),
                  data.get("github_repo_url"), data.get("logo"), data.get("description"),
                  data.get("author"), data.get("issue_number"), data.get("installed"),
                  data.get("tested"), data.get("server_type"), data.get("labels"),
-                 data.get("created_at"), data.get("raw_issue"), data.get("fetched_at")),
+                 data.get("created_at"), data.get("raw_issue"), data.get("fetched_at"),
+                 data.get("server_id")),
             )
 
     def upsert_many(self, items: list):
@@ -96,6 +99,13 @@ class MCPMarketRepository:
         self.db.execute(
             f"UPDATE {self.TABLE} SET installed = ? WHERE id = ?",
             (1 if installed else 0, item_id),
+        )
+
+    def set_server_id(self, item_id: str, server_id: str):
+        """设置市场项对应的服务器 ID（mcp_servers.json 配置 key）"""
+        self.db.execute(
+            f"UPDATE {self.TABLE} SET server_id = ? WHERE id = ?",
+            (server_id, item_id),
         )
 
     def clear(self):
@@ -117,11 +127,12 @@ class MCPMarketRepository:
             "createdAt": "created_at",
             "rawIssue": "raw_issue",
             "fetchedAt": "fetched_at",
+            "serverId": "server_id",
         }
         table_fields = {
             "id", "name", "title", "github_repo_url", "logo", "description",
             "author", "issue_number", "installed", "tested", "server_type",
-            "labels", "created_at", "raw_issue", "fetched_at",
+            "labels", "created_at", "raw_issue", "fetched_at", "server_id",
         }
         data = {}
         for k, v in item.items():
@@ -169,4 +180,5 @@ class MCPMarketRepository:
             "createdAt": row.get("created_at"),
             "raw_issue": raw_issue,
             "fetched_at": row.get("fetched_at"),
+            "serverId": row.get("server_id"),
         }

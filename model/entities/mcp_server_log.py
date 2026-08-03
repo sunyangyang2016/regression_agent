@@ -18,6 +18,7 @@ class MCPServerLog(BaseEntity):
         self.duration: float = kwargs.get("duration")
         self.server_name: str = kwargs.get("server_name", "")
         self.repo_url: str = kwargs.get("repo_url", "")
+        self.market_id: str = kwargs.get("market_id", "")     # 市场项 ID（mcp-{issue_number}），非市场安装为空
 
     def to_dict(self, for_db: bool = False) -> dict:
         """转 dict（可选：仅含数据库字段）"""
@@ -34,6 +35,7 @@ class MCPServerLog(BaseEntity):
                 "duration": data.get("duration"),
                 "server_name": data.get("server_name"),
                 "repo_url": data.get("repo_url"),
+                "market_id": data.get("market_id"),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
             }

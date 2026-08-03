@@ -3,8 +3,6 @@
     "execute_system_command",
     "current_time",
     "file_ops",
-    "mcp_finalize_install",
-    "mcp_env_setup",
     "directory_ops"
   ]
 }

@@ -70,6 +70,7 @@ class SkillBridge(BridgeBase):
 
             try:
                 # 获取 MD 技能
+                from skills.manager import PROTECTED_MD_SKILLS
                 for s in mgr.get_md_skills():
                     md_skills.append({
                         "name": s.get("name", ""),
@@ -79,6 +80,7 @@ class SkillBridge(BridgeBase):
                         "source": "markdown",
                         "version": "1.0.0",
                         "tags": [],
+                        "protected": s.get("name", "") in PROTECTED_MD_SKILLS,
                         "detail": {
                             "content": s.get("content", ""),
                             "filepath": s.get("filepath", ""),

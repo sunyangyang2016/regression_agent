@@ -79,8 +79,8 @@ function buildSkillItemHtml(s){
     var sourceLabel=s.source==='python'?'Python 技能':'MD 技能';
     var sourceClass=s.source==='python'?'tag-blue':'tag-green';
     var detailHtml = buildSkillDetailHtml(s);
-    // 内建技能（python）不显示删除按钮，仅注册技能（markdown）可删除
-    var removeBtn = (s.source === 'markdown')
+    // 内建技能（python）不显示删除按钮；受保护的内置 MD 技能也不显示删除按钮；仅普通注册技能可删除
+    var removeBtn = (s.source === 'markdown' && !s.protected)
         ? '<button class="skill-remove-btn" title="删除技能" onclick="event.stopPropagation();removeSkill(\''+escHtml(s.name)+'\')"><i class="fas fa-trash"></i></button>'
         : '';
     return '<div class="item-row" onclick="toggleSkillDetail(\''+escHtml(s.name)+'\')" style="cursor:pointer;">'+
@@ -239,6 +239,13 @@ function uploadSkillDir(){
     }
     if(!hasSkillMd){
         showToast('⚠️ 技能目录中必须包含 SKILL.md 文件','error');
+        return;
+    }
+
+    // 前置重名校验：与已存在技能（内置 + 已注册）重名则拒绝上传
+    var conflict = (appState.skills || []).some(function(s){ return s.name === dirName; });
+    if(conflict){
+        showToast('⚠️ 技能 "'+dirName+'" 已存在（内置或已注册），不能重复上传','error');
         return;
     }
 

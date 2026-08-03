@@ -43,21 +43,21 @@ class MCPServerLogsRepository:
         if existing:
             self.db.execute(
                 f"UPDATE {self.TABLE} SET server_id=?, action=?, status=?, log_content=?, "
-                f"log_file=?, duration=?, server_name=?, repo_url=?, updated_at=? WHERE id=?",
+                f"log_file=?, duration=?, server_name=?, repo_url=?, market_id=?, updated_at=? WHERE id=?",
                 (data.get("server_id"), data.get("action"), data.get("status"),
                  data.get("log_content"), data.get("log_file"), data.get("duration"),
-                 data.get("server_name"), data.get("repo_url"), data.get("updated_at"),
-                 data.get("id")),
+                 data.get("server_name"), data.get("repo_url"), data.get("market_id"),
+                 data.get("updated_at"), data.get("id")),
             )
         else:
             self.db.execute(
                 f"INSERT INTO {self.TABLE} (id, server_id, action, status, log_content, "
-                f"log_file, duration, server_name, repo_url, created_at, updated_at) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"log_file, duration, server_name, repo_url, market_id, created_at, updated_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (data.get("id"), data.get("server_id"), data.get("action"),
                  data.get("status"), data.get("log_content"), data.get("log_file"),
                  data.get("duration"), data.get("server_name"), data.get("repo_url"),
-                 data.get("created_at"), data.get("updated_at")),
+                 data.get("market_id"), data.get("created_at"), data.get("updated_at")),
             )
         return True
 
@@ -104,11 +104,23 @@ class MCPServerLogsRepository:
         )
         return [MCPServerLog.from_dict(r) for r in rows]
 
-    def count(self, server_id: Optional[str] = None) -> int:
-        """日志数量（可按服务器筛选）"""
+    def get_by_market(self, market_id: str, order_by: str = "created_at DESC") -> List[MCPServerLog]:
+        """按市场项 ID 查询日志（市场安装的服务器）"""
+        rows = self.db.query(
+            f"SELECT * FROM {self.TABLE} WHERE market_id = ? ORDER BY {order_by}",
+            (market_id,),
+        )
+        return [MCPServerLog.from_dict(r) for r in rows]
+
+    def count(self, server_id: Optional[str] = None, market_id: Optional[str] = None) -> int:
+        """日志数量（可按服务器或市场项筛选）"""
         if server_id:
             return self.db.query_value(
                 f"SELECT COUNT(*) FROM {self.TABLE} WHERE server_id = ?", (server_id,)
+            ) or 0
+        if market_id:
+            return self.db.query_value(
+                f"SELECT COUNT(*) FROM {self.TABLE} WHERE market_id = ?", (market_id,)
             ) or 0
         return self.db.query_value(f"SELECT COUNT(*) FROM {self.TABLE}") or 0
 

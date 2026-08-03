@@ -36,63 +36,179 @@ class MCPBridge(BridgeBase):
         super().__init__(app_controller)
         self._js_exec_signal.connect(self._execute_js_safe)
         self._cached_market_items = []
-        self._log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "mcp")
-        os.makedirs(self._log_dir, exist_ok=True)
-        self._log_paths: dict = {}  # item_id → log file path
-        
+
         # 注册 MCPHost 状态变化回调 — 推模式，不轮询
         from tools.mcp.host import MCPHost
         def _on_mcp_status():
             self.execute_js("loadMCPServers();")
         MCPHost.on_status_change(_on_mcp_status)
 
-    def _get_log_path(self, item_id: str) -> str:
-        """获取日志文件路径。优先使用注册的自定义路径，否则使用默认日志目录"""
-        if item_id in self._log_paths:
-            return self._log_paths[item_id]
-        return os.path.join(self._log_dir, f"{item_id}.log")
-
-    def _register_log_path(self, item_id: str, server_dir: str, server_name: str = None):
-        """注册日志路径到 MCP 服务器下载目录，文件名: {id}_{创建时间}.log"""
-        try:
-            t_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            name_part = (server_name or item_id).replace(' ', '_')
-            log_file = os.path.join(server_dir, f"{name_part}_{t_str}.log")
-            self._log_paths[item_id] = log_file
-        except Exception:
-            self._log_paths.pop(item_id, None)
-
     def _write_log(self, item_id: str, line: str):
+        """写入日志（纯数据库，无物理文件）——统一归一化到 server_id 作为权威主键"""
+        # 统一 server_id：若传入的是市场 ID 且安装上下文存在，则转换为服务器 ID
+        db_server_id = self._normalize_db_server_id(item_id)
+        self._save_log_to_db(db_server_id, line)
+
+    def _normalize_db_server_id(self, item_id: str) -> str:
+        """将任意传入的 ID 统一为数据库中的 server_id（服务器 ID / 仓库目录名）
+
+        - 安装阶段：传入市场 ID（mcp-{number}）→ 转换为 server_id（仓库目录名）
+        - 运行阶段：本身已是服务器 ID → 原样返回
+        - 无上下文：原样返回
+        """
+        ctx = getattr(self, '_install_context', None)
+        if ctx:
+            # 安装上下文存在，且传入的是市场 ID，则映射为服务器 ID
+            if item_id == ctx.get("market_id"):
+                return ctx.get("server_id", item_id)
+            # 传入的是服务器 ID，则原样使用
+            if item_id == ctx.get("server_id"):
+                return item_id
+        return item_id
+
+    # ==========================================
+    # 日志入库（mcp_server_logs 表）
+    # ==========================================
+
+    def _save_log_to_db(self, server_id: str, line: str):
+        """将日志行写入 mcp_server_logs 表（server_id 统一为服务器 ID，market_id 关联市场项）"""
         try:
-            log_file = self._get_log_path(item_id)
-            os.makedirs(os.path.dirname(log_file), exist_ok=True)
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {line}\n")
+            from model.entities.mcp_server_log import MCPServerLog
+            from storage.repositories.mcp_server_logs_repo import MCPServerLogsRepository
+
+            # 推断动作类型
+            action = self._infer_log_action(server_id, line)
+            # 推断状态
+            status = "success" if any(k in line for k in ("✅", "完成", "成功")) else (
+                "failed" if any(k in line for k in ("❌", "失败")) else "start"
+            )
+            # 市场项 ID（从 _install_context 中取，或从市场表反查）
+            market_id = self._get_market_id_for_server(server_id)
+
+            log = MCPServerLog(
+                server_id=server_id,
+                action=action,
+                status=status,
+                log_content=line,
+                server_name=self._get_server_name(server_id),
+                repo_url=self._get_git_url(server_id),
+                market_id=market_id,
+            )
+            repo = MCPServerLogsRepository()
+            repo.save(log)
+        except Exception:
+            pass  # 数据库写入失败不阻塞主流程
+
+    def _get_market_id_for_server(self, server_id: str) -> str:
+        """根据服务器 ID 反查市场项 ID（mcp-{issue_number}）
+
+        优先级：
+        1. 安装上下文中的 market_id → server_id 映射
+        2. 市场表中 server_id 反查
+        3. 传入的 server_id 本身就是市场 ID（形如 mcp-{number}）
+        """
+        # 优先：安装上下文中有直接的 market_id → server_id 映射
+        ctx = getattr(self, '_install_context', None)
+        if ctx and ctx.get("server_id") == server_id:
+            return ctx.get("market_id", "")
+        # 传入的 server_id 可能是市场 ID 本身（安装早期阶段）
+        if server_id.startswith("mcp-"):
+            return server_id
+        try:
+            from storage.repositories.mcp_market_repo import MCPMarketRepository
+            repo = MCPMarketRepository()
+            for item in repo.get_all():
+                if item.get("serverId") == server_id:
+                    return item.get("id", "")
         except Exception:
             pass
+        return ""
+
+    def _get_server_name(self, server_id: str) -> str:
+        """根据服务器 ID 获取显示名称"""
+        try:
+            from tools.mcp.host import MCPHost
+            mgr = MCPHost()
+            config = mgr._read_config()
+            cfg = config.get("mcpServers", {}).get(server_id, {})
+            if cfg.get("name"):
+                return cfg["name"]
+        except Exception:
+            pass
+        ctx = getattr(self, '_install_context', None)
+        if ctx and ctx.get("server_id") == server_id:
+            return ctx.get("name", server_id)
+        return server_id
+
+    def _get_git_url(self, server_id: str) -> str:
+        """根据服务器 ID 获取 GitHub 仓库 URL"""
+        try:
+            from tools.mcp.host import MCPHost
+            mgr = MCPHost()
+            config = mgr._read_config()
+            cfg = config.get("mcpServers", {}).get(server_id, {})
+            if cfg.get("githubRepoUrl"):
+                return cfg["githubRepoUrl"]
+        except Exception:
+            pass
+        ctx = getattr(self, '_install_context', None)
+        if ctx and ctx.get("server_id") == server_id:
+            return ctx.get("repo_url", "")
+        return ""
+
+    def _infer_log_action(self, server_id: str, line: str) -> str:
+        """从日志内容推断操作类型"""
+        if "正在卸载" in line or "卸载完成" in line:
+            return "uninstall"
+        if "正在启动" in line or "启动成功" in line or "正在启动服务器" in line:
+            return "start"
+        if "正在停止" in line or "已停止" in line:
+            return "stop"
+        if "正在重启" in line or "重启成功" in line:
+            return "restart"
+        if "开始安装" in line or "正在安装" in line:
+            return "install"
+        return "config"
 
     def _clear_log(self, item_id: str):
+        """清除数据库中的该服务器日志（纯数据库）"""
         try:
-            log_file = self._get_log_path(item_id)
-            if os.path.exists(log_file):
-                os.remove(log_file)
+            from storage.repositories.mcp_server_logs_repo import MCPServerLogsRepository
+            server_id = self._normalize_db_server_id(item_id)
+            repo = MCPServerLogsRepository()
+            repo.delete_by_server(server_id)
         except Exception:
             pass
 
     @pyqtSlot(str, result=str)
     def getMCPLog(self, item_id: str):
+        """获取安装日志 — 仅从数据库读取（server_id 归一化 + market_id 兜底）"""
         try:
-            log_file = self._get_log_path(item_id)
-            if os.path.exists(log_file):
-                with open(log_file, "r", encoding="utf-8") as f:
-                    return f.read()
-            return ""
+            from storage.repositories.mcp_server_logs_repo import MCPServerLogsRepository
+            repo = MCPServerLogsRepository()
+            # 先归一化为 server_id 查询
+            server_id = self._normalize_db_server_id(item_id)
+            logs = repo.get_by_server(server_id, order_by="created_at ASC")
+            if not logs:
+                logs = repo.get_by_market(item_id, order_by="created_at ASC")
+            if logs:
+                return "\n".join(l.log_content for l in logs if l.log_content)
         except Exception:
-            return ""
+            pass
+        return ""
+
+    @staticmethod
+    def _js_str(s) -> str:
+        """生成 JS 安全的字符串字面量
+
+        JSON 字符串本身即合法 JS 字符串字面量：自动转义单引号、反斜杠、
+        换行等特殊字符。避免手工 `replace("'", "\\\\'")` 拼接导致的
+        `missing ) after argument list` 语法错误。
+        """
+        return json.dumps(str(s or ''), ensure_ascii=False)
 
     def _js_log(self, server_id: str, msg: str):
-        safe_msg = msg.replace("'", "\\'")
-        self.execute_js(f"mcpAppendLog('{server_id}', '{safe_msg}');")
+        self.execute_js(f"mcpAppendLog({self._js_str(server_id)}, {self._js_str(msg)});")
         print(f"[MCPBridge] {msg}")
         self._write_log(server_id, msg)
 
@@ -716,9 +832,11 @@ class MCPBridge(BridgeBase):
                     config = mgr._read_config()
                     local_servers = config.get("mcpServers", {})
                     for item in items:
-                        if item["id"] in local_servers:
-                            item["installed"] = True
-                            # 同步到数据库持久化
+                        # 判断已安装：只信任 serverId 精确匹配（server_id = 配置 key = 仓库目录名）
+                        installed = bool(item.get("serverId")) and item["serverId"] in local_servers
+                        item["installed"] = installed
+                        # 同步到数据库持久化
+                        if installed or item.get("serverId"):
                             repo.upsert(item)
                 except Exception:
                     pass
@@ -782,15 +900,16 @@ class MCPBridge(BridgeBase):
             config = mgr._read_config()
             local_servers = config.get("mcpServers", {})
             for item in items:
-                if item["id"] in local_servers:
-                    item["installed"] = True
-                    # 同步 installed 到数据库持久化
-                    try:
-                        from storage.repositories.mcp_market_repo import MCPMarketRepository
-                        _repo = MCPMarketRepository()
-                        _repo.upsert(item)
-                    except Exception:
-                        pass
+                # 判断已安装：只信任 serverId 精确匹配（server_id = 配置 key = 仓库目录名）
+                installed = bool(item.get("serverId")) and item["serverId"] in local_servers
+                item["installed"] = installed
+                # 同步 installed 到数据库持久化
+                try:
+                    from storage.repositories.mcp_market_repo import MCPMarketRepository
+                    _repo = MCPMarketRepository()
+                    _repo.upsert(item)
+                except Exception:
+                    pass
         except Exception:
             pass
         print(f"[MCPBridge] ✅ 从 GitHub 刷新 {len(items)} 个市场项并保存到数据库")
@@ -963,13 +1082,10 @@ class MCPBridge(BridgeBase):
 
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             clone_dir = os.path.join(base, "tools", "mcp", "server", repo_dir_name)
-            config_id = repo_dir_name
-            self._write_log(item_id, f"🔗 配置 ID: {config_id}")
+            server_id = repo_dir_name
+            self._write_log(item_id, f"🔗 服务器 ID: {server_id}")
             self.execute_js(f"mcpAppendLog('{item_id}', '📁 目标目录: tools/mcp/server/{repo_dir_name}');")
             
-            # 注册日志路径到服务器下载目录
-            self._register_log_path(item_id, clone_dir, install_name)
-
             import shutil as _shutil
             if os.path.exists(base):
                 try:
@@ -1013,20 +1129,457 @@ class MCPBridge(BridgeBase):
             self.execute_js(f"mcpAppendLog('{item_id}', '✅ 源码获取成功');")
 
             self._install_context = {
-                "item_id": item_id, "name": install_name, "repo_url": install_url,
-                "clone_dir": clone_dir, "config_id": repo_dir_name, "start_time": start_time,
+                "market_id": item_id, "name": install_name, "repo_url": install_url,
+                "clone_dir": clone_dir, "server_id": repo_dir_name, "start_time": start_time,
             }
 
             self.execute_js(f"mcpAppendLog('{item_id}', '');")
             self.execute_js(f"mcpAppendLog('{item_id}', '─' * 30);")
-            self.execute_js(f"mcpAppendLog('{item_id}', '🔧 步骤 2/2: AI 智能分析');")
+            self.execute_js(f"mcpAppendLog('{item_id}', '🔧 步骤 2/2: 自动检测 + AI 审阅');")
             self.execute_js(f"mcpAppendLog('{item_id}', '─' * 30);")
             # 传递绝对路径给前端
             abs_path = clone_dir.replace('\\', '\\\\')
             self.execute_js(f"mcpAppendLog('{item_id}', '🤖 正在启动 AI 安装助手...');")
-            self.execute_js(f"startMCPInstallAnalysis('{item_id}', '{install_url}', '{repo_dir_name}', '{install_name}', '{abs_path}');")
 
+            # ---- 新流水线：自动检测草稿 → env 弹窗 → AI 审阅 ----
+            try:
+                # 1. 程序自动检测入口，生成配置草稿
+                draft = self._auto_detect_config(clone_dir, install_name, abs_path)
+                self._install_context["config_draft"] = draft.get("draft", {})
+                self._install_context["auto_detect_ok"] = draft.get("ok", False)
+                if draft.get("ok"):
+                    self._js_log(item_id, f"📦 自动检测到入口: {draft.get('summary', '')}")
+                else:
+                    self._js_log(item_id, "⚠️ 自动检测未识别到标准入口，将由 AI 完整分析")
+
+                # 2. 扫描环境变量占位，若有则程序自动弹窗（替代原 mcp_env_setup 工具）
+                env_vars = self._detect_env_vars(clone_dir)
+                if env_vars:
+                    # ★ 阻塞挂起：弹窗后 return，等用户点「确定/取消」后再续接 AI 审阅
+                    self._install_context["pending_env"] = True
+                    self._install_context["pending_action"] = "start_ai_review"
+                    self._install_context["await_abs_path"] = abs_path
+                    self._js_log(item_id, f"🔑 检测到 {len(env_vars)} 个环境变量（API Key 等），自动弹出配置窗口，等待用户确认...")
+                    self._trigger_env_dialog(install_name or repo_dir_name, env_vars)
+                    return
+
+                # 无 env：直接进入 AI 审阅
+                self._start_ai_review_flow(item_id, install_name, repo_dir_name, install_url, abs_path)
+
+            except Exception as e:
+                self._js_log(item_id, f"⚠️ 自动检测流程异常: {str(e)[:100]}，交 AI 处理")
+                self.execute_js(
+                    f"startMCPInstallAnalysis({self._js_str(item_id)}, {self._js_str(install_url)}, "
+                    f"{self._js_str(repo_dir_name)}, {self._js_str(install_name)}, "
+                    f"{self._js_str(abs_path)}, {{}});"
+                )
+                self.stop_ai_config_listener()
+                if self._install_context:
+                    self._install_context["awaiting_ai_config"] = False
+
+        # 启动后台线程执行安装 worker
         threading.Thread(target=worker, daemon=True).start()
+
+    def _start_ai_review_flow(self, item_id, install_name, repo_dir_name, install_url, abs_path):
+        """启动 AI 审阅流程（env 挂起续接或无 env 直接调用）"""
+        try:
+            self._install_context["awaiting_ai_config"] = True
+            self._install_context["await_abs_path"] = abs_path
+            self.start_ai_config_listener()
+            self.execute_js(
+                f"startMCPInstallAnalysis({self._js_str(item_id)}, {self._js_str(install_url)}, "
+                f"{self._js_str(repo_dir_name)}, {self._js_str(install_name)}, "
+                f"{self._js_str(abs_path)}, "
+                f"{json.dumps(self._install_context.get('config_draft', {}), ensure_ascii=False)});"
+            )
+        except Exception as e:
+            self._js_log(item_id, f"⚠️ 启动 AI 审阅失败: {str(e)[:100]}")
+            self.execute_js(f"mcpFinishInstall('{item_id}', -1);")
+
+    @pyqtSlot(str)
+    def cancelEnvVars(self, server_id: str):
+        """用户点击「取消」：不保存 env，续接 AI 审阅（env 留空）"""
+        print(f"[MCPBridge] ⏹️ 用户取消了环境变量输入: {server_id}")
+        try:
+            ctx = getattr(self, '_install_context', None)
+            if ctx and ctx.get("pending_action") == "start_ai_review":
+                ctx["pending_action"] = None
+                ctx["env_vars"] = {}   # 明确标记未填写
+                self._install_context = ctx
+                self._resume_install_after_env()
+        except Exception as e:
+            print(f"[MCPBridge] ⚠️ cancelEnvVars 失败: {e}")
+
+    def _resume_install_after_env(self):
+        """env 弹窗确认/取消后，从上下文取回安装参数续接 AI 审阅"""
+        try:
+            ctx = getattr(self, '_install_context', None)
+            if not ctx or ctx.get("pending_action") != "start_ai_review":
+                return
+            ctx["pending_action"] = None
+            self._install_context = ctx
+            item_id = ctx.get("market_id", "")
+            install_name = ctx.get("name", "")
+            server_id = ctx.get("server_id", "")
+            install_url = ctx.get("repo_url", "")
+            # 不再手工双重转义反斜杠，统一交由 _js_str 做 JS 字符串安全转义
+            abs_path = str(ctx.get("await_abs_path", ctx.get("clone_dir", "")))
+            self._js_log(item_id, "🔑 环境变量已确认，开始 AI 审阅...")
+            self._start_ai_review_flow(item_id, install_name, server_id, install_url, abs_path)
+        except Exception as e:
+            print(f"[MCPBridge] ⚠️ _resume_install_after_env 失败: {e}")
+
+    # ==========================================
+    # 内部化安装辅助（替代已删除的 mcp_env_setup / mcp_finalize_install 工具）
+    # ==========================================
+
+    def _auto_detect_config(self, clone_dir: str, install_name: str, abs_path: str) -> dict:
+        """程序自动检测项目入口，生成配置草稿
+
+        返回: {"ok": bool, "draft": dict, "summary": str}
+        """
+        draft = {}
+        summary = ""
+        try:
+            mcp_json = _read_json_file(os.path.join(clone_dir, ".mcp.json"))
+            for srv_name, srv_cfg in mcp_json.get("mcpServers", {}).items():
+                if srv_cfg.get("type") == "http" and srv_cfg.get("url"):
+                    draft = {
+                        "transport": "http",
+                        "url": srv_cfg["url"],
+                        "name": srv_name or install_name,
+                    }
+                    summary = f"HTTP 远程: {srv_cfg['url']}"
+                    return {"ok": True, "draft": draft, "summary": summary}
+
+            pkg = _read_json_file(os.path.join(clone_dir, "package.json"))
+            if pkg:
+                entry = None
+                bin_field = pkg.get("bin", {})
+                if isinstance(bin_field, dict) and bin_field:
+                    _, entry = next(iter(bin_field.items()))
+                elif isinstance(bin_field, str):
+                    entry = bin_field
+                if entry:
+                    args = [entry]
+                else:
+                    alias = pkg.get("mcp")
+                    if alias and isinstance(alias, dict) and alias.get("command"):
+                        draft = {
+                            "transport": "stdio",
+                            "command": alias["command"],
+                            "args": alias.get("args", []),
+                            "cwd": abs_path,
+                            "name": pkg.get("name", install_name),
+                        }
+                        summary = f"package.json mcp 配置: {alias['command']}"
+                        return {"ok": True, "draft": draft, "summary": summary}
+                    main_field = pkg.get("main", "")
+                    if main_field:
+                        args = [main_field]
+                    else:
+                        args = []
+                if args:
+                    draft = {
+                        "transport": "stdio",
+                        "command": "node",
+                        "args": args,
+                        "cwd": abs_path,
+                        "name": pkg.get("name", install_name),
+                    }
+                    summary = f"node 入口: {' '.join(args)}"
+                    return {"ok": True, "draft": draft, "summary": summary}
+
+            if os.path.exists(os.path.join(clone_dir, "pyproject.toml")):
+                draft = {
+                    "transport": "stdio",
+                    "command": "python",
+                    "args": ["-m", "mcp_server"],
+                    "cwd": abs_path,
+                    "name": install_name,
+                }
+                summary = "python -m mcp_server"
+                return {"ok": True, "draft": draft, "summary": summary}
+
+            return {"ok": False, "draft": {}, "summary": ""}
+        except Exception as e:
+            return {"ok": False, "draft": {}, "summary": str(e)[:100]}
+
+    def _extract_apply_url(self, clone_dir: str) -> str:
+        """提取申请 API Key 的网页链接（供环境变量弹窗展示，可点击跳转）
+
+        优先级：
+        1. server.json / .mcp.json / package.json 中的 websiteUrl / homepage / repository.url
+        2. README / CLIENT_SETUP.md / INSTALL.md 中第一个 https:// 外链（排除 github 仓库本身）
+        3. 安装上下文中的 GitHub 仓库主页
+        """
+        import re as _re
+        repo_url = ""
+        ctx = getattr(self, '_install_context', None)
+        if ctx:
+            repo_url = ctx.get("repo_url", "") or ""
+
+        # 1. server.json / .mcp.json / package.json
+        for fname, fields in (
+            ("server.json", ("websiteUrl", "homepage")),
+            (".mcp.json", ("homepage", "websiteUrl")),
+            ("package.json", ("homepage",)),
+        ):
+            try:
+                data = _read_json_file(os.path.join(clone_dir, fname))
+                for f in fields:
+                    val = data.get(f) if isinstance(data, dict) else None
+                    if val and str(val).startswith("http"):
+                        return str(val)
+                # package.json 的 repository.url
+                if fname == "package.json" and isinstance(data, dict):
+                    repo_obj = data.get("repository") or {}
+                    repo_val = repo_obj.get("url", "") if isinstance(repo_obj, dict) else ""
+                    if repo_val:
+                        repo_url = repo_val.replace("git+", "").replace(".git", "") or repo_url
+            except Exception:
+                pass
+
+        # 2. README / CLIENT_SETUP.md / INSTALL.md 提取 https 外链
+        for fname in ("README.md", "README.MD", "CLIENT_SETUP.md", "INSTALL.md", "llms-install.md"):
+            fpath = os.path.join(clone_dir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read(12000)
+                    links = _re.findall(r'https?://[^\s\)\]\)"<>]+', content)
+                    for link in links:
+                        link = link.rstrip('.,;。，')
+                        if "github.com" in link and repo_url and "github.com" in repo_url:
+                            continue  # 跳过 GitHub 仓库链接本身
+                        if link.startswith("http"):
+                            return link
+                except Exception:
+                    pass
+
+        # 3. 兜底：GitHub 仓库主页
+        if repo_url:
+            return repo_url if repo_url.startswith("http") else f"https://{repo_url}"
+        return ""
+
+    def _detect_env_vars(self, clone_dir: str) -> list:
+        """扫描项目中的环境变量占位，返回需要用户填写的 env_vars 列表（含申请 URL）"""
+        env_vars = []
+        # 提取申请 Key 的网页链接（供弹窗展示并可点击跳转）
+        apply_url = self._extract_apply_url(clone_dir)
+        try:
+            # 1. 从 .env.example / .env.sample 读取 KEY 占位
+            for fname in (".env.example", ".env.sample", ".env.template"):
+                fpath = os.path.join(clone_dir, fname)
+                if os.path.isfile(fpath):
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if line and not line.startswith("#") and "=" in line:
+                                    key = line.split("=", 1)[0].strip()
+                                    if key and key.upper() == key and key not in [v["name"] for v in env_vars]:
+                                        env_vars.append({
+                                            "name": key,
+                                            "description": f"请在 {fname} 中配置 {key}",
+                                            "required": True,
+                                            "url": apply_url or None,
+                                        })
+                    except Exception:
+                        pass
+            # 2. 从 mcp.json / .mcp.json 的 env 外观检测
+            mcp_json = _read_json_file(os.path.join(clone_dir, ".mcp.json"))
+            for srv_name, srv_cfg in mcp_json.get("mcpServers", {}).items():
+                for key in (srv_cfg.get("env", {}) or {}):
+                    if key and key.upper() == key and key not in [v["name"] for v in env_vars]:
+                        env_vars.append({
+                            "name": key,
+                            "description": f"{srv_name} 需要的环境变量 {key}",
+                            "required": True,
+                            "url": apply_url or None,
+                        })
+            # 3. 从 README 中扫描常见 API Key 字样（粗略启发式）
+            if not env_vars:
+                for fname in ("README.md", "README.MD"):
+                    fpath = os.path.join(clone_dir, fname)
+                    if os.path.isfile(fpath):
+                        try:
+                            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read(6000)
+                            import re as _re
+                            for key in _re.findall(r'\b([A-Z][A-Z0-9_]*(?:_API_KEY|_TOKEN|_SECRET|API_KEY|TOKEN|SECRET))\b', content):
+                                if key not in [v["name"] for v in env_vars]:
+                                    env_vars.append({
+                                        "name": key,
+                                        "description": f"从 README 检测到的 {key}",
+                                        "required": True,
+                                        "url": apply_url or None,
+                                    })
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        return env_vars
+
+    def _trigger_env_dialog(self, server_id: str, env_vars: list):
+        """内部方法：弹出环境变量配置窗口（替代原 mcp_env_setup 工具）"""
+        try:
+            if not env_vars or not server_id:
+                return
+            env_json = json.dumps(env_vars, ensure_ascii=False)
+            server_js = json.dumps(server_id, ensure_ascii=False)
+            js = f"showAPIKeyDialog({{server_id:{server_js},env_vars:{env_json}}});"
+            self.execute_js(js)
+        except Exception as e:
+            self._js_log(server_id, f"⚠️ 弹出环境变量窗口失败: {str(e)[:80]}")
+
+    # ==========================================
+    # AI 回复监听（经 ChatBridge 可选钩子接入，避免侵入通用会话）
+    # ==========================================
+
+    def start_ai_config_listener(self):
+        """安装启动时注册到 ChatBridge 的钩子，捕获 AI 审阅后的配置 JSON"""
+        try:
+            self._ai_chunk_buffer = []
+            chat_bridge = self._get_chat_bridge()
+            if chat_bridge:
+                chat_bridge.set_content_sink(
+                    chunk_cb=self._accumulate_ai_chunk,
+                    done_cb=self._ai_stream_finished,
+                )
+                print("[MCPBridge] 🎧 已注册 AI 回复监听（安装审阅）")
+        except Exception as e:
+            print(f"[MCPBridge] ⚠️ 注册 AI 回复监听失败: {e}")
+
+    def stop_ai_config_listener(self):
+        """安装结束后清理 ChatBridge 钩子（恢复普通会话零侵入）"""
+        try:
+            self._ai_chunk_buffer = []
+            chat_bridge = self._get_chat_bridge()
+            if chat_bridge:
+                chat_bridge.clear_content_sink()
+                print("[MCPBridge] 🎧 已移除 AI 回复监听")
+        except Exception:
+            pass
+
+    def _get_chat_bridge(self):
+        """获取 ChatBridge 实例（经 AppController 持有）"""
+        try:
+            if self.app_controller and hasattr(self.app_controller, '_bridge'):
+                return self.app_controller._bridge
+        except Exception:
+            pass
+        return None
+
+    def _accumulate_ai_chunk(self, content):
+        """ChatBridge 传入的 AI 流式片段回调：累积完整回复文本"""
+        try:
+            if isinstance(content, str):
+                if not hasattr(self, '_ai_chunk_buffer'):
+                    self._ai_chunk_buffer = []
+                self._ai_chunk_buffer.append(content)
+        except Exception:
+            pass
+
+    def _ai_stream_finished(self):
+        """ChatBridge 的 AI 流完成回调：拼接全文并触发配置捕获"""
+        try:
+            buffer = getattr(self, '_ai_chunk_buffer', []) or []
+            text = "".join(buffer)
+            self._ai_chunk_buffer = []
+            if text.strip():
+                self.capture_ai_config(text)
+            # 保留截图监听状态（用户确认安装前仍需监听后续消息？）
+            # 完成即取消监听，避免影响正常会话
+            chat_bridge = self._get_chat_bridge()
+            if chat_bridge:
+                chat_bridge.clear_content_sink()
+        except Exception as e:
+            print(f"[MCPBridge] ⚠️ AI 流完成捕获失败: {e}")
+
+    def capture_ai_config(self, assistant_text: str) -> bool:
+        """从 AI 完整回复中提取 config JSON（AI 审阅后输出），触发前端预览确认
+
+        Returns: 是否提取成功并触发展示预览
+        """
+        try:
+            ctx = getattr(self, '_install_context', None)
+            if not ctx:
+                return False
+            # 提取回复中最后一个 JSON 对象块
+            import json as _json
+            text = assistant_text or ""
+            # 尝试直接 json.loads
+            try:
+                cfg = _json.loads(text)
+                if isinstance(cfg, dict):
+                    ctx["ai_config"] = cfg
+                    self._install_context = ctx
+                    self._show_config_preview(cfg)
+                    return True
+            except Exception:
+                pass
+            # 提取回复末尾的完整 JSON 对象（支持嵌套，如 env:{}）
+            idx = text.rfind('{')
+            if idx != -1:
+                try:
+                    cfg = _json.loads(text[idx:])
+                    if isinstance(cfg, dict):
+                        ctx["ai_config"] = cfg
+                        self._install_context = ctx
+                        self._show_config_preview(cfg)
+                        return True
+                except Exception:
+                    pass
+            # 回退：正则提取 ```json ... ``` 块（AI 可能用代码块包裹）
+            import re as _re
+            code_blocks = _re.findall(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
+            for block in reversed(code_blocks):
+                try:
+                    cfg = _json.loads(block)
+                    if isinstance(cfg, dict):
+                        ctx["ai_config"] = cfg
+                        self._install_context = ctx
+                        self._show_config_preview(cfg)
+                        return True
+                except Exception:
+                    continue
+            return False
+        except Exception:
+            return False
+
+    def _show_config_preview(self, config: dict):
+        """前端展示配置预览 + 确认安装按钮"""
+        try:
+            ctx = getattr(self, '_install_context', None)
+            item_id = ctx.get("market_id", "") if ctx else ""
+            config_js = json.dumps(config, ensure_ascii=False)
+            self.execute_js(f"showMCPConfigPreview('{item_id}', {config_js});")
+            self._js_log(item_id, "📝 AI 审阅完成，请在预览区确认配置后点击「确认安装」")
+        except Exception:
+            pass
+
+    @pyqtSlot(str, str)
+    def confirmMCPInstall(self, item_id: str, config_json: str):
+        """用户点击「确认安装」后，用确认的配置调用 finalizeMCPInstall（替代 mcp_finalize_install 工具）"""
+        try:
+            # 校验 item_id
+            ctx = getattr(self, '_install_context', None)
+            target_id = item_id
+            if not target_id and ctx:
+                target_id = ctx.get("market_id", "")
+            if not target_id:
+                self._js_log(item_id or "mcp", "❌ 安装上下文丢失，无法确认安装")
+                return
+            # 若传入空则用草稿
+            cfg_json = config_json or '{}'
+            cfg = json.loads(cfg_json)
+            if not cfg and ctx:
+                cfg = ctx.get("ai_config") or ctx.get("config_draft") or {}
+                cfg_json = json.dumps(cfg, ensure_ascii=False)
+            self.finalizeMCPInstall(target_id, cfg_json, "用户确认安装")
+        except Exception as e:
+            self._js_log(item_id or "mcp", f"❌ 确认安装失败: {str(e)[:100]}")
 
     # ==========================================
     # AI 安装助手工具
@@ -1250,8 +1803,12 @@ class MCPBridge(BridgeBase):
             
             masked_keys = ", ".join([f"{k}=****" for k in env_vars.keys()])
             print(f"[MCPBridge] ✅ 已保存环境变量: {masked_keys}")
-            # 通知 AI 环境变量已填写完成（不带 key 值，仅告知状态）
-            self.execute_js(f"window.chatApp && window.chatApp.addMessage && window.chatApp.addMessage('user', '用户已确认环境变量，AI 可以继续下一步');")
+            # 若安装流程正挂起等待 env（pending_action=start_ai_review）→ 续接 AI 审阅
+            if ctx and ctx.get("pending_action") == "start_ai_review":
+                self._resume_install_after_env()
+            else:
+                # 通知 AI 环境变量已填写完成（不带 key 值，仅告知状态）
+                self.execute_js(f"window.chatApp && window.chatApp.addMessage && window.chatApp.addMessage('user', '用户已确认环境变量，AI 可以继续下一步');")
             print(f"[MCPBridge] ✅ 已通知 AI 继续安装")
         except Exception as e:
             print(f"[MCPBridge] ❌ confirmEnvVars 失败: {e}")
@@ -1274,9 +1831,9 @@ class MCPBridge(BridgeBase):
                 self.execute_js(f"mcpAppendLog('{item_id}', '❌ 安装上下文丢失');")
                 self.execute_js(f"mcpFinishInstall('{item_id}', -1);")
                 return
-            # AI 传入的 item_id 可能是 config_id（目录名），不是市场 ID
-            # 从上下文获取原始市场 item_id
-            market_item_id = ctx.get("item_id", item_id)
+            # AI 传入的 item_id 可能是 server_id（目录名），不是市场 ID
+            # 从上下文获取原始市场 market_id
+            market_item_id = ctx.get("market_id", item_id)
             cfg = json.loads(config_json)  # AI 提供的完整配置
 
             # 合并用户确认的环境变量（用户输入始终覆盖 AI 传的值）
@@ -1285,7 +1842,7 @@ class MCPBridge(BridgeBase):
                 ai_env = cfg.get("env", {})
                 cfg["env"] = {**ai_env, **user_env}  # user_env 覆盖 ai_env 中同名的空值
 
-            write_id = ctx["config_id"]
+            write_id = ctx["server_id"]
             clone_dir = ctx["clone_dir"]
 
             # 构建最终配置（以 AI 提供为准，后端仅补充 githubRepoUrl）
@@ -1350,68 +1907,163 @@ class MCPBridge(BridgeBase):
                 # 用市场 ID 通知前端更新安装按钮
                 self.execute_js(f"mcpFinishInstall('{market_item_id}', 0);")
                 self.execute_js("loadMCPServers();")
-            # 持久化 installed 状态到数据库
+            # 持久化 installed 状态 + 回写 server_id 到市场表
             try:
                 from storage.repositories.mcp_market_repo import MCPMarketRepository
                 repo = MCPMarketRepository()
-                db_item = repo.get_by_id(ctx.get("item_id", "")) if hasattr(repo, 'get_by_id') else {}
+                market_item_id = ctx.get("market_id", "")
+                db_item = repo.get_by_id(market_item_id) if hasattr(repo, 'get_by_id') else {}
                 if db_item:
                     db_item["installed"] = True
+                    db_item["serverId"] = write_id  # 记录服务器 ID（配置 key）
                     repo.upsert(db_item)
-            except Exception:
-                pass
+                # 前端立即刷新市场（确保「卸载」按钮切换）
+                self.execute_js("if (typeof loadMCPMarket === 'function') loadMCPMarket();")
+            except Exception as e:
+                print(f"[MCPBridge] ⚠️ 回写市场表失败: {e}")
             return  # 后续由后台线程完成，避免重复执行 finish
         except Exception as e:
             self.execute_js(f"mcpAppendLog('{item_id}', '❌ 安装失败: {str(e)[:100]}');")
             self.execute_js(f"mcpFinishInstall('{item_id}', -1);")
 
+    @staticmethod
+    def _rmtree_retry(path: str, max_retries: int = 3, delay: float = 0.5) -> bool:
+        """删除目录，带重试 + 只读文件兜底（修复 Windows 下 .git 文件 PermissionError）
+
+        Windows 下 git 子进程可能短暂占用 .git/objects 句柄，直接 rmtree 会报
+        PermissionError: [WinError 5]。策略：
+        1. 正常重试若干次（短暂等待后重试，等句柄释放）
+        2. 仍失败则用 onerror 回调 chmod 为可写后继续删除
+        """
+        import shutil as _shutil
+        import stat as _stat
+        import time as _time
+
+        def _onerror(func, path, exc_info):
+            # 处理只读文件的 PermissionError：先改为可写再重试
+            try:
+                if os.path.exists(path):
+                    os.chmod(path, _stat.S_IWRITE)
+                    func(path)
+            except Exception:
+                pass
+
+        for i in range(max_retries):
+            try:
+                _shutil.rmtree(path)
+                return True
+            except PermissionError:
+                if i < max_retries - 1:
+                    _time.sleep(delay * (i + 1))  # 递增等待：0.5s / 1.0s / 1.5s
+                    continue
+            except FileNotFoundError:
+                return True  # 目录已不存在，视为成功
+            except Exception:
+                if i < max_retries - 1:
+                    _time.sleep(delay)
+                    continue
+            # 最后兜底：onerror 逐个 chmod 后继续删
+            try:
+                _shutil.rmtree(path, onerror=_onerror)
+                return True
+            except Exception:
+                pass
+        return False
+
     @pyqtSlot(str, str)
     def uninstallMCPFromMarket(self, item_id: str, cmd: str):
         import threading, shutil
         def worker():
+            # 先通过市场 ID 找到服务器 ID（config_id / 仓库目录名），统一用 server_id 操作
+            server_id = self._get_server_id_for_market(item_id)
+            if not server_id:
+                server_id = item_id  # 兜底：无映射时用原始市场 ID
+
             self._write_log(item_id, "🔄 正在卸载...")
             self.execute_js(f"mcpAppendLog('{item_id}', '══════════════════ 卸载日志 ══════════════════');")
             self.execute_js(f"mcpAppendLog('{item_id}', '🗑️ 正在卸载 MCP 服务器: {item_id}');")
             self.execute_js(f"mcpAppendLog('{item_id}', '── ① 停止服务 ──');")
             try:
                 from tools.mcp.host import MCPHost; mgr = MCPHost()
-                mgr.unregister_client(item_id)
+                mgr.unregister_client(server_id)
                 self.execute_js(f"mcpAppendLog('{item_id}', '🛑 服务已停止');")
             except Exception as e:
                 self.execute_js(f"mcpAppendLog('{item_id}', '⚠️ 停止服务失败: {str(e)[:50]}');")
             self.execute_js(f"mcpAppendLog('{item_id}', '── ② 删除配置 ──');")
             try:
                 from tools.mcp.host import MCPHost; mgr = MCPHost()
-                mgr.remove_remote_server(item_id)
+                mgr.remove_remote_server(server_id)
                 self.execute_js(f"mcpAppendLog('{item_id}', '✅ 配置已删除');")
             except Exception as e:
                 self.execute_js(f"mcpAppendLog('{item_id}', '⚠️ 删除配置失败: {str(e)[:50]}');")
             self.execute_js(f"mcpAppendLog('{item_id}', '── ③ 删除项目目录 ──');")
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            config_dir = os.path.join(base, "tools", "mcp", "server", item_id)
+            config_dir = os.path.join(base, "tools", "mcp", "server", server_id)
             try:
                 from tools.mcp.host import MCPHost; mgr = MCPHost()
-                cfg = mgr._read_config().get("mcpServers", {}).get(item_id, {})
+                cfg = mgr._read_config().get("mcpServers", {}).get(server_id, {})
                 saved = cfg.get("githubRepoUrl", "")
                 if saved:
                     config_dir = os.path.join(base, "tools", "mcp", "server", saved.rstrip('/').split('/')[-1].replace('.git','').lower())
             except Exception: pass
             if os.path.exists(config_dir):
-                shutil.rmtree(config_dir)
+                ok = self._rmtree_retry(config_dir)
+                if ok:
+                    self.execute_js(f"mcpAppendLog('{item_id}', '✅ 项目目录已删除');")
+                else:
+                    self.execute_js(f"mcpAppendLog('{item_id}', '⚠️ 项目目录删除失败（可能有文件被占用），可在关闭应用后手动删除');")
             self.execute_js(f"mcpAppendLog('{item_id}', '✅ 卸载完成！');")
             self.execute_js(f"mcpFinishInstall('{item_id}', 0);")
             self.execute_js("loadMCPServers();")
-            # 持久化 installed 状态到数据库
+            # 持久化 installed 状态 + 清空 server_id 到数据库
             try:
                 from storage.repositories.mcp_market_repo import MCPMarketRepository
                 repo = MCPMarketRepository()
                 db_item = repo.get_by_id(item_id)
                 if db_item:
                     db_item["installed"] = False
+                    db_item["serverId"] = ""
                     repo.upsert(db_item)
             except Exception:
                 pass
+            # 同步删除该服务器的数据库日志（纯数据库）
+            try:
+                from storage.repositories.mcp_server_logs_repo import MCPServerLogsRepository
+                log_repo = MCPServerLogsRepository()
+                log_repo.delete_by_server(server_id)
+            except Exception:
+                pass
         threading.Thread(target=worker, daemon=True).start()
+
+    def _get_server_id_for_market(self, market_id: str) -> str:
+        """根据市场项 ID 反查服务器 ID（配置 key / 仓库目录名）"""
+        # 1. 从市场表读取 server_id
+        try:
+            from storage.repositories.mcp_market_repo import MCPMarketRepository
+            repo = MCPMarketRepository()
+            item = repo.get_by_id(market_id)
+            if item and item.get("serverId"):
+                return item["serverId"]
+        except Exception:
+            pass
+        # 2. 安装上下文映射
+        ctx = getattr(self, '_install_context', None)
+        if ctx and ctx.get("market_id") == market_id:
+            return ctx.get("server_id", market_id)
+        # 3. 从配置中按 githubRepoUrl 匹配
+        try:
+            from tools.mcp.host import MCPHost
+            mgr = MCPHost()
+            config = mgr._read_config()
+            repo_item = self._get_market_item(market_id)
+            repo_url = repo_item.get("githubRepoUrl", "") if repo_item else ""
+            if repo_url:
+                repo_name = repo_url.rstrip('/').split('/')[-1].replace('.git', '').lower()
+                if repo_name in config.get("mcpServers", {}):
+                    return repo_name
+        except Exception:
+            pass
+        return ""
 
     def register_tools_to_dispatcher(self, mcp_dispatcher):
         try:

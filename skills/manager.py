@@ -14,6 +14,10 @@ from skills.executor import SkillExecutor
 from skills.validator import SkillValidator
 
 
+# 受保护的内置 MD 技能（禁止删除、禁止上传同名覆盖）
+PROTECTED_MD_SKILLS = {"mcp-server-install"}
+
+
 class SkillManager:
     """技能管理器 - 统一管理所有技能操作"""
 
@@ -127,6 +131,25 @@ class SkillManager:
             print("[SkillManager] 添加 MD 技能失败: 缺少 SKILL.md 或参数无效")
             return False
 
+        # ===== 重名校验 =====
+        # 1. 与内置保护技能重名 → 拒绝
+        if name in PROTECTED_MD_SKILLS:
+            print(f"[SkillManager] ⛔ 内置技能名 '{name}' 不允许作为上传名称")
+            return False
+        # 2. 与已存在的技能（Python 技能 + 已注册的 MD 技能）重名 → 拒绝
+        existing_names = set()
+        try:
+            existing_names |= {s.name for s in self.registry.get_all()}
+        except Exception:
+            pass
+        try:
+            existing_names |= {md.get("name", "") for md in self.get_md_skills()}
+        except Exception:
+            pass
+        if name in existing_names:
+            print(f"[SkillManager] ⛔ 技能名 '{name}' 已存在，禁止重复上传")
+            return False
+
         skill_dir = os.path.join(self.loader.md_dir, name)
         if os.path.exists(skill_dir):
             return False
@@ -149,8 +172,11 @@ class SkillManager:
             return False
 
     def remove_md_skill(self, name: str) -> bool:
-        """删除 MD 技能目录（递归）"""
+        """删除 MD 技能目录（递归）；受保护的内置技能禁止删除"""
         import shutil
+        if name in PROTECTED_MD_SKILLS:
+            print(f"[SkillManager] ⛔ {name} 是内置保护技能，禁止删除")
+            return False
         skill_dir = os.path.join(self.loader.md_dir, name)
         try:
             if os.path.isdir(skill_dir):

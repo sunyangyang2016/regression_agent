@@ -73,20 +73,27 @@ function mcpFinishInstall(itemId, returnCode, installed) {
             if (isUninstall) {
                 // ===== 卸载完成 =====
                 item.installed = false;
+                item.serverId = '';   // ★ 清除残留 serverId，避免后续 merge 误判为已安装
                 appState.mcpServers = appState.mcpServers.filter(function(s) { return s.id !== itemId; });
                 delete _pendingUninstallIds[itemId];
             } else {
                 // ===== 安装完成 =====
                 item.installed = true;
-                var existing = appState.mcpServers.find(function(s) { return s.id === itemId; });
+                // 用真实 serverId（repo-name，配置 key）关联服务器列表，而非市场 ID
+                var serverRealId = item.serverId || itemId;
+                item.serverId = serverRealId;   // ★ 回写市场项 serverId，确保后续 merge 不覆盖已安装态
+                var existing = appState.mcpServers.find(function(s) { return s.id === serverRealId; });
                 if (!existing) {
                     appState.mcpServers.push({
-                        id: itemId, name: name,
+                        id: serverRealId, name: name,
                         url: item.githubRepoUrl || '', description: item.description || '',
                         transport: 'stdio', enabled: true, online: false, tools: []
                     });
                 }
             }
+            // 强制刷新市场与服务列表，确保「安装→卸载」按钮切换
+            if (typeof loadMCPMarket === 'function') loadMCPMarket();
+            if (typeof loadMCPServers === 'function') loadMCPServers();
             // 重新渲染但不关闭日志窗口：记录日志面板状态，渲染后恢复
             var wasLogOpen = logDiv && logDiv.style.display === 'block';
             if (typeof renderMCPMarket === 'function') renderMCPMarket();
@@ -201,6 +208,16 @@ function switchMCPSubTab(tab) {
 // ============================================
 // API Key 输入对话框
 // ============================================
+// 关闭 API Key 对话框并通知后端取消（env 留空续接 AI 审阅）
+function closeAPIKeyDialog(serverId) {
+    var overlay = document.getElementById('apiKeyDialogOverlay');
+    if (overlay) overlay.remove();
+    // 仅当后端桥接就绪且提供了 serverId 时通知取消，避免遮罩连点重复调用
+    if (serverId && window.mcp_bridge && window._bridgeReady) {
+        window.mcp_bridge.cancelEnvVars(serverId);
+    }
+}
+
 function showAPIKeyDialog(data) {
     var serverId = data.server_id || 'unknown';
     var envVars = data.env_vars || [];
@@ -247,7 +264,7 @@ function showAPIKeyDialog(data) {
     dialog.innerHTML = html;
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
-    document.getElementById('apiKeyCancelBtn').onclick = function() { overlay.remove(); };
+    document.getElementById('apiKeyCancelBtn').onclick = function() { closeAPIKeyDialog(serverId); };
     document.getElementById('apiKeyConfirmBtn').onclick = function() {
         // 校验必填字段
         var missing = [];
@@ -270,37 +287,33 @@ function showAPIKeyDialog(data) {
         overlay.remove();
         showToast('✅ 已保存', 'success');
     };
-    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    overlay.onclick = function(e) {
+        if (e.target === overlay) closeAPIKeyDialog(serverId);
+    };
 }
 
 // ============================================
 // AI 安装助手
 // ============================================
-function startMCPInstallAnalysis(itemId, repoUrl, serverDir, serverName, absPath) {
+function startMCPInstallAnalysis(itemId, repoUrl, serverDir, serverName, absPath, configDraft) {
     // 不关闭右侧导航栏，保持用户当前的浏览状态
     if (window.chatApp) window.chatApp.newChat();
     if (window.py_bridge) { try { window.py_bridge.newConversation(); } catch(e) {} }
     var displayName = serverDir || serverName;
     var cwdPath = absPath || ('tools/mcp/server/' + serverDir);
+    // 通知后端进入"等待 AI 审阅配置"阶段（AI 回复完成后自动捕获 config JSON）
+    window._mcpAwaitingAiConfig = true;
+    // 已登记市场 ID，供后端捕获配置后回写预览
+    window._mcpInstallItemId = itemId;
+    var draftText = '';
+    if (configDraft && typeof configDraft === 'object' && Object.keys(configDraft).length > 0) {
+        draftText = '\n\n程序已自动检测到配置草稿，请审阅并修正：\n' + JSON.stringify(configDraft, null, 2);
+    }
     var msg = [
         '安装: ' + displayName, '',
         '下载路径: ' + repoUrl, '📁 目录: ' + cwdPath, '',
-        '请按以下 5 步流程执行：', '',
-        '1. directory_ops(action="Readdir", path="' + serverDir + '") → 查看文件列表',
-        '   📁 = 目录（跳过）| 📄 = 普通文件（可读取）—— 不要读取日志文件',
-        '   ⚠️ 如果只有日志文件没有源码，需要重新拉取代码，不要删除源码目录', '',
-        '2. file_ops(action="Open", path="' + serverDir + '/文件名") → 打开读取文件内容',
-        '   只读步骤 1 中标记为 📄 的文件', '',
-        '3. 安装依赖（目录: ' + cwdPath + '）：',
-        '   - 有 requirements.txt  → execute_system_command("pip install -r requirements.txt", "' + cwdPath + '")',
-        '   - 有 package.json     → execute_system_command("npm install", "' + cwdPath + '")',
-        '   - 有 pyproject.toml   → execute_system_command("pip install -e .", "' + cwdPath + '")', '',
-        '4. 如需 API Key → mcp_env_setup(server_id="' + serverDir + '")',
-        '   否则跳过此步', '',
-        '5. mcp_finalize_install 传入配置 JSON：',
-        '{', '  "transport": "stdio",', '  "command": "启动命令",', '  "args": [...],',
-        '  "cwd": "' + cwdPath + '",', '  "name": "服务器名",', '  "description": "描述",',
-        '  "env": {} 或 { "KEY": "value" }', '}', '', '最终只输出配置 JSON，无需额外说明。',
+        '请按内置技能 **mcp-server-install** 的流程处理，逐步说明当前步骤即可，无需复述技能名或引导语。' + draftText,
+        '分析完成后，在回复末尾只输出最终配置 JSON（对象格式）。',
     ].join('\n');
     if (window.chatApp) {
         var welcome = document.getElementById('welcomeScreen');
@@ -324,7 +337,15 @@ window._onMCPMarketRefreshed = function(marketStr) {
         if (items.length > 0) {
             items.forEach(function(item) {
                 var local = appState.mcpMarket.find(function(m) { return m.id === item.id; });
-                if (local) item.installed = local.installed;
+                // 本地该市场项已有 serverId（已安装）→ 强制保留已安装态，避免被旧值覆盖
+                if (local && local.serverId && item.installed) {
+                    item.installed = true;
+                    item.serverId = local.serverId;
+                } else if (local && item.installed === false) {
+                    // 后端明确返回未安装（卸载后 serverId 已清空）→ 清理本地残留
+                    local.serverId = '';
+                }
+                // 否则用后端 getMCPMarket 返回的 installed
             });
             appState.mcpMarket = items;
             if (typeof renderMCPMarket === 'function') renderMCPMarket();
@@ -367,7 +388,15 @@ function loadMCPMarket() {
                 var items = data.market || data || [];
                 items.forEach(function(item) {
                     var local = appState.mcpMarket.find(function(m) { return m.id === item.id; });
-                    if (local) item.installed = local.installed;
+                    // 本地该市场项已有 serverId（已安装）→ 强制保留已安装态，避免被旧值覆盖
+                    if (local && local.serverId && item.installed) {
+                        item.installed = true;
+                        item.serverId = local.serverId;
+                    } else if (local && item.installed === false) {
+                        // 后端明确返回未安装（卸载后 serverId 已清空）→ 清理本地残留
+                        local.serverId = '';
+                    }
+                    // 否则用后端 getMCPMarket 返回的 installed
                 });
                 appState.mcpMarket = items;
                 if (typeof renderMCPMarket === 'function') renderMCPMarket();
@@ -444,5 +473,53 @@ function loadMCPMarketRefresh() {
         }
         showToast('🔄 正在从 GitHub 刷新市场数据...', 'info');
         window.mcp_bridge.refreshMCPMarket();
+    }
+}
+
+// ============================================
+// MCP 安装配置预览 + 确认安装（替代 mcp_finalize_install 工具）
+// ============================================
+function showMCPConfigPreview(itemId, configObj) {
+    // 在市场中显示配置预览（悬浮层）
+    var overlay = document.getElementById('mcpConfigPreviewOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'mcpConfigPreviewOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9998;display:flex;align-items:center;justify-content:center;';
+    var configText = typeof configObj === 'string' ? configObj : JSON.stringify(configObj || {}, null, 2);
+    var html = '<div style="background:var(--bg-primary,#1a1d23);border:1px solid var(--border-color,#2d3240);border-radius:12px;padding:24px;max-width:600px;width:92%;max-height:80vh;overflow-y:auto;box-sizing:border-box;">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+    html += '<div style="font-size:16px;font-weight:600;color:var(--text-primary,#e8eaed);">📝 配置预览（' + (itemId || '') + '）</div>';
+    html += '<button onclick="document.getElementById(\'mcpConfigPreviewOverlay\').remove()" style="background:none;border:none;color:var(--text-muted,#9aa0a6);cursor:pointer;font-size:18px;">✕</button></div>';
+    html += '<div style="font-size:12px;color:var(--text-muted,#9aa0a6);margin-bottom:8px;">AI 审阅后的配置，请确认后点击「确认安装」完成启动：</div>';
+    html += '<div style="background:var(--bg-secondary,#22252b);border:1px solid var(--border-color,#2d3240);border-radius:8px;padding:12px;font-family:monospace;font-size:12px;color:var(--text-primary,#e8eaed);white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto;">' + configText.replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>') + '</div>';
+    html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">';
+    html += '<button onclick="document.getElementById(\'mcpConfigPreviewOverlay\').remove()" style="padding:8px 18px;border:1px solid var(--border-color,#2d3240);border-radius:6px;background:var(--bg-secondary,#22252b);color:var(--text-primary,#e8eaed);cursor:pointer;font-size:13px;">取消</button>';
+    html += '<button onclick="confirmMCPInstallFromPreview()" style="padding:8px 20px;border:none;border-radius:6px;background:var(--accent-color,#8ab4f8);color:#fff;cursor:pointer;font-size:14px;font-weight:600;">✅ 确认安装</button></div>';
+    html += '</div>';
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+    // 保存当前预览配置供确认按钮使用
+    window._mcpPreviewConfigRaw = configText;
+    window._mcpPreviewItemId = itemId;
+}
+
+function confirmMCPInstallFromPreview() {
+    var overlay = document.getElementById('mcpConfigPreviewOverlay');
+    var configText = window._mcpPreviewConfigRaw || '';
+    var itemId = window._mcpPreviewItemId || '';
+    try {
+        // 校验 JSON 合法
+        JSON.parse(configText);
+    } catch(e) {
+        showToast('❌ 配置 JSON 格式无效，无法安装', 'error');
+        return;
+    }
+    if (overlay) overlay.remove();
+    if (window.mcp_bridge && window._bridgeReady) {
+        window.mcp_bridge.confirmMCPInstall(itemId, configText);
+        showToast('✅ 已确认，正在启动 MCP 服务器...', 'success');
+    } else {
+        showToast('❌ MCP 桥接不可用', 'error');
     }
 }

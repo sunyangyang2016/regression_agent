@@ -10,11 +10,12 @@
     - 每个版本号对应一次迁移逻辑
     - 按顺序执行未应用的迁移，避免重复迁移
 
-版本对照（软件版本 → 数据库 schema 版本）:
+    版本对照（软件版本 → 数据库 schema 版本）:
     v1.0.1alpha 及以前（旧版）: schema_version = 0（无版本标记）
     v1.0.2alpha（新数据库存储）: schema_version = 1
     v1.0.3alpha（会话日志文件持久化）: schema_version = 2
     v1.0.4alpha（命中/未命中/输出 token 分栏统计）: schema_version = 3
+    v1.0.5alpha（MCP 市场 server_id + 日志市场关联）: schema_version = 4
 """
 import json
 import os
@@ -28,7 +29,7 @@ AGENT_DB = os.path.join(DB_DIR, "agent.db")
 LEGACY_MCP_DB = os.path.join(DB_DIR, "mcp.db")
 
 # 当前数据库 schema 版本（与软件版本对应）
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # 迁移注册表: {目标版本: (描述, 迁移函数)}
 MIGRATIONS = {}
@@ -161,6 +162,32 @@ def migrate_v3(conn: sqlite3.Connection):
         else:
             print(f"  [迁移 v3] history_sessions_index 已存在 {col} 列，跳过")
     conn.execute("PRAGMA user_version = 3")
+
+
+@register_migration(4, "为 mcp_market_index 表添加 server_id 列，为 mcp_server_logs 表添加 market_id 列（市场与日志关联）")
+def migrate_v4(conn: sqlite3.Connection):
+    """schema v4: MCP 市场与日志关联
+
+    - mcp_market_index 添加 server_id 列：存储服务器 ID（mcp_servers.json 配置 key）
+    - mcp_server_logs 添加 market_id 列：存储市场项 ID（mcp-{issue_number}）
+    """
+    # mcp_market_index 加 server_id
+    market_cols = [r[1] for r in conn.execute("PRAGMA table_info(mcp_market_index)").fetchall()]
+    if "server_id" not in market_cols:
+        conn.execute("ALTER TABLE mcp_market_index ADD COLUMN server_id TEXT")
+        print("  [迁移 v4] mcp_market_index 已添加 server_id 列")
+    else:
+        print("  [迁移 v4] mcp_market_index 已存在 server_id 列，跳过")
+
+    # mcp_server_logs 加 market_id
+    log_cols = [r[1] for r in conn.execute("PRAGMA table_info(mcp_server_logs)").fetchall()]
+    if "market_id" not in log_cols:
+        conn.execute("ALTER TABLE mcp_server_logs ADD COLUMN market_id TEXT")
+        print("  [迁移 v4] mcp_server_logs 已添加 market_id 列")
+    else:
+        print("  [迁移 v4] mcp_server_logs 已存在 market_id 列，跳过")
+
+    conn.execute("PRAGMA user_version = 4")
 
 
 def _migrate_legacy_mcp_market(conn: sqlite3.Connection) -> int:

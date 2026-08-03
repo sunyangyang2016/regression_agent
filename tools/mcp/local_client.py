@@ -152,11 +152,14 @@ class MCPLocalClient:
             await self._process.stdin.drain()
     
     async def _recv(self, timeout: float = 8.0) -> Optional[dict]:
-        deadline = asyncio.get_event_loop().time() + timeout
+        # 使用 get_running_loop() 而非 get_event_loop()：
+        # get_event_loop() 在 Python 3.13 子线程无当前循环时会抛 RuntimeError
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         line_count = 0
         
-        while asyncio.get_event_loop().time() < deadline:
-            remaining = deadline - asyncio.get_event_loop().time()
+        while loop.time() < deadline:
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 break
             
@@ -264,30 +267,33 @@ class MCPLocalClient:
         print(f"⏹ MCP {self.server_id} 已停止")
     
     # ---- 同步兼容包装 ----
+    def _new_loop(self) -> asyncio.AbstractEventLoop:
+        """创建专用事件循环
+
+        Windows 必须使用 ProactorEventLoop 才支持 subprocess。
+        直接显式创建，不依赖全局 policy（避免 policy 被设为 Selector 时崩溃）。
+        """
+        if os.name == 'nt':
+            return asyncio.ProactorEventLoop()
+        return asyncio.new_event_loop()
+
     def start_sync(self) -> bool:
+        """同步启动：创建专用事件循环运行异步启动流程
+
+        修复：Python 3.13 子线程（mcp-loader_*）内调用 asyncio.get_event_loop()
+        会抛 'no current event loop in thread' RuntimeError。
+        直接 new_event_loop() 不依赖全局当前循环状态，线程安全。
+        """
+        old_loop = None
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                self._own_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._own_loop)
-                try:
-                    return self._own_loop.run_until_complete(self.start())
-                except Exception:
-                    self._own_loop.close()
-                    self._own_loop = None
-                    raise
-            else:
-                self._own_loop = loop
-                return loop.run_until_complete(self.start())
-        except RuntimeError:
-            self._own_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._own_loop)
+            # 暂存调用线程已有的当前循环（若有），流程结束后尽量恢复，避免干扰调用方
             try:
-                return self._own_loop.run_until_complete(self.start())
-            except Exception:
-                self._own_loop.close()
-                self._own_loop = None
-                raise
+                old_loop = asyncio.get_event_loop()
+            except RuntimeError:
+                old_loop = None
+            self._own_loop = self._new_loop()
+            asyncio.set_event_loop(self._own_loop)
+            return self._own_loop.run_until_complete(self.start())
         except Exception:
             if self._own_loop:
                 try:
@@ -296,12 +302,19 @@ class MCPLocalClient:
                     pass
                 self._own_loop = None
             raise
+        finally:
+            # 恢复调用方原有的事件循环（若存在且未被关闭）
+            if old_loop is not None and old_loop is not self._own_loop and not old_loop.is_closed():
+                try:
+                    asyncio.set_event_loop(old_loop)
+                except Exception:
+                    pass
     
     def call_tool_sync(self, name: str, arguments: dict) -> str:
         loop = self._own_loop
         if loop is None or loop.is_closed():
             print(f"⚠️ [MCP:{self.server_id}] 事件循环已关闭，尝试创建新循环")
-            loop = asyncio.new_event_loop()
+            loop = self._new_loop()
             asyncio.set_event_loop(loop)
             self._own_loop = loop
         
@@ -309,7 +322,7 @@ class MCPLocalClient:
             return loop.run_until_complete(self.call_tool(name, arguments))
         except RuntimeError:
             print(f"⚠️ [MCP:{self.server_id}] 事件循环不可用，创建临时循环")
-            temp_loop = asyncio.new_event_loop()
+            temp_loop = self._new_loop()
             asyncio.set_event_loop(temp_loop)
             try:
                 return temp_loop.run_until_complete(self.call_tool(name, arguments))
@@ -330,7 +343,12 @@ class MCPLocalClient:
                 pass
         else:
             try:
-                asyncio.run(self.cleanup())
+                temp_loop = self._new_loop()
+                asyncio.set_event_loop(temp_loop)
+                try:
+                    temp_loop.run_until_complete(self.cleanup())
+                finally:
+                    temp_loop.close()
             except RuntimeError:
                 pass
         

@@ -9,7 +9,28 @@ from .base import BridgeBase
 
 
 class ChatBridge(BridgeBase):
-    """聊天对话桥接 — 对话/会话操作"""
+    """聊天对话桥接 — 对话/会话操作
+
+    职责：纯通用消息通道。
+    MCP 安装等专用逻辑通过 set_content_sink 可选钩子接入
+    （默认 None，正常会话零影响）。
+    """
+
+    def __init__(self, app_controller):
+        super().__init__(app_controller)
+        # 可选回调钩子（MCP 安装捕获 AI 回复用；默认 None）
+        self._on_content_chunk = None   # 收到 AI 流式片段时回调(chunk)
+        self._on_stream_done = None     # AI 流式完成时回调()
+
+    def set_content_sink(self, chunk_cb, done_cb):
+        """注册内容回调（MCP 安装启动时由调用方注册；结束后 clear）"""
+        self._on_content_chunk = chunk_cb
+        self._on_stream_done = done_cb
+
+    def clear_content_sink(self):
+        """清除内容回调（安装结束/超时后调用）"""
+        self._on_content_chunk = None
+        self._on_stream_done = None
 
     # ==========================================
     # 前端 → 后端（通过 @pyqtSlot 暴露给 JS）
@@ -131,13 +152,25 @@ class ChatBridge(BridgeBase):
     # ==========================================
 
     def on_stream_update(self, content: str):
-        """流式更新消息内容"""
+        """流式更新消息内容（基础转发；MCP 等注册的 chunk 回调会额外收到分片）"""
         c = json.dumps(content)
         self.execute_js(f"window.onStreamUpdate({c});")
+        if self._on_content_chunk is not None:
+            try:
+                self._on_content_chunk(content)
+            except Exception as e:
+                print(f"[ChatBridge] ⚠️ chunk 回调失败: {e}")
 
     def on_stream_complete(self):
-        """流式响应完成"""
+        """流式响应完成（基础转发；MCP 注册的完成回调会在此触发且仅触发一次）"""
         self.execute_js("window.onStreamComplete();")
+        if self._on_stream_done is not None:
+            try:
+                cb, self._on_stream_done = self._on_stream_done, None
+                cb()
+            except Exception as e:
+                print(f"[ChatBridge] ⚠️ done 回调失败: {e}")
+                self._on_stream_done = None
 
     def on_set_processing(self, processing: bool):
         """设置处理状态"""

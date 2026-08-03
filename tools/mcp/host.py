@@ -87,11 +87,28 @@ class MCPHost:
         return {"mcpServers": {}}
     
     def _write_config(self, config: Dict):
-        """写入配置到 user/ 目录（defaults 目录不被修改），首次保存自动创建 mcp_servers.json"""
-        path = os.path.join(self.config_dir, "mcp_servers.json")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        """写入配置到 user/ 目录（defaults 目录保持初始化状态，永远不被修改）
+
+        - 首次写入时：若 user/ 无文件且 defaults/ 有初始化配置，先合并初始化 + 新配置再落盘
+          这样 user/ 成为完整快照（初始化 + 新安装），此后显示直接走 user/。
+        - 始终使用 save_config（强制写 user_config/user/），不依赖 self.config_dir。
+        """
+        from config.user_config import save_config
+        # 首次写入：合并 defaults/ 的初始化配置，确保 user/ 快照完整
+        from config.user_config import DEFAULTS_DIR
+        user_mc = os.path.join(USER_DIR, "mcp_servers.json")
+        if not os.path.exists(user_mc):
+            defaults_path = os.path.join(DEFAULTS_DIR, "mcp_servers.json")
+            if os.path.exists(defaults_path):
+                try:
+                    with open(defaults_path, "r", encoding="utf-8") as f:
+                        defaults_cfg = json.load(f)
+                    merged_servers = dict(defaults_cfg.get("mcpServers", {}))
+                    merged_servers.update(config.get("mcpServers", {}))
+                    config = {"mcpServers": merged_servers}
+                except Exception:
+                    pass
+        save_config("mcp_servers.json", config)
     
     _status_change_callbacks: List[Callable] = []
     
@@ -379,7 +396,8 @@ class MCPHost:
                 "description": cfg.get("description", ""),
                 "transport": transport,
                 "enabled": cfg.get("enabled", True),
-                "online": bool(clients.get(sid)) and clients[sid].is_running()
+                "online": bool(clients.get(sid)) and clients[sid].is_running(),
+                "githubRepoUrl": cfg.get("githubRepoUrl", ""),
             })
         return result
 

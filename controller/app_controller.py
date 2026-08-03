@@ -104,20 +104,9 @@ class AppController(QObject):
         mcp_bridge = MCPBridge(self)
         agent_config_bridge = AgentConfigBridge(self)
 
-        # 注入 MCPBridge 到安装工具模块
-        try:
-            from tools.builtin.functions.mcp_server_install import set_mcp_bridge
-            set_mcp_bridge(mcp_bridge)
-            print("[AppController] ✅ MCPBridge 已注入到 mcp_server_install 工具")
-        except Exception as e:
-            print(f"[AppController] ⚠️ 注入 mcp_server_install 失败: {e}")
-        
-        try:
-            from tools.builtin.functions.mcp_env_setup import set_mcp_bridge as set_env_bridge
-            set_env_bridge(mcp_bridge)
-            print("[AppController] ✅ MCPBridge 已注入到 mcp_env_setup 工具")
-        except Exception as e:
-            print(f"[AppController] ⚠️ 注入 mcp_env_setup 失败: {e}")
+        # 注意：mcp_env_setup / mcp_finalize_install 工具已删除，
+        #       其逻辑已内嵌为 MCPBridge 内部方法（_trigger_env_dialog / finalizeMCPInstall）
+        #       不再需要向任何工具模块注入 MCPBridge。
 
         self._bridge = main_bridge  # 保存引用用于信号连接
         self.mcp_bridge = mcp_bridge  # 保存引用供 AI 调度器使用
@@ -300,6 +289,7 @@ class AppController(QObject):
                         "created_at": meta.get("created_at"),
                     },
                 })
+            from skills.manager import PROTECTED_MD_SKILLS
             for s in self.skill_manager.get_md_skills():
                 skills.append({
                     "name": s.get("name", ""),
@@ -309,6 +299,7 @@ class AppController(QObject):
                     "source": "markdown",
                     "version": "1.0.0",
                     "tags": [],
+                    "protected": s.get("name", "") in PROTECTED_MD_SKILLS,
                     "detail": {
                         "content": s.get("content", ""),
                         "filepath": s.get("filepath", ""),
