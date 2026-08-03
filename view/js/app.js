@@ -50,6 +50,7 @@ window.skill_bridge = null;
 window.mcp_bridge = null;
 window.plugin_bridge = null;
 window.security_bridge = null;
+window.monitor_bridge = null;
 function connectBridge() {
     if(typeof QWebChannel==='undefined'||typeof qt==='undefined'||!qt.webChannelTransport){setTimeout(connectBridge,200);return;}
     try{
@@ -62,6 +63,7 @@ function connectBridge() {
             window.plugin_bridge=ch.objects.plugin_bridge;
             window.agent_config_bridge=ch.objects.agent_config_bridge;
             window.security_bridge=ch.objects.security_bridge||ch.objects.security_plugin_bridge;
+            window.monitor_bridge=ch.objects.monitor_bridge||ch.objects.monitor_plugin_bridge;
             window._bridgeReady=true;
             console.log('[Bridge] OK');
             if(window.py_bridge) showToast('后端已连接','success');
