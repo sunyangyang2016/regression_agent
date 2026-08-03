@@ -319,8 +319,7 @@ function startMCPInstallAnalysis(itemId, repoUrl, serverDir, serverName, absPath
         var welcome = document.getElementById('welcomeScreen');
         if (welcome) welcome.remove();
         window.chatApp.addMessage('user', msg);
-        window.chatApp.isProcessing = true;
-        document.getElementById('sendBtn').disabled = true;
+        // 安装审阅期间保持输入框可用：用户可中途补充问题（不锁定 isProcessing）
         window.chatApp._currentAssistantId = window.chatApp.addMessage('assistant', '');
         if (window.py_bridge && typeof window.py_bridge.sendToAI === 'function') window.py_bridge.sendToAI(msg);
     }

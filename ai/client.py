@@ -31,6 +31,7 @@ class AIClient:
         self._loop_thread: Optional[threading.Thread] = None
         # 底层 AI 通信原始 JSON 日志回调（由 AIController 注入）
         self.on_raw_log: Optional[Callable[[str], None]] = None
+        self.on_progress_usage: Optional[Callable[[str], None]] = None
         
         # ========== 工具调度系统 ==========
         # 1. 内建工具调度器 — 处理本地工具（calculate, docker_ps 等）
@@ -90,6 +91,9 @@ class AIClient:
             # 注入底层原始 JSON 日志回调
             if self.on_raw_log:
                 self.stream_handler.on_raw_log = self.on_raw_log
+            # 注入中间进度 token 回调
+            if self.on_progress_usage:
+                self.stream_handler.on_progress_usage = self.on_progress_usage
             client = self.stream_handler.create_client()
             
             if client is None:
@@ -126,6 +130,8 @@ class AIClient:
             # 注入底层原始 JSON 日志回调（热切换后重建 StreamHandler 需重新注入）
             if self.on_raw_log:
                 self.stream_handler.on_raw_log = self.on_raw_log
+            if self.on_progress_usage:
+                self.stream_handler.on_progress_usage = self.on_progress_usage
             client = self.stream_handler.create_client()
             if client is None:
                 return False, "客户端创建失败"

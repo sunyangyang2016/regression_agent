@@ -1487,10 +1487,12 @@ class MCPBridge(BridgeBase):
             buffer = getattr(self, '_ai_chunk_buffer', []) or []
             text = "".join(buffer)
             self._ai_chunk_buffer = []
+            captured = False
             if text.strip():
-                self.capture_ai_config(text)
-            # 保留截图监听状态（用户确认安装前仍需监听后续消息？）
-            # 完成即取消监听，避免影响正常会话
+                captured = self.capture_ai_config(text)
+            if not captured:
+                print(f"[MCPBridge] ⏳ 本轮未提取到配置 JSON，保留监听等待下一轮 AI 回复")
+                return
             chat_bridge = self._get_chat_bridge()
             if chat_bridge:
                 chat_bridge.clear_content_sink()

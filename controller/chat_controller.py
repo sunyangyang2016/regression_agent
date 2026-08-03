@@ -54,6 +54,7 @@ class ChatController(QObject):
         self.ai_controller.stream_error.connect(self._on_stream_error)
         self.ai_controller.tool_call_received.connect(self._on_tool_call)
         self.ai_controller.raw_log.connect(self._on_raw_log)
+        self.ai_controller.progress_usage.connect(self._on_progress_usage)
         self.token_update.connect(self._on_token_update)
         self.log_entry.connect(self._on_log_entry)
 
@@ -298,15 +299,23 @@ class ChatController(QObject):
                 pass
 
         # 使用提取的真实内容保存和显示
-        self.conversation_model.save_message("assistant", content)
-        self.update_message.emit("", content)
-        self.complete_message.emit("")
-        self.set_processing.emit(False)
+        try:
+            self.conversation_model.save_message("assistant", content)
+            self.update_message.emit("", content)
+            self.complete_message.emit("")
+            self.set_processing.emit(False)
+        except Exception as e:
+            print(f"{LOG} ⚠️ 保存/显示助手回复失败: {e}")
 
-        if input_tokens == 0 and output_tokens == 0:
-            from ai.token_counter import TokenCounter
-            input_tokens = TokenCounter.count_text(user_content)
-            output_tokens = TokenCounter.count_text(content)
+        try:
+            if input_tokens == 0 and output_tokens == 0:
+                from ai.token_counter import TokenCounter
+                input_tokens = TokenCounter.count_text(user_content)
+                output_tokens = TokenCounter.count_text(content)
+        except Exception as e:
+            print(f"{LOG} ⚠️ token 文本计数失败，使用近似值: {e}")
+            input_tokens = max(len(user_content) // 4, 1)
+            output_tokens = max(len(content) // 4, 1)
 
         # 命中 / 未命中 / 输出 3 类 token 拆分
         # 命中 token = cached_tokens（缓存命中输入）
@@ -328,29 +337,41 @@ class ChatController(QObject):
             self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
         )
 
-        # 保存 3 类 token 分类统计到数据库
-        self.conversation_model.update_token_stats(
-            self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
-        )
+        # 保存 3 类 token 分类统计到数据库（独立保护，异常不阻断 UI 推送）
+        try:
+            self.conversation_model.update_token_stats(
+                self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
+            )
+        except Exception as e:
+            print(f"{LOG} ⚠️ token 统计入库失败: {e}")
 
-        self.push_token_stats(
-            self._session_total_tokens,
-            self._session_hit_tokens + self._session_miss_tokens,
-            self._session_output_tokens, ctx_pct,
-            self._session_total_cost, max_ctx, self._session_hit_tokens, self._session_miss_tokens
-        )
+        # push_token_stats 必须最终执行，保证 UI token 面板更新（MCP 安装等场景）
+        try:
+            self.push_token_stats(
+                self._session_total_tokens,
+                self._session_hit_tokens + self._session_miss_tokens,
+                self._session_output_tokens, ctx_pct,
+                self._session_total_cost, max_ctx, self._session_hit_tokens, self._session_miss_tokens
+            )
+        except Exception as e:
+            print(f"{LOG} ⚠️ token 统计推送失败: {e}")
+            import traceback
+            traceback.print_exc()
         # 说明：不再推送概要日志（push_log_entry），
         # 因为底层原始 JSON 日志（raw 类型）已完整包含请求/响应载荷与 token 统计，
         # 避免日志对话框中「响应显示完成后又重复显示一条对话信息」。
         # push_log_entry 方法保留，供其他场景需要时调用。
 
-        # 首条回复完成后更新标题（基于用户第一条消息）
+        # 首条回复完成后更新标题（独立保护：异常不影响后续流程）
         if self._first_reply:
             self._first_reply = False
-            content = self.conversation_model.current_user_content
-            if content:
-                self.conversation_model.update_title(content)
-                self.sync_conversations_to_view()
+            try:
+                title_content = self.conversation_model.current_user_content
+                if title_content:
+                    self.conversation_model.update_title(title_content)
+                    self.sync_conversations_to_view()
+            except Exception as e:
+                print(f"{LOG} ⚠️ 更新会话标题失败: {e}")
 
         # ====== 将本轮的 AI 通信日志写入日志文件 ======
         self._save_session_logs()
@@ -383,6 +404,34 @@ class ChatController(QObject):
                 self.bridge.execute_js(js)
             except Exception as e:
                 print(f"{LOG} ❌ 显示工具调用失败: {e}")
+
+    def _on_progress_usage(self, usage_json: str):
+        """多轮工具调用中间进度 token：立即刷新 UI 面板（不重复入库，最终 complete 精确结算）"""
+        try:
+            data = json.loads(usage_json)
+            accum_input = int(data.get("accum_input", 0))
+            accum_output = int(data.get("accum_output", 0))
+            accum_hit = int(data.get("accum_hit", 0))
+            accum_miss = int(data.get("accum_miss", 0))
+            self._session_total_tokens = accum_input + accum_output
+            self._session_output_tokens = accum_output
+            # 补全：中间轮同样更新命中/未命中累计（与 accum_input 直接赋值方式一致，
+            # stream_handler 端已做跨轮累计；最终 complete 仍以精确 usage 覆盖结算）
+            self._session_hit_tokens = accum_hit
+            self._session_miss_tokens = accum_miss
+            max_ctx = self._get_max_context()
+            ctx_pct = (self._session_total_tokens / max_ctx) * 100
+            self._session_total_cost = self._calculate_session_cost(
+                self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
+            )
+            self.push_token_stats(
+                self._session_total_tokens,
+                self._session_hit_tokens + self._session_miss_tokens,
+                self._session_output_tokens, ctx_pct,
+                self._session_total_cost, max_ctx, self._session_hit_tokens, self._session_miss_tokens
+            )
+        except Exception as e:
+            print(f"{LOG} ⚠️ 中间 token 推送失败: {e}")
 
     def _on_raw_log(self, raw_json: str):
         """接收底层 AI 通信原始 JSON 日志，转发到前端日志对话框"""

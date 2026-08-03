@@ -24,6 +24,11 @@ class StreamHandler:
         self._client_lock = asyncio.Lock()
         # 底层 AI 通信原始 JSON 日志回调（由 AIClient/AIController 注入）
         self.on_raw_log: Optional[Callable[[str], None]] = None
+        self.on_progress_usage: Optional[Callable[[str], None]] = None
+        self._progress_acc_input = 0
+        self._progress_acc_output = 0
+        self._progress_acc_hit = 0
+        self._progress_acc_miss = 0
     
     def create_client(self):
         """创建异步客户端"""
@@ -242,7 +247,29 @@ class StreamHandler:
                         "cached_tokens": cached_tokens,
                     }
                 self._emit_raw_log("response", response_payload)
-                
+
+                # ====== 中间进度 token 推送（有工具调用时）======
+                if usage_info and tool_calls_buffer and self.on_progress_usage:
+                    try:
+                        prompt_tokens = usage_info.prompt_tokens or 0
+                        # 与 complete 精确结算逻辑保持一致：hit = min(cached, input)，miss = input - hit
+                        hit = min(cached_tokens, prompt_tokens)
+                        miss = max(prompt_tokens - hit, 0)
+                        self._progress_acc_input += prompt_tokens
+                        self._progress_acc_output += usage_info.completion_tokens or 0
+                        self._progress_acc_hit += hit
+                        self._progress_acc_miss += miss
+                        progress_payload = {
+                            "accum_input": self._progress_acc_input,
+                            "accum_output": self._progress_acc_output,
+                            "accum_hit": self._progress_acc_hit,
+                            "accum_miss": self._progress_acc_miss,
+                            "round_total": prompt_tokens + (usage_info.completion_tokens or 0),
+                        }
+                        self.on_progress_usage(json.dumps(progress_payload, ensure_ascii=False))
+                    except Exception as e:
+                        print(f"[StreamHandler] ⚠️ 中间 token 推送失败: {e}")
+
                 # 检查是否有工具调用
                 if not tool_calls_buffer:
                     # 无工具调用，完成
