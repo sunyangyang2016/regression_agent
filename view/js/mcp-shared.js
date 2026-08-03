@@ -28,6 +28,46 @@ function showMCPLog(itemId, title) {
     _updateLogCount(itemId, content);
 }
 
+// 已加载过数据库历史日志的集合（避免重复加载追加）
+var _mcpLogLoadedFromDB = {};
+
+// 从数据库加载该服务器的历史日志（应用重启/市场刷新后恢复日志显示）
+function loadMCPLogFromDB(itemId) {
+    if (!itemId || _mcpLogLoadedFromDB[itemId]) return;
+    if (!window.mcp_bridge || !window._bridgeReady) return;
+    _mcpLogLoadedFromDB[itemId] = true;
+    var content = document.querySelector('#mcpLog_' + itemId + ' .mcp-log-content');
+    if (!content) return;
+    try {
+        var p = window.mcp_bridge.getMCPLog(itemId);
+        if (p && typeof p.then === 'function') {
+            p.then(function(logStr) {
+                if (logStr && typeof logStr === 'string' && logStr.trim()) {
+                    var lines = logStr.split('\n');
+                    for (var i = 0; i < lines.length; i++) {
+                        if (lines[i] !== '') mcpAppendLog(itemId, lines[i]);
+                    }
+                    var countEl = document.getElementById('mcpLogCount_' + itemId);
+                    if (countEl && content) countEl.textContent = '(' + content.children.length + ' 条)';
+                }
+            }).catch(function(e) {
+                console.warn('[MCP] 加载历史日志失败:', itemId, e);
+                delete _mcpLogLoadedFromDB[itemId];  // 失败允许重试
+            });
+        } else if (p && typeof p === 'string' && p.trim()) {
+            var lines2 = p.split('\n');
+            for (var j = 0; j < lines2.length; j++) {
+                if (lines2[j] !== '') mcpAppendLog(itemId, lines2[j]);
+            }
+            var countEl2 = document.getElementById('mcpLogCount_' + itemId);
+            if (countEl2 && content) countEl2.textContent = '(' + content.children.length + ' 条)';
+        }
+    } catch (e) {
+        console.warn('[MCP] 加载历史日志异常:', itemId, e);
+        delete _mcpLogLoadedFromDB[itemId];
+    }
+}
+
 function mcpAppendLog(itemId, line, replaceLast) {
     var content = document.querySelector('#mcpLog_' + itemId + ' .mcp-log-content');
     if (!content) {

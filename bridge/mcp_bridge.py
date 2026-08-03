@@ -182,17 +182,32 @@ class MCPBridge(BridgeBase):
 
     @pyqtSlot(str, result=str)
     def getMCPLog(self, item_id: str):
-        """获取安装日志 — 仅从数据库读取（server_id 归一化 + market_id 兜底）"""
+        """获取安装日志 — 仅从数据库读取（server_id 归一化 + market_id 兜底）
+
+        合并按 server_id 与 market_id 两种查询结果并按日志 ID 去重，
+        避免安装早期（market_id 即 server_id）与后期（server_id 为仓库目录名）
+        入库的日志因二选一查询而遗漏。
+        """
         try:
             from storage.repositories.mcp_server_logs_repo import MCPServerLogsRepository
             repo = MCPServerLogsRepository()
             # 先归一化为 server_id 查询
             server_id = self._normalize_db_server_id(item_id)
-            logs = repo.get_by_server(server_id, order_by="created_at ASC")
-            if not logs:
-                logs = repo.get_by_market(item_id, order_by="created_at ASC")
-            if logs:
-                return "\n".join(l.log_content for l in logs if l.log_content)
+            logs_by_server = repo.get_by_server(server_id, order_by="created_at ASC")
+            logs_by_market = repo.get_by_market(item_id, order_by="created_at ASC")
+            # 合并去重（按日志 ID）
+            seen = set()
+            merged = []
+            for log in logs_by_server + logs_by_market:
+                log_id = getattr(log, "id", None) or id(log)
+                if log_id in seen:
+                    continue
+                seen.add(log_id)
+                merged.append(log)
+            # 按 created_at 升序排序，保证日志顺序与安装流程一致
+            merged.sort(key=lambda x: (getattr(x, "created_at", "") or ""))
+            if merged:
+                return "\n".join(l.log_content for l in merged if l.log_content)
         except Exception:
             pass
         return ""

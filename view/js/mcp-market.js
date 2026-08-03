@@ -218,6 +218,10 @@ function renderMCPMarket() {
                 var content = logDiv.querySelector('.mcp-log-content');
                 if (content) content.innerHTML = savedLogs[id].html;
                 logDiv.style.display = savedLogs[id].display;
+                // 展开状态的日志面板：若之前是空的（重启后恢复），则补加载数据库历史日志
+                if (logDiv.style.display === 'block' && typeof loadMCPLogFromDB === 'function') {
+                    setTimeout(function(id2) { loadMCPLogFromDB(id2); }, 0);
+                }
             }
         }
     }
@@ -226,7 +230,12 @@ function renderMCPMarket() {
 function toggleMCPLog(id) {
     var logDiv = document.getElementById('mcpLog_' + id);
     if (!logDiv) return;
-    logDiv.style.display = logDiv.style.display === 'none' ? 'block' : 'none';
+    var isOpening = logDiv.style.display === 'none';
+    logDiv.style.display = isOpening ? 'block' : 'none';
+    // 首次展开时从数据库加载历史日志（应用重启/市场刷新后恢复日志）
+    if (isOpening && typeof loadMCPLogFromDB === 'function') {
+        setTimeout(function() { loadMCPLogFromDB(id); }, 0);
+    }
 }
 
 function toggleMCPInstall(id) {
