@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>安全插件配置</title>
+<link rel="stylesheet" href="view/css/security.css">
+</head>
+<body>
+<h2>安全插件配置</h2>
+<div class="sec-section">
+  <h3>内容过滤</h3>
+  <label>过滤模式
+    <select id="filterMode">
+      <option value="mask">打码 mask</option>
+      <option value="block">拦截 block</option>
+      <option value="warn">警告 warn</option>
+    </select>
+  </label>
+  <label>敏感词 / 危险指令（每行一个）
+    <textarea id="dangerPatterns" rows="6"></textarea>
+  </label>
+</div>
+<div class="sec-section">
+  <h3>工具权限</h3>
+  <label>权限模式
+    <select id="permMode">
+      <option value="blacklist">黑名单</option>
+      <option value="whitelist">白名单</option>
+    </select>
+  </label>
+  <label>黑名单工具（每行一个）
+    <textarea id="blockedTools" rows="4"></textarea>
+  </label>
+  <label>白名单工具（每行一个）
+    <textarea id="allowedTools" rows="4"></textarea>
+  </label>
+</div>
+<div class="sec-actions">
+  <button id="saveBtn">保存</button>
+</div>
+<p id="statusMsg"></p>
+<script src="view/js/security.js"></script>
+</body>
+</html>

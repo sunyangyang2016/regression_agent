@@ -2,3 +2,94 @@
 .plugins-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); }
 .plugins-header h3 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
 .plugins-header h3 i { color: var(--accent-pink); }
+
+/* 插件卡片上的「显示」按钮 */
+.plugin-show-btn {
+    padding: 6px 14px;
+    background: var(--bg-hover, #1e2230);
+    border: 1px solid var(--border-color, #2a2f3d);
+    border-radius: 6px;
+    color: var(--text-secondary, #9aa0b0);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--font-family, 'Inter', sans-serif);
+    transition: background 0.2s, color 0.2s;
+}
+.plugin-show-btn:hover {
+    background: var(--accent-primary, #6366f1);
+    color: #fff;
+    border-color: var(--accent-primary, #6366f1);
+}
+
+/* ---- 插件独立悬浮窗壳（非模态、可拖动；内容由插件自身 css 提供）---- */
+.plugin-float-window {
+    position: fixed;
+    background: var(--bg-secondary, #141821);
+    border: 1px solid var(--border-color, #2a2f3d);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+    overflow: auto;
+    z-index: 9999;
+    user-select: none;
+}
+.plugin-float-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-color, #2a2f3d);
+    cursor: move;
+    user-select: none;
+}
+.plugin-float-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.plugin-float-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.plugin-float-close,
+.plugin-float-min,
+.plugin-float-max {
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #6b7280);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+}
+.plugin-float-close:hover {
+    color: var(--text-primary, #e5e7eb);
+}
+.plugin-float-min:hover {
+    color: var(--text-primary, #e5e7eb);
+}
+.plugin-float-max:hover {
+    color: var(--text-primary, #e5e7eb);
+}
+.plugin-float-close:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+.plugin-float-min:hover {
+    background: rgba(100, 116, 139, 0.2);
+}
+.plugin-float-max:hover {
+    background: rgba(100, 116, 139, 0.2);
+}
+.plugin-float-max.on {
+    color: var(--accent-primary, #6366f1);
+}
+.plugin-float-body {
+    padding: 16px 18px;
+    user-select: text;
+}

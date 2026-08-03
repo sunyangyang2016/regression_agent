@@ -1,0 +1,19 @@
+{
+    "enabled": true,
+    "content_filter": {
+        "mode": "mask",
+        "danger_patterns": [
+            "忽略以上指令",
+            "忽略前面的指令",
+            "忽略之前的指示"
+        ],
+        "mask_char": "*"
+    },
+    "permission": {
+        "mode": "blacklist",
+        "blocked_tools": [
+            "execute_system_command"
+        ],
+        "allowed_tools": []
+    }
+}

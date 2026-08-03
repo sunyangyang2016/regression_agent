@@ -3,6 +3,7 @@
 负责在收到 AI 的 tool_call 请求时，调度执行对应的内建工具
 """
 import asyncio
+import json
 from typing import Dict, Callable, Awaitable
 
 
@@ -43,6 +44,18 @@ class ToolDispatcher:
     
     async def execute(self, tool_name: str, arguments: dict) -> str:
         """异步执行内建工具调用"""
+        # ====== 工具权限校验（安全插件 hook 广播，内建工具链路） ======
+        try:
+            from plugins.hook_registry import HookRegistry
+            results = await HookRegistry().atrigger("tool:before_execute", json.dumps(
+                {"tool_name": tool_name, "arguments": arguments, "source": "builtin"}, ensure_ascii=False))
+            for r in HookRegistry.parse_results(results):
+                if not r.get("allowed", True):
+                    print(f"[Dispatcher] 🛡️ 内建工具 '{tool_name}' 被安全策略拦截")
+                    return r.get("deny_message", f"❌ 工具 '{tool_name}' 已被安全策略禁止")
+        except Exception as e:
+            print(f"[Dispatcher] ⚠️ 工具权限校验失败: {e}")
+
         handler = self._handlers.get(tool_name)
         if not handler:
             print(f"[Dispatcher] ⚠️ 内建工具 '{tool_name}' 未注册处理器")

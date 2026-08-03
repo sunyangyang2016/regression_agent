@@ -48,6 +48,8 @@ window.config_bridge = null;
 window.tool_bridge = null;
 window.skill_bridge = null;
 window.mcp_bridge = null;
+window.plugin_bridge = null;
+window.security_bridge = null;
 function connectBridge() {
     if(typeof QWebChannel==='undefined'||typeof qt==='undefined'||!qt.webChannelTransport){setTimeout(connectBridge,200);return;}
     try{
@@ -57,7 +59,9 @@ function connectBridge() {
             window.tool_bridge=ch.objects.tool_bridge;
             window.skill_bridge=ch.objects.skill_bridge;
             window.mcp_bridge=ch.objects.mcp_bridge;
+            window.plugin_bridge=ch.objects.plugin_bridge;
             window.agent_config_bridge=ch.objects.agent_config_bridge;
+            window.security_bridge=ch.objects.security_bridge||ch.objects.security_plugin_bridge;
             window._bridgeReady=true;
             console.log('[Bridge] OK');
             if(window.py_bridge) showToast('后端已连接','success');
@@ -208,6 +212,21 @@ function loadAllData() {
                 }).catch(function(e) { console.warn('[MCP] 服务器 Promise 失败:', e); });
             }
         } catch(e) { console.warn('[MCP] 加载服务器失败:', e); }
+    }
+    if (window.plugin_bridge && window._bridgeReady) {
+        try {
+            var promise = window.plugin_bridge.getPlugins();
+            if (promise && typeof promise.then === 'function') {
+                promise.then(function(pluginsStr) {
+                    try {
+                        var plugins = typeof pluginsStr === 'string' ? JSON.parse(pluginsStr) : pluginsStr;
+                        appState.plugins = plugins || [];
+                        if (typeof renderPlugins === 'function') renderPlugins();
+                        console.log('[Plugins] 已加载 ' + (appState.plugins.length) + ' 个插件');
+                    } catch(e) { console.warn('[Plugins] 解析插件列表失败:', e); }
+                }).catch(function(e) { console.warn('[Plugins] 插件 Promise 失败:', e); });
+            }
+        } catch(e) { console.warn('[Plugins] 加载插件列表失败:', e); }
     }
     updateModelUI();renderModelList();updateModelCount();renderTools();
     _retryLoadMCPConfig(0);

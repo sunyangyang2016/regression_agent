@@ -8,7 +8,19 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# 设置 stdout 编码为 UTF-8（防止 Windows 控制台 emoji 崩溃）
+# 修复 stdout/stderr 编码为 UTF-8（防止 Windows 控制台 emoji 崩溃）
+# 注意：PYTHONIOENCODING 环境变量必须在解释器启动前设置才生效，
+# 运行时设置无效。必须直接调用 reconfigure 重设标准流编码。
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 # 将 Windows 终端代码页切换为 UTF-8，防止 Chromium 控制台日志中文乱码

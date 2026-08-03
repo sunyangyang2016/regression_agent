@@ -69,6 +69,22 @@ class ChatController(QObject):
             self.complete_message.emit("")
             return
 
+        # ====== 入站内容过滤（安全插件 hook 广播） ======
+        try:
+            from plugins.hook_registry import HookRegistry
+            results = HookRegistry().trigger("message:before_send", json.dumps(
+                {"text": content}, ensure_ascii=False))
+            for r in HookRegistry.parse_results(results):
+                if r.get("blocked"):
+                    self.show_error.emit(r.get("message", "内容已被安全策略阻止"))
+                    self.complete_message.emit("")
+                    return
+                masked = r.get("masked_text")
+                if masked is not None:
+                    content = masked
+        except Exception as e:
+            print(f"{LOG} ⚠️ 入站内容过滤失败: {e}")
+
         self.conversation_model.ensure_conversation(
             self.model_config.get("api", "model") or "deepseek-chat"
         )
@@ -297,6 +313,21 @@ class ChatController(QObject):
                 content = parsed.get("content", full_response)
             except Exception:
                 pass
+
+        # ====== 出站内容过滤（安全插件 hook 广播） ======
+        try:
+            from plugins.hook_registry import HookRegistry
+            results = HookRegistry().trigger("message:before_complete", json.dumps(
+                {"content": content}, ensure_ascii=False))
+            for r in HookRegistry.parse_results(results):
+                masked = r.get("masked_text")
+                if masked is not None:
+                    content = masked
+                if r.get("blocked"):
+                    # 出站严重违规：替换为安全提示
+                    content = r.get("message", "内容已被安全策略过滤")
+        except Exception as e:
+            print(f"{LOG} ⚠️ 出站内容过滤失败: {e}")
 
         # 使用提取的真实内容保存和显示
         try:

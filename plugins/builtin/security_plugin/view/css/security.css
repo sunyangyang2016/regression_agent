@@ -1,0 +1,8 @@
+body { font-family: 'Inter', sans-serif; background: #0f1115; color: #e8eaed; padding: 20px; }
+h2 { font-size: 18px; margin-bottom: 16px; }
+h3 { font-size: 14px; margin-bottom: 10px; color: #8ab4f8; }
+.sec-section { background: #1a1d23; border: 1px solid #2d3240; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+label { display: block; font-size: 13px; color: #b0b6c0; margin-bottom: 10px; }
+select, textarea { width: 100%; background: #22252b; color: #e8eaed; border: 1px solid #2d3240; border-radius: 6px; padding: 8px; margin-top: 4px; font-size: 13px; box-sizing: border-box; }
+button { background: #8ab4f8; color: #0f1115; border: none; border-radius: 6px; padding: 8px 24px; font-size: 14px; font-weight: 600; cursor: pointer; }
+#statusMsg { margin-top: 12px; font-size: 13px; min-height: 18px; }

@@ -40,6 +40,10 @@ class AppController(QObject):
             self.ai_controller, self.conversation_model, model_config
         )
 
+        # ---- Plugin 系统初始化 ----
+        from plugins.manager import PluginManager
+        self.plugin_manager = PluginManager()
+
         # ---- Skill 系统初始化 ----
         from skills.manager import SkillManager
         from ai.skill_dispatcher import SkillDispatcher
@@ -54,6 +58,9 @@ class AppController(QObject):
 
 
         self.bridge_objects = {}
+        # 插件自带 bridge 对象强引用缓存：QWebChannel.registerObject() 不持有所有权，
+        # 若此处不保存，Python GC 回收后 JS 端访问会触发 C 级段错误（进程无痕消失）
+        self._plugin_bridge_objects: dict = {}
         self.webview = None
         self.main_window = None 
         self.bridge_manager = None
@@ -94,7 +101,7 @@ class AppController(QObject):
         return window
 
     def _register_bridge_objects(self):
-        from bridge import ChatBridge, ModelBridge, ToolBridge, SkillBridge, MCPBridge
+        from bridge import ChatBridge, ModelBridge, ToolBridge, SkillBridge, MCPBridge, PluginBridge
         from bridge.agent_config_bridge import AgentConfigBridge
 
         main_bridge = ChatBridge(self)
@@ -102,11 +109,8 @@ class AppController(QObject):
         tool_bridge = ToolBridge(self)
         skill_bridge = SkillBridge(self)
         mcp_bridge = MCPBridge(self)
+        plugin_bridge = PluginBridge(self)
         agent_config_bridge = AgentConfigBridge(self)
-
-        # 注意：mcp_env_setup / mcp_finalize_install 工具已删除，
-        #       其逻辑已内嵌为 MCPBridge 内部方法（_trigger_env_dialog / finalizeMCPInstall）
-        #       不再需要向任何工具模块注入 MCPBridge。
 
         self._bridge = main_bridge  # 保存引用用于信号连接
         self.mcp_bridge = mcp_bridge  # 保存引用供 AI 调度器使用
@@ -117,6 +121,7 @@ class AppController(QObject):
             "tool_bridge": tool_bridge,
             "skill_bridge": skill_bridge,
             "mcp_bridge": mcp_bridge,
+            "plugin_bridge": plugin_bridge,
             "agent_config_bridge": agent_config_bridge,
         }
         return main_bridge
@@ -176,6 +181,17 @@ class AppController(QObject):
         try:
             # 注入 MCP 上下文
             self.chat_controller._inject_mcp_context()
+
+            # 初始化插件系统（加载插件并注册 hook）
+            # 幂等保护：若 start() 已预加载过（count > 0），此处不再重复加载，避免 hooks 重复注册/run 重复启动
+            try:
+                if self.plugin_manager.count == 0:
+                    count = self.plugin_manager.load_all()
+                    print(f"{LOG} 🔌 已加载 {count} 个插件")
+                else:
+                    print(f"{LOG} 🔌 插件已加载（{self.plugin_manager.count} 个），跳过重复加载")
+            except Exception as e:
+                print(f"{LOG} ⚠️ 加载插件失败: {e}")
 
             # 初始化技能系统
             self._init_skill_system()
@@ -485,6 +501,21 @@ class AppController(QObject):
         for plugin in self._ui_plugins:
             for name, obj in plugin.get_bridge_objects():
                 self.bridge_manager.register_objects({name: obj})
+
+        # 注册各插件自带的 bridge（JS <-> Python 通信）
+        # 注意：必须在 load_all() 之后调用，get_bridge_objects() 依赖已加载的插件列表
+        try:
+            if self.plugin_manager.count == 0:
+                plugin_count = self.plugin_manager.load_all()
+                print(f"{LOG} 🔌 启动时预加载 {plugin_count} 个插件")
+            plugin_bridges = self.plugin_manager.get_bridge_objects()
+            if plugin_bridges:
+                # 保存强引用：防止 Python GC 回收后 QWebChannel 持有悬空指针导致 C 级崩溃
+                self._plugin_bridge_objects = plugin_bridges
+                self.bridge_manager.register_objects(plugin_bridges)
+                print(f"[AppController] [OK] 注册插件 bridge: {list(plugin_bridges.keys())}")
+        except Exception as e:
+            print(f"[AppController] [WARN] 注册插件 bridge 失败: {e}")
 
         window.show()
 

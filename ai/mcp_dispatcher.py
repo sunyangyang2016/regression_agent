@@ -3,6 +3,7 @@ MCP 工具调度器 - 异步执行 MCP 工具调用
 代理到 MCPHost 进行路由，MCPHost 负责找到正确的 MCPClient
 """
 import asyncio
+import json
 from typing import Dict, Callable, Awaitable
 
 
@@ -47,6 +48,19 @@ class MCPDispatcher:
         1. 优先使用注册的处理器（异步包装）
         2. 回退到 MCPHost 查找对应的 MCPClient
         """
+        # ====== 工具权限校验（安全插件 hook 广播，MCP 作为独立业务方） ======
+        # MCP 不纳入插件框架生命周期管理，仅在工具执行前广播权限校验事件。
+        try:
+            from plugins.hook_registry import HookRegistry
+            results = await HookRegistry().atrigger("tool:before_execute", json.dumps(
+                {"tool_name": tool_name, "arguments": arguments, "source": "mcp"}, ensure_ascii=False))
+            for r in HookRegistry.parse_results(results):
+                if not r.get("allowed", True):
+                    print(f"[MCPDispatcher] 🛡️ MCP 工具 '{tool_name}' 被安全策略拦截")
+                    return r.get("deny_message", f"❌ MCP 工具 '{tool_name}' 已被安全策略禁止")
+        except Exception as e:
+            print(f"[MCPDispatcher] ⚠️ 工具权限校验失败: {e}")
+
         handler = self._handlers.get(tool_name)
         if handler:
             print(f"[MCPDispatcher] ⏳ 通过注册处理器执行 '{tool_name}'...")
