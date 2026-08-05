@@ -74,8 +74,15 @@ class ConversationModel(QObject):
     # 消息管理
     # ==========================================
 
-    def save_message(self, role: str, content: str):
-        """保存消息到数据库"""
+    def save_message(self, role: str, content: str, round_no: int = None, marker: str = None):
+        """保存消息到数据库
+
+        Args:
+            role: 消息角色（user / assistant / tool）
+            content: 消息内容
+            round_no: 可选，AI 轮次序号（多轮工具调用时的轮次标记）
+            marker: 可选，轮次标记（tool_call=工具调用轮 / final=最终完成轮）
+        """
         if not self._current_conversation_id:
             return
         
@@ -84,6 +91,8 @@ class ConversationModel(QObject):
             session_id=self._current_conversation_id,
             role=role,
             content=content,
+            round_no=round_no,
+            marker=marker,
             created_at=now
         )
         with self._save_lock:

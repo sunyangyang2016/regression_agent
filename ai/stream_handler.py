@@ -153,6 +153,7 @@ class StreamHandler:
         
         round_count = 0
         current_messages = list(messages)
+        collected_content = ""
 
         # 防御性校验：确保传给 API 的工具名符合 ^[a-zA-Z0-9_-]+$（AIClient 已规范化时此步为空操作）
         if tools:
@@ -166,6 +167,13 @@ class StreamHandler:
         
         while round_count < max_rounds:
             round_count += 1
+            
+            # ====== 取消检查：每轮开始前检查任务是否被取消 ======
+            current_task = asyncio.current_task()
+            if current_task and current_task.cancelling():
+                print("[StreamHandler] ⏹ 检测到取消请求，退出流式对话")
+                yield AIStreamEvent(type="cancelled", data=collected_content)
+                return
             
             try:
                 # 第一轮调用
@@ -197,6 +205,13 @@ class StreamHandler:
                 
                 # 流式收集
                 async for chunk in stream:
+                    # ====== 取消检查：每个 chunk 到达时检查任务是否被取消 ======
+                    current_task = asyncio.current_task()
+                    if current_task and current_task.cancelling():
+                        print("[StreamHandler] ⏹ 流式响应中检测到取消请求")
+                        yield AIStreamEvent(type="cancelled", data=collected_content)
+                        return
+                    
                     # 捕获 usage 信息（流式模式在最后一个 chunk 的 usage 字段中）
                     if chunk.usage:
                         usage_info = chunk.usage
@@ -269,6 +284,20 @@ class StreamHandler:
                         self.on_progress_usage(json.dumps(progress_payload, ensure_ascii=False))
                     except Exception as e:
                         print(f"[StreamHandler] ⚠️ 中间 token 推送失败: {e}")
+
+                # ====== 取消检查：工具调用收集完毕后检查 ======
+                current_task = asyncio.current_task()
+                if current_task and current_task.cancelling():
+                    print("[StreamHandler] ⏹ 工具调用收集后检测到取消")
+                    yield AIStreamEvent(type="cancelled", data=collected_content)
+                    return
+
+                # ====== 每轮 AI 最终回复事件（写入数据库用）======
+                yield AIStreamEvent(type="round", data={
+                    "round": round_count,
+                    "text": collected_content,
+                    "marker": "tool_call" if tool_calls_buffer else "final",
+                })
 
                 # 检查是否有工具调用
                 if not tool_calls_buffer:
@@ -408,6 +437,13 @@ class StreamHandler:
                             break
                         # 每 2 秒发一个空 chunk 保持 UI 事件循环运转
                         yield AIStreamEvent(type="chunk", data="")
+                        # ====== 取消检查：工具执行等待期间检测取消 ======
+                        current_task = asyncio.current_task()
+                        if current_task and current_task.cancelling():
+                            print(f"[StreamHandler] ⏹ 工具 '{tool_name}' 执行中检测到取消")
+                            tool_task.cancel()
+                            yield AIStreamEvent(type="cancelled", data=collected_content)
+                            return
                     
                     print(f"[StreamHandler] ✅ 工具 '{tool_name}' 执行完成")
                     print(f"[StreamHandler] 📥 结果: {result[:200] if len(result) > 200 else result}")

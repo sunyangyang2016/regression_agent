@@ -37,7 +37,7 @@ class Message:
 @dataclass
 class AIStreamEvent:
     """流式事件"""
-    type: str  # chunk | tool_call | tool_result | complete | error
+    type: str  # chunk | tool_call | tool_result | round | complete | error | cancelled
     data: Any = None
     error: Optional[str] = None
 

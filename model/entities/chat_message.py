@@ -17,6 +17,8 @@ class ChatMessage(BaseEntity):
         self.content: str = kwargs.get("content", "")
         self.tool_calls: list = kwargs.get("tool_calls", [])
         self.token_count: int = kwargs.get("token_count", 0)
+        self.round_no: int = kwargs.get("round_no")      # AI 轮次序号（非轮次记录为 None）
+        self.marker: str = kwargs.get("marker")          # 标记：tool_call / final（非轮次记录为 None）
 
     def to_dict(self, for_db: bool = False) -> dict:
         """转 dict（可选：仅含数据库字段）"""
@@ -30,6 +32,8 @@ class ChatMessage(BaseEntity):
                 "content": data.get("content"),
                 "tool_calls": data.get("tool_calls"),
                 "token_count": data.get("token_count"),
+                "round_no": data.get("round_no"),
+                "marker": data.get("marker"),
                 "created_at": data.get("created_at"),
             }
         return data

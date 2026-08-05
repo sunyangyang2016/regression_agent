@@ -3,6 +3,7 @@ AI 客户端 - 异步封装
 整合流式处理器、工具调度器、消息管理
 """
 import asyncio
+import concurrent.futures
 import threading
 from typing import Optional, Callable
 from ai.protocol import Message, ModelConfig, AIStreamEvent, ToolCallInfo
@@ -48,6 +49,8 @@ class AIClient:
         self.messages: list = []
         self._system_prompt: str = ""
 
+        # 当前运行中的 AI 流式任务（用于中断）
+        self._current_task: Optional[concurrent.futures.Future] = None
 
         # 工具名映射：{API 规范化名称: 原始工具名}
         # 由 _get_tools_for_api 在每次发送前重建，供模型回调时还原真实工具名执行
@@ -148,6 +151,8 @@ class AIClient:
     def cleanup(self):
         """清理资源"""
         self._connected = False
+        # 取消正在运行的 AI 任务
+        self.cancel_current()
         if self._event_loop and not self._event_loop.is_closed():
             self._event_loop.call_soon_threadsafe(self._event_loop.stop)
         self.tool_dispatcher.clear()
@@ -181,7 +186,7 @@ class AIClient:
     # ==========================================
     
     def send_message(self, messages, content, on_chunk=None, on_complete=None,
-                     on_error=None, on_tool_call=None):
+                     on_error=None, on_tool_call=None, on_round=None):
         """发送消息 - 将 ChatManager 的 messages 同步到 AIClient 后调用"""
         self.messages = messages
         
@@ -193,6 +198,9 @@ class AIClient:
         
         def _on_error(err):
             if on_error: on_error(err)
+        
+        def _on_round(data):
+            if on_round: on_round(data)
         
         def _on_tool_call(info):
             # tool_call 事件触发时 result 为空，先不显示，等 tool_result 再一起显示
@@ -209,13 +217,15 @@ class AIClient:
             on_complete=_on_complete,
             on_error=_on_error,
             on_tool_call=_on_tool_call,
-            on_tool_result=_on_tool_result
+            on_tool_result=_on_tool_result,
+            on_round=_on_round
         )
     
     def send_message_async(self, content: str,
                            on_chunk: Optional[Callable[[str], None]] = None,
                            on_tool_call: Optional[Callable[[ToolCallInfo], None]] = None,
                            on_tool_result: Optional[Callable[[ToolCallInfo], None]] = None,
+                           on_round: Optional[Callable[[dict], None]] = None,
                            on_complete: Optional[Callable[[str], None]] = None,
                            on_error: Optional[Callable[[str], None]] = None):
         """异步发送消息（启动后台任务）"""
@@ -263,7 +273,12 @@ class AIClient:
                         if on_tool_result:
                             on_tool_result(event.data)
                         self.bus.emit(EventBus.AI_TOOL_RESULT, event.data)
-                    
+
+                    elif event.type == "round":
+                        if on_round:
+                            on_round(event.data)
+                        self.bus.emit(EventBus.AI_ROUND_RECEIVED, event.data)
+
                     elif event.type == "complete":
                         if on_complete:
                             on_complete(event.data)
@@ -273,12 +288,31 @@ class AIClient:
                         if on_error:
                             on_error(event.error)
                         self.bus.emit(EventBus.AI_ERROR, event.error)
+                    
+                    elif event.type == "cancelled":
+                        # 被用户中断：静默退出（不触发 complete/error）
+                        return
                         
+            except asyncio.CancelledError:
+                # 任务被取消（用户中断）：静默退出，不触发错误回调
+                pass
             except Exception as e:
                 if on_error:
                     on_error(str(e))
         
-        asyncio.run_coroutine_threadsafe(run_chat(), loop)
+        # 保存 task 引用（concurrent.futures.Future），便于中断
+        self._current_task = asyncio.run_coroutine_threadsafe(run_chat(), loop)
+
+    def cancel_current(self):
+        """取消当前正在运行的 AI 流式任务（用户中断）"""
+        if self._current_task is not None:
+            try:
+                self._current_task.cancel()
+                print("[AI] ⏹ 已请求取消当前 AI 流式任务")
+            except Exception as e:
+                print(f"[AI] ⚠️ 取消 AI 任务失败: {e}")
+            finally:
+                self._current_task = None
 
     # ==========================================
     # 工具工具注册（内建 + MCP）

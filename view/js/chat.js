@@ -76,14 +76,33 @@ window.chatApp = {
     sendMessage: function() {
         var input = document.getElementById('messageInput');
         var content = input.value.trim();
-        if (!content || this.isProcessing) return;
+        if (!content) return;
+        // AI 回复中发送新消息：允许（后端会先中断旧回复再处理新消息）
+        if (this.isProcessing) {
+            console.log('[chatApp] AI 回复中，先中断旧回复再发送新消息');
+            // 新消息接管：不显示「已中断」标记（旧气泡保留原样）
+            this._stopRequested = false;
+            // 标记旧回复为已中断（防止 _currentAssistantId 被覆盖后丢失引用）
+            if (this._currentAssistantId) {
+                var oldEl = document.getElementById(this._currentAssistantId);
+                if (oldEl && !oldEl.getAttribute('data-interrupted')) {
+                    oldEl.setAttribute('data-interrupted', 'true');
+                    if (oldEl.textContent.trim() !== '') {
+                        oldEl.textContent = oldEl.textContent + '\n\n⏹️ 已中断';
+                    } else {
+                        oldEl.textContent = '⏹️ 已中断';
+                    }
+                }
+            }
+        }
         var welcome = document.getElementById('welcomeScreen');
         if (welcome) welcome.remove();
         this.addMessage('user', content);
         input.value = ''; autoResize(input);
         this.isProcessing = true;
-        document.getElementById('sendBtn').disabled = true;
+        document.getElementById('sendBtn').disabled = false;
         this._currentAssistantId = this.addMessage('assistant', '');
+        this.setSendButtonStopMode(true);
         // 通过桥接调用后端 AI
         if (window.py_bridge && typeof window.py_bridge.sendToAI === 'function') {
             console.log('[chatApp] 通过桥接发送到 AI:', content);
@@ -92,6 +111,39 @@ window.chatApp = {
         } else {
             console.log('[chatApp] 桥接未就绪，使用模拟响应');
             this._simulateResponse();
+        }
+    },
+
+    // 切换发送按钮为「停止」模式（AI 回复中）
+    setSendButtonStopMode: function(isStop) {
+        var btn = document.getElementById('sendBtn');
+        if (!btn) return;
+        var icon = btn.querySelector('i');
+        var text = btn.querySelector('.send-text');
+        if (isStop) {
+            btn.classList.add('stop-mode');
+            btn.disabled = false;
+            // 点击行为切换为「停止」（通过 setAttribute 保留 onclick 属性）
+            btn.setAttribute('onclick', 'event.preventDefault();event.stopPropagation();stopAI()');
+            if (icon) icon.className = 'fas fa-stop';
+            if (text) text.textContent = '停止';
+        } else {
+            btn.classList.remove('stop-mode');
+            btn.disabled = false;
+            // 恢复为正常发送（恢复 HTML 属性中的 onClick）
+            btn.setAttribute('onclick', 'sendMessage()');
+            if (icon) icon.className = 'fas fa-paper-plane';
+            if (text) text.textContent = '发送';
+        }
+    },
+
+    // 停止 AI 回复
+    stopAI: function() {
+        console.log('[chatApp] 用户点击停止按钮');
+        this._stopRequested = true;
+        if (window.py_bridge && typeof window.py_bridge.stopAI === 'function') {
+            try { window.py_bridge.stopAI(); }
+            catch(e) { console.error('[chatApp] stopAI 失败:', e); }
         }
     },
 
@@ -165,6 +217,7 @@ window.chatApp = {
         }
         this.isProcessing = false;
         this._currentAssistantId = null;
+        this.setSendButtonStopMode(false);
         document.getElementById('sendBtn').disabled = false;
         document.getElementById('messageInput').focus();
     },
@@ -250,7 +303,28 @@ window.onStreamComplete = function() {
 };
 window.onSetProcessing = function(processing) {
     window.chatApp.isProcessing = processing;
-    document.getElementById('sendBtn').disabled = processing;
+    if (processing) {
+        window.chatApp.setSendButtonStopMode(true);
+    } else {
+        window.chatApp.setSendButtonStopMode(false);
+    }
+};
+// AI 流被中断（用户点击停止按钮时触发）
+window.onAIStopped = function() {
+    // 只有用户点击停止时才标记「已中断」；发送新消息接管时 _stopRequested 为 false 不标记
+    if (window.chatApp._stopRequested && window.chatApp._currentAssistantId) {
+        var el = document.getElementById(window.chatApp._currentAssistantId);
+        if (el && !el.getAttribute('data-interrupted')) {
+            el.setAttribute('data-interrupted', 'true');
+            if (el.textContent.trim() !== '') {
+                el.textContent = el.textContent + '\n\n⏹️ 已中断';
+            } else {
+                el.textContent = '⏹️ 已中断';
+            }
+        }
+    }
+    window.chatApp._stopRequested = false;
+    window.chatApp.completeMessage();
 };
 window.onShowError = function(errorMsg) {
     if (window.chatApp._currentAssistantId) {
@@ -302,8 +376,15 @@ window.onTokenUpdate = function(stats) {
     window.chatApp.updateStatusBar(stats);
 };
 
-function handleInputKeydown(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.chatApp.sendMessage();} }
+function handleInputKeydown(e) {
+    if(e.key==='Enter'&&!e.shiftKey){
+        e.preventDefault();
+        // AI 回复中按 Enter：如果输入框有内容则发送新消息（会中断旧回复）
+        window.chatApp.sendMessage();
+    }
+}
 function sendMessage() { window.chatApp.sendMessage(); }
+function stopAI() { window.chatApp.stopAI(); }
 function newChat() {
     window.chatApp.newChat();
     // 通知后端创建新会话并刷新侧边栏

@@ -16,6 +16,7 @@
     v1.0.3alpha（会话日志文件持久化）: schema_version = 2
     v1.0.4alpha（命中/未命中/输出 token 分栏统计）: schema_version = 3
     v1.0.5alpha（MCP 市场 server_id + 日志市场关联）: schema_version = 4
+    v1.0.6alpha（AI 每轮最终回复文本 + 标记存入 history_sessions_messages）: schema_version = 5
 """
 import json
 import os
@@ -29,7 +30,7 @@ AGENT_DB = os.path.join(DB_DIR, "agent.db")
 LEGACY_MCP_DB = os.path.join(DB_DIR, "mcp.db")
 
 # 当前数据库 schema 版本（与软件版本对应）
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # 迁移注册表: {目标版本: (描述, 迁移函数)}
 MIGRATIONS = {}
@@ -188,6 +189,27 @@ def migrate_v4(conn: sqlite3.Connection):
         print("  [迁移 v4] mcp_server_logs 已存在 market_id 列，跳过")
 
     conn.execute("PRAGMA user_version = 4")
+
+
+@register_migration(5, "为 history_sessions_messages 表添加 round_no / marker 列（AI 每轮最终回复文本 + 标记）")
+def migrate_v5(conn: sqlite3.Connection):
+    """schema v5: 为 history_sessions_messages 表添加轮次标记列
+
+    - round_no: AI 轮次序号（1, 2, 3...），非轮次记录为 NULL
+    - marker: 标记（tool_call=工具调用轮 / final=最终完成轮），非轮次记录为 NULL
+    """
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(history_sessions_messages)").fetchall()]
+    new_columns = {
+        "round_no": "ALTER TABLE history_sessions_messages ADD COLUMN round_no INTEGER",
+        "marker": "ALTER TABLE history_sessions_messages ADD COLUMN marker TEXT",
+    }
+    for col, sql in new_columns.items():
+        if col not in columns:
+            conn.execute(sql)
+            print(f"  [迁移 v5] history_sessions_messages 已添加 {col} 列")
+        else:
+            print(f"  [迁移 v5] history_sessions_messages 已存在 {col} 列，跳过")
+    conn.execute("PRAGMA user_version = 5")
 
 
 def _migrate_legacy_mcp_market(conn: sqlite3.Connection) -> int:

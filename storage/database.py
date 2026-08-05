@@ -52,6 +52,8 @@ class Database(BaseDatabase):
             content       TEXT,
             tool_calls    TEXT,
             token_count   INTEGER DEFAULT 0,
+            round_no      INTEGER,
+            marker        TEXT,
             created_at    TEXT
         )
         """,

@@ -12,9 +12,11 @@ class AIController(QObject):
     stream_chunk = pyqtSignal(str)
     stream_complete = pyqtSignal(str)
     stream_error = pyqtSignal(str)
+    stream_cancelled = pyqtSignal(str)  # AI 流被用户中断（携带已生成的部分内容）
     tool_call_received = pyqtSignal(str, str, str)
     raw_log = pyqtSignal(str)  # 底层 AI 通信原始 JSON 日志（request/response）
     progress_usage = pyqtSignal(str)  # 多轮工具调用中间进度 token（JSON 字符串）
+    round_received = pyqtSignal(str)  # AI 每轮最终回复数据（JSON 字符串：round/marker/text）
 
     def __init__(self, ai_client, model_config, parent=None):
         super().__init__(parent)
@@ -23,6 +25,10 @@ class AIController(QObject):
         self.messages = self._get_initial_messages()
         self._connected = False
         self._stream_buffer = ""
+        # 生成令牌：每次 send_message / reset_messages 递增。
+        # 回调（chunk/complete/error）携带发起时的令牌，若令牌不匹配则丢弃，
+        # 防止会话切换后旧 AI 任务的回调污染新会话的 messages（→「会话串了」）
+        self._generation_token = 0
         # 将底层原始日志回调注入到 AIClient
         self.ai_client.on_raw_log = self._on_raw_log
         # 注入中间进度 token 回调
@@ -59,37 +65,80 @@ class AIController(QObject):
         self.connection_changed.emit(success, msg)
         return success, msg
 
+    def stop_streaming(self):
+        """中断当前正在进行的 AI 流式回复"""
+        if self._connected and self.ai_client:
+            self.ai_client.cancel_current()
+            print("[AIController] ⏹ 已请求中断 AI 流式回复")
+            # 将已生成的流缓冲作为部分内容发出
+            self.stream_cancelled.emit(self._stream_buffer or "")
+        else:
+            self.stream_cancelled.emit("")
+
     def send_message(self, content, extra_messages=None):
         if not self._connected:
             self.stream_error.emit("AI 客户端未连接，请检查配置")
             return
         self._stream_buffer = ""
-        self.messages.append({"role": "user", "content": content})
+        # 注意：不要在此处 append 用户消息！
+        # AIClient.send_message 会执行 self.messages = messages（引用同步），
+        # 随后 send_message_async 内部会统一 append {"role": "user", "content": content}。
+        # 若此处再 append 一次，用户消息会重复出现在发给 AI 的 messages 中。
+        self._generation_token += 1
+        my_token = self._generation_token
+
+        def _on_chunk(chunk):
+            """分片回调：带生成令牌校验，防止跨会话污染"""
+            if self._generation_token != my_token:
+                return
+            self._stream_buffer += chunk
+            self.stream_chunk.emit(self._stream_buffer)
+
+        def _on_complete(full_response):
+            """完成回调：带生成令牌校验，防止跨会话污染 messages"""
+            if self._generation_token != my_token:
+                return
+            self._stream_buffer = full_response
+            self.messages.append({"role": "assistant", "content": full_response})
+            self.stream_complete.emit(full_response)
+
+        def _on_error(error_msg):
+            """错误回调：带生成令牌校验"""
+            if self._generation_token != my_token:
+                return
+            self.stream_error.emit(error_msg)
+
+        def _on_tool_call(tool_name, arguments, result):
+            """工具调用回调：带生成令牌校验"""
+            if self._generation_token != my_token:
+                return
+            import json
+            args_json = json.dumps(arguments) if isinstance(arguments, (dict, list)) else str(arguments)
+            self.tool_call_received.emit(tool_name, args_json, result or "")
+
+        def _on_round(round_data):
+            """每轮最终回复回调：带生成令牌校验"""
+            if self._generation_token != my_token:
+                return
+            import json
+            try:
+                if isinstance(round_data, dict):
+                    payload = round_data
+                else:
+                    payload = json.loads(round_data)
+                self.round_received.emit(json.dumps(payload, ensure_ascii=False))
+            except Exception as e:
+                print(f"[AIController] ⚠️ round 数据序列化失败: {e}")
+
         self.ai_client.send_message(
             messages=self.messages,
             content=content,
-            on_chunk=self._on_chunk,
-            on_complete=self._on_complete,
-            on_error=self._on_error,
-            on_tool_call=self._on_tool_call
+            on_chunk=_on_chunk,
+            on_complete=_on_complete,
+            on_error=_on_error,
+            on_tool_call=_on_tool_call,
+            on_round=_on_round
         )
-
-    def _on_chunk(self, chunk):
-        self._stream_buffer += chunk
-        self.stream_chunk.emit(self._stream_buffer)
-
-    def _on_complete(self, full_response):
-        self._stream_buffer = full_response
-        self.messages.append({"role": "assistant", "content": full_response})
-        self.stream_complete.emit(full_response)
-
-    def _on_error(self, error_msg):
-        self.stream_error.emit(error_msg)
-
-    def _on_tool_call(self, tool_name, arguments, result):
-        import json
-        args_json = json.dumps(arguments) if isinstance(arguments, (dict, list)) else str(arguments)
-        self.tool_call_received.emit(tool_name, args_json, result or "")
 
     def inject_context(self, context_text: str):
         if self.messages and self.messages[0]["role"] == "system":
@@ -97,6 +146,8 @@ class AIController(QObject):
             self.messages[0] = {"role": "system", "content": system_prompt + context_text}
 
     def reset_messages(self):
+        # 递增生成令牌：使旧 AI 任务的回调全部失效（防止旧回复写入新消息列表）
+        self._generation_token += 1
         self.messages = self._get_initial_messages()
         self._stream_buffer = ""
 

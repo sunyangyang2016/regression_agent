@@ -32,6 +32,11 @@ class ChatController(QObject):
         self.model_config = model_config
         self.bridge = None
         self._first_reply = True
+        # AI 是否正在生成回复（用于并发控制：AI 回复中允许用户输入新消息，
+        # 此时先中断旧回复再处理新消息）
+        self._is_generating = False
+        # 是否有新消息即将发送（中断旧回复后的竞态保护）
+        self._pending_new_message = False
         self._token_counter = None
         self._cost_tracker = None
         self._session_total_tokens = 0
@@ -40,6 +45,8 @@ class ChatController(QObject):
         self._session_hit_tokens = 0
         self._session_miss_tokens = 0
         self._session_output_tokens = 0
+        # 发起 AI 调用时的会话 ID（用于回调时校验，防止跨会话写入 →「会话串了」）
+        self._active_conversation_id: Optional[str] = None
 
         # ====== AI 通信日志持久化 ======
         # 当前会话累积的底层原始日志明细（内存缓存，落盘时写入 JSON 文件）
@@ -52,9 +59,11 @@ class ChatController(QObject):
         self.ai_controller.stream_chunk.connect(self._on_stream_chunk)
         self.ai_controller.stream_complete.connect(self._on_stream_complete)
         self.ai_controller.stream_error.connect(self._on_stream_error)
+        self.ai_controller.stream_cancelled.connect(self._on_stream_cancelled)
         self.ai_controller.tool_call_received.connect(self._on_tool_call)
         self.ai_controller.raw_log.connect(self._on_raw_log)
         self.ai_controller.progress_usage.connect(self._on_progress_usage)
+        self.ai_controller.round_received.connect(self._on_round)
         self.token_update.connect(self._on_token_update)
         self.log_entry.connect(self._on_log_entry)
 
@@ -68,6 +77,12 @@ class ChatController(QObject):
             self.show_error.emit("AI 客户端未连接，请检查配置")
             self.complete_message.emit("")
             return
+
+        # ====== 并发控制：若 AI 正在回复，先中断旧回复再处理新消息 ======
+        if self._is_generating:
+            print(f"{LOG} 🔄 AI 正在回复，先中断旧回复再处理新消息")
+            self._pending_new_message = True
+            self._interrupt_current_generation()
 
         # ====== 入站内容过滤（安全插件 hook 广播） ======
         try:
@@ -89,11 +104,20 @@ class ChatController(QObject):
             self.model_config.get("api", "model") or "deepseek-chat"
         )
 
+        # 记录发起 AI 调用的会话 ID（用于回调时校验，防止跨会话写入 →「会话串了」）
+        self._active_conversation_id = self.conversation_model.current_conversation_id
+
         is_first = not bool(self.conversation_model.current_user_content)
         self.conversation_model.current_user_content = content
         self.conversation_model.save_message("user", content)
         if is_first:
-            self._first_reply = True
+            # ====== 收到第一条用户输入时立即更新会话标题（不等 AI 回复） ======
+            self._first_reply = False  # 标题已更新，无需在 _on_stream_complete 中再更新
+            try:
+                self.conversation_model.update_title(content)
+                self.sync_conversations_to_view()
+            except Exception as e:
+                print(f"{LOG} ⚠️ 更新会话标题失败: {e}")
 
         self.set_processing.emit(True)
         self.update_message.emit("", "⏳ 思考中…")
@@ -103,15 +127,78 @@ class ChatController(QObject):
                 # 在后台线程注入 MCP 上下文，避免主线程与 MCP 后台加载线程
                 # 并发读写 MCPHost._clients（可能导致 UI 卡顿或字典迭代异常）
                 self._inject_mcp_context()
+                self._is_generating = True
                 self.ai_controller.send_message(content)
             except Exception as ex:
                 print(f"{LOG} ❌ AI 调用异常: {ex}")
+                self._is_generating = False
                 self.show_error.emit(str(ex))
                 self.complete_message.emit("")
 
         threading.Thread(target=do_ai_call, daemon=True).start()
 
+    def _interrupt_current_generation(self):
+        """中断当前正在进行的 AI 回复（保留已生成的部分内容）"""
+        try:
+            self.ai_controller.stop_streaming()
+        except Exception as e:
+            print(f"{LOG} ⚠️ 中断 AI 回复失败: {e}")
+
+    def handle_stop_ai(self):
+        """处理用户主动点击「停止」按钮，中断当前 AI 回复"""
+        if not self._is_generating:
+            return
+        print(f"{LOG} ⏹ 用户请求停止 AI 回复")
+        self._interrupt_current_generation()
+
+    def _on_stream_cancelled(self, partial_content: str):
+        """AI 流被中断：保存已生成的部分内容，恢复 UI"""
+        # ====== 会话 ID 校验：若当前会话已切换，丢弃旧会话的回调 ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            print(f"{LOG} ⏹ 忽略跨会话中断回调（发起会话={self._active_conversation_id}, 当前={self.conversation_model.current_conversation_id}）")
+            self._active_conversation_id = None
+            self._is_generating = False
+            self._pending_new_message = False
+            return
+
+        print(f"{LOG} ⏹ AI 流已中断（已生成 {len(partial_content or '')} 字符）")
+        self._active_conversation_id = None
+        # 保存部分内容为 assistant 消息（仅在非空时保存）
+        if partial_content and partial_content.strip():
+            try:
+                self.conversation_model.save_message("assistant", partial_content)
+            except Exception as e:
+                print(f"{LOG} ⚠️ 保存中断的部分内容失败: {e}")
+        # 用户主动点击停止：触发前端「已中断」标记并恢复正常 UI
+        if not self._pending_new_message:
+            if self.bridge:
+                try:
+                    self.bridge.execute_js("window.onAIStopped();")
+                except Exception as e:
+                    print(f"{LOG} ⚠️ 推送中断状态失败: {e}")
+            self.complete_message.emit("")
+            self.set_processing.emit(False)
+        # 新消息接管时不触发 onAIStopped / complete_message（避免清除新气泡引用）
+        self._pending_new_message = False
+        self._is_generating = False
+
     def handle_load_conversation(self, conversation_id: str):
+        # ====== 切换会话前先中断正在进行的 AI 回复 ======
+        # 防止旧会话的流式回调在切换后写入新会话（→「会话串了」）
+        if self._is_generating:
+            print(f"{LOG} 🔄 切换会话前中断正在进行的 AI 回复")
+            self._pending_new_message = False  # 切换会话不是「新消息接管」，无需保留接管标记
+            self._interrupt_current_generation()
+            # 等待中断完成（AI 任务会在后台很快取消，释放 _is_generating）
+            try:
+                deadline = time.time() + 2.0
+                while self._is_generating and time.time() < deadline:
+                    time.sleep(0.02)
+            except Exception:
+                pass
+            self._active_conversation_id = None
+
         messages = self.conversation_model.load_conversation_messages(conversation_id)
         self.ai_controller.reset_messages()
         # 从数据库加载已保存的 token 数据（分类统计）
@@ -295,6 +382,17 @@ class ChatController(QObject):
         self.update_message.emit("", content)
 
     def _on_stream_complete(self, full_response: str):
+        # ====== 会话 ID 校验：若当前会话已切换，丢弃旧会话的回复（→ 防「会话串了」） ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            print(f"{LOG} ❌ 忽略跨会话回复回调（发起会话={self._active_conversation_id}, 当前={self.conversation_model.current_conversation_id}），丢弃旧回复")
+            self._active_conversation_id = None
+            self._is_generating = False
+            self._pending_new_message = False
+            self.set_processing.emit(False)
+            return
+
+        self._active_conversation_id = None
         # 尝试从流式响应中提取 OpenAI SDK 返回的精确 token 数和真实内容
         user_content = self.conversation_model.current_user_content or ""
         input_tokens = 0
@@ -335,8 +433,10 @@ class ChatController(QObject):
             self.update_message.emit("", content)
             self.complete_message.emit("")
             self.set_processing.emit(False)
+            self._is_generating = False
         except Exception as e:
             print(f"{LOG} ⚠️ 保存/显示助手回复失败: {e}")
+            self._is_generating = False
 
         # ====== 发布 AI 回复事件（供插件订阅，如监控插件按 {{标记}} 提取结论/告警） ======
         try:
@@ -418,10 +518,38 @@ class ChatController(QObject):
         # ====== 将本轮的 AI 通信日志写入日志文件 ======
         self._save_session_logs()
 
+    def _on_round(self, round_json: str):
+        """接收 AI 每一轮的最终回复数据并写入 history_sessions_messages"""
+        # ====== 会话 ID 校验：若当前会话已切换，忽略旧会话的 round 数据 ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            return
+        try:
+            data = json.loads(round_json)
+            round_no = int(data.get("round", 1))
+            marker = data.get("marker", "final")
+            text = data.get("text", "")
+            # 合并存储：将每轮 AI 回复写入消息表（带轮次序号和标记）
+            # round_no/marker 用于区分普通消息和 AI 轮次记录
+            self.conversation_model.save_message("assistant", text, round_no=round_no, marker=marker)
+            print(f"{LOG} 💾 AI 第 {round_no} 轮回复已写入消息表（标记: {marker}）")
+        except Exception as e:
+            print(f"{LOG} ⚠️ 保存 AI 轮次数据失败: {e}")
+
     def _on_stream_error(self, error_msg: str):
+        # ====== 会话 ID 校验：若当前会话已切换，忽略旧会话的错误回调 ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            print(f"{LOG} ⚠️ 忽略跨会话错误回调（发起会话={self._active_conversation_id}, 当前={self.conversation_model.current_conversation_id}）")
+            self._active_conversation_id = None
+            self._is_generating = False
+            self._pending_new_message = False
+            return
+        self._active_conversation_id = None
         self.update_message.emit("", f"❌ {error_msg}")
         self.complete_message.emit("")
         self.set_processing.emit(False)
+        self._is_generating = False
 
     def _on_tool_call(self, tool_name: str, arguments_json: str, result: str):
         if self.bridge:
@@ -449,6 +577,11 @@ class ChatController(QObject):
 
     def _on_progress_usage(self, usage_json: str):
         """多轮工具调用中间进度 token：立即刷新 UI 面板（不重复入库，最终 complete 精确结算）"""
+        # ====== 会话 ID 校验：若当前会话已切换，忽略旧会话的中间 token 统计 ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            return
+
         try:
             data = json.loads(usage_json)
             accum_input = int(data.get("accum_input", 0))
@@ -477,6 +610,11 @@ class ChatController(QObject):
 
     def _on_raw_log(self, raw_json: str):
         """接收底层 AI 通信原始 JSON 日志，转发到前端日志对话框"""
+        # ====== 会话 ID 校验：若当前会话已切换，忽略旧会话的原始日志（防止日志串扰） ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            return
+
         # 缓存到当前会话（落到日志文件）
         try:
             entry = json.loads(raw_json) if isinstance(raw_json, str) else raw_json

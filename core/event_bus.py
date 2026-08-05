@@ -66,6 +66,7 @@ class EventBus:
     AI_ERROR = "ai:error"                         # AI 错误
     AI_TOOL_CALL = "ai:tool_call"                 # AI 调用工具
     AI_TOOL_RESULT = "ai:tool_result"             # 工具调用结果
+    AI_ROUND_RECEIVED = "ai:round_received"       # AI 每轮最终回复到达
     
     # MCP 相关
     MCP_PLUGIN_INSTALL = "mcp:plugin_install"     # 安装插件

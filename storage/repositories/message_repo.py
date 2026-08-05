@@ -57,17 +57,18 @@ class MessageRepository:
         )
         if existing:
             self.db.execute(
-                f"UPDATE {self.TABLE} SET session_id=?, role=?, content=?, tool_calls=?, token_count=? WHERE id=?",
+                f"UPDATE {self.TABLE} SET session_id=?, role=?, content=?, tool_calls=?, token_count=?, round_no=?, marker=? WHERE id=?",
                 (data.get("session_id"), data.get("role"), data.get("content"),
-                 data.get("tool_calls"), data.get("token_count"), data.get("id")),
+                 data.get("tool_calls"), data.get("token_count"),
+                 data.get("round_no"), data.get("marker"), data.get("id")),
             )
         else:
             self.db.execute(
-                f"INSERT INTO {self.TABLE} (id, session_id, role, content, tool_calls, token_count, created_at) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO {self.TABLE} (id, session_id, role, content, tool_calls, token_count, round_no, marker, created_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (data.get("id"), data.get("session_id"), data.get("role"),
                  data.get("content"), data.get("tool_calls"), data.get("token_count"),
-                 data.get("created_at")),
+                 data.get("round_no"), data.get("marker"), data.get("created_at")),
             )
         return True
 

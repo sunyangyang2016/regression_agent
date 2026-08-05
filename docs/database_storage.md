@@ -24,6 +24,7 @@
 | v1.0.2alpha、v0.2.0 | 1 | 新版统一数据库（本方案） |
 | v1.0.3alpha | 2 | 会话日志文件持久化（log_file 列） |
 | v1.0.4alpha | 3 | 命中/未命中/输出 token 分栏统计 |
+| v1.0.6alpha | 5 | AI 每轮最终回复文本 + 标记存入 history_sessions_messages（round_no / marker 列） |
 
 - **建表 = 启动时自动**：由 `storage/database.py` 的 `ensure_tables()` 执行（`CREATE TABLE IF NOT EXISTS` 幂等）
 - **数据迁移 = 手动脚本**：由 `scripts/migrate_db.py` 根据 `PRAGMA user_version` 执行
@@ -115,6 +116,8 @@ CREATE TABLE IF NOT EXISTS history_sessions_messages (
     content       TEXT,                             -- 消息内容
     tool_calls    TEXT,                             -- 工具调用列表（JSON 数组）
     token_count   INTEGER DEFAULT 0,                -- 该消息 Token 数
+    round_no      INTEGER,                          -- AI 轮次序号（普通消息为 NULL）
+    marker        TEXT,                             -- 轮次标记：tool_call / final（普通消息为 NULL）
     created_at    TEXT                              -- 创建时间（ISO 8601）
 );
 ```
@@ -184,7 +187,38 @@ CREATE TABLE IF NOT EXISTS mcp_market_index (
 
 ---
 
-### 2.4 `mcp_server_logs` — MCP 服务器操作日志表
+### 2.4 `ai_round_logs` — AI 轮次日志表
+
+> 存储 AI 多轮工具调用中，每一轮的最终回复文本和标记，用于追溯 AI 推理过程。
+
+**建表 SQL：**
+```sql
+CREATE TABLE IF NOT EXISTS ai_round_logs (
+    id          TEXT PRIMARY KEY,                 -- 日志记录 ID（UUID）
+    session_id  TEXT NOT NULL,                    -- 所属会话 ID（外键 → history_sessions_index.id）
+    round_no    INTEGER DEFAULT 1,                -- 轮次序号（1, 2, 3...）
+    marker      TEXT,                             -- 标记：tool_call / final
+    text        TEXT,                             -- 本轮 AI 最终回复文本
+    created_at  TEXT                              -- 创建时间（ISO 8601）
+);
+```
+
+**字段说明：**
+
+| 字段 | 类型 | 主键 | 可空 | 默认值 | 说明 |
+|------|------|------|------|--------|------|
+| `id` | TEXT | ✅ | ❌ | - | 轮次日志唯一标识（UUID） |
+| `session_id` | TEXT | - | ❌ | - | 所属会话 ID，外键关联 `history_sessions_index.id` |
+| `round_no` | INTEGER | - | ✅ | 1 | 轮次序号（第 1 轮=1，第 2 轮=2...） |
+| `marker` | TEXT | - | ✅ | - | 标记：`tool_call`（该轮触发工具调用）/ `final`（最终完成轮） |
+| `text` | TEXT | - | ✅ | - | 本轮 AI 最终回复文本（collected_content） |
+| `created_at` | TEXT | - | ✅ | - | 记录创建时间 |
+
+**索引：** `session_id`（按会话查询轮次）、`created_at`（按时间排序）
+
+---
+
+### 2.5 `mcp_server_logs` — MCP 服务器操作日志表
 
 > 记录 MCP 服务器的安装、卸载、启动、停止、重启等操作日志。
 
@@ -400,6 +434,7 @@ class ConversationRepository:
 | `message_repo.py` | `history_sessions_messages` | `ChatMessage` |
 | `mcp_market_repo.py` | `mcp_market_index` | dict（前端格式） |
 | `mcp_server_logs_repo.py` | `mcp_server_logs` | `MCPServerLog` |
+| `ai_round_logs_repo.py` | `ai_round_logs` | `AIRoundLog` |
 
 ### 5.5 初始化与数据迁移
 
