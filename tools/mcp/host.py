@@ -170,10 +170,13 @@ class MCPHost:
     
     def register_client(self, server_id: str, config: dict = None) -> bool:
         """注册并启动一个 MCP 客户端"""
+        # 每次调用先重置上次错误，避免透传旧错误
+        self.last_error = ""
         if config is None:
             config = self._read_config().get("mcpServers", {}).get(server_id)
             if config is None:
                 print(f"{LOG} ❌ [{server_id}] 配置不存在")
+                self.last_error = "配置不存在"
                 return False
         
         transport = config.get("transport", "")
@@ -214,7 +217,10 @@ class MCPHost:
                 self._clients[server_id] = client
                 print(f"{LOG} ✅ [{server_id}] HTTP 连接成功 ({len(client.list_tools())} 个工具)")
                 return True
-            print(f"{LOG} ❌ [{server_id}] HTTP 连接失败")
+            # 透传具体错误原因到上层
+            if getattr(client, 'last_error', ''):
+                self.last_error = client.last_error
+            print(f"{LOG} ❌ [{server_id}] HTTP 连接失败: {self.last_error}")
             return False
         
         elif transport == "stdio":
@@ -350,16 +356,19 @@ class MCPHost:
     # 远程服务器管理（HTTP 模式）
     # ==========================================
     
-    def add_remote_server(self, name: str, url: str) -> bool:
+    def add_remote_server(self, name: str, url: str, api_key: str = "") -> bool:
         """添加远程 MCP 服务器到配置文件"""
         config = self._read_config()
         servers = config.setdefault("mcpServers", {})
-        servers[name] = {
+        server_cfg = {
             "transport": "http",
             "url": url,
             "enabled": True,
             "description": f"{name} 远程服务"
         }
+        if api_key:
+            server_cfg["env"] = {"API_KEY": api_key}
+        servers[name] = server_cfg
         self._write_config(config)
         print(f"{LOG} ✅ 已添加远程服务器: {name} ({url})")
         return True
@@ -389,6 +398,7 @@ class MCPHost:
                     transport = "http"
                 else:
                     transport = "stdio"
+            env = cfg.get("env", {}) or {}
             result.append({
                 "id": sid,
                 "name": cfg.get("name", sid),
@@ -398,6 +408,7 @@ class MCPHost:
                 "enabled": cfg.get("enabled", True),
                 "online": bool(clients.get(sid)) and clients[sid].is_running(),
                 "githubRepoUrl": cfg.get("githubRepoUrl", ""),
+                "env": env,
             })
         return result
 

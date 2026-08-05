@@ -249,12 +249,19 @@ function showPlugin(name) {
     }
     win.addEventListener('mousedown', startDrag);
 
-    // 定位（右上角层叠）
+    // 定位（右上角层叠；支持插件自定义初始宽度，默认 560px）
+    // 窗口高度完全由内容自适应：不设 height、也不用插件的 height 限制，
+    // 仅设置视口级 max-height 防止内容超高时溢出屏幕。
+    var initW = 560;
+    if (p && p.initial_size) {
+        initW = Number(p.initial_size.width) || 560;
+    }
     win.style.position = 'fixed';
-    win.style.width = '560px';
+    win.style.width = initW + 'px';
     win.style.maxWidth = 'calc(100vw - 48px)';
+    win.style.maxHeight = 'calc(100vh - 48px)';
     win.style.top = Math.max(24, (window.innerHeight - 300) / 3 + 20) + 'px';
-    win.style.left = Math.max(24, window.innerWidth - 620) + 'px';
+    win.style.left = Math.max(24, window.innerWidth - initW - 60) + 'px';
 
     // 执行插件自身 js（依赖 window.security_bridge，由 app.js 全局注入）
     if (js) {

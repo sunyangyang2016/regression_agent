@@ -22,6 +22,7 @@ class PluginManager:
         self.hooks = HookRegistry()
         self.dependency = DependencyResolver()
         self.security = PluginSecurity()
+        self.context = None  # AppController 注入，供插件访问 app_controller / webview
         self._plugins: Dict[str, BasePlugin] = {}
         # 记录每个插件注册的 hook 事件名，用于卸载/禁用时清理
         self._plugin_hooks: Dict[str, Dict[str, Callable]] = {}
@@ -217,6 +218,17 @@ class PluginManager:
                 if plugin_root not in sys.path:
                     sys.path.insert(0, plugin_root)
                 spec.loader.exec_module(mod)
+                # 注册到 sys.modules：使插件内部（如 MonitorObserver）后续通过标准
+                # 相对导入（from ..bridge.monitor_bridge import ...）复用同一模块对象，
+                # 确保模块级单例状态（_bridge_instance）共享，避免双重加载导致 pushData 丢失
+                _bridge_mod_name = os.path.splitext(os.path.basename(base))[0]
+                _full_bridge_mod = f"{mod.__package__}.{_bridge_mod_name}"
+                _existing = sys.modules.get(_full_bridge_mod)
+                if _existing is None:
+                    sys.modules[_full_bridge_mod] = mod
+                else:
+                    # 已由标准导入缓存：抛弃动态加载副本，改用缓存模块（避免双份实例）
+                    mod = _existing
 
                 # 类名推导：基于去 _plugin 后缀的基础名（如 security → SecurityBridge）
                 # 优先 <BaseName>Bridge，回退 <BaseName>PluginBridge 与 <FullName>Bridge
@@ -234,7 +246,20 @@ class PluginManager:
                     cls = getattr(mod, cls_name4, None)
                 if cls:
                     bridge_key = (name[:-len("_plugin")] if name.endswith("_plugin") else name) + "_bridge"
-                    bridges[bridge_key] = cls()
+                    # 仅对构造函数接受 webview 参数的 bridge 传入 webview（避免双重实例化与非 MonitorBridge 传参 TypeError）
+                    import inspect as _inspect
+                    try:
+                        _sig = _inspect.signature(cls)
+                        _accepts_webview = "webview" in _sig.parameters
+                    except (TypeError, ValueError):
+                        _accepts_webview = False
+                    try:
+                        if _accepts_webview:
+                            bridges[bridge_key] = cls(webview=getattr(self.context, "webview", None))
+                        else:
+                            bridges[bridge_key] = cls()
+                    except TypeError:
+                        bridges[bridge_key] = cls()
             except Exception as e:
                 print(f"[PluginManager] [WARN] 加载插件 bridge '{name}' 失败: {e}")
         return bridges

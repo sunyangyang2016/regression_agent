@@ -417,6 +417,21 @@ class MCPBridge(BridgeBase):
                 return True
             else:
                 self._js_log(server_id, "❌ register_client 返回 false")
+                # HTTP 远程服务器连接失败：输出具体错误原因到前端，不做 subprocess 测试运行
+                if transport == "http":
+                    host_err = getattr(mgr, 'last_error', '') or ''
+                    if host_err:
+                        self._js_log(server_id, f"❌ {host_err}")
+                        if "403" in host_err or "Host header" in host_err:
+                            self._js_log(server_id, "💡 服务端 Host 白名单限制：需要在 MCP 服务端配置允许此 IP (或改用 localhost 访问)")
+                        elif "401" in host_err:
+                            self._js_log(server_id, "💡 需要 API Key，请在配置表单的 API Key 字段中填写")
+                        elif "404" in host_err:
+                            self._js_log(server_id, "💡 URL 端点路径可能不正确，请确认服务端 MCP 端点地址")
+                    else:
+                        self._js_log(server_id, "ℹ️ HTTP 远程服务器连接失败")
+                        self._js_log(server_id, "💡 请检查: 1) URL 端点路径是否正确  2) 服务端是否已启动  3) API Key 是否有效  4) 网络/防火墙是否允许访问")
+                    return False
                 try:
                     import subprocess
                     cmd_full = [cmd] + args if isinstance(cmd, str) else list(cmd) + list(args)
@@ -588,18 +603,21 @@ class MCPBridge(BridgeBase):
             print(f"[MCPBridge] ❌ getMCPToolList 失败: {e}")
             return "[]"
 
-    @pyqtSlot(str, str, str, result=bool)
-    def addMCPServer(self, server_id: str, name: str, url: str, description: str = ""):
+    @pyqtSlot(str, str, str, str, str, result=bool)
+    def addMCPServer(self, server_id: str, name: str, url: str, description: str = "", api_key: str = ""):
         try:
             from tools.mcp.host import MCPHost
             mgr = MCPHost()
-            mgr.add_remote_server(server_id, url)
+            mgr.add_remote_server(server_id, url, api_key=api_key)
             config = mgr._read_config()
             servers = config.setdefault("mcpServers", {})
             if server_id in servers:
                 servers[server_id]["description"] = description or f"{name} 远程服务"
                 servers[server_id]["name"] = name
+                if api_key:
+                    servers[server_id].setdefault("env", {})["API_KEY"] = api_key
                 mgr._write_config(config)
+            self.execute_js("if(typeof loadMCPServers==='function')loadMCPServers();")
             print(f"[MCPBridge] ✅ 已添加 MCP 服务器: {server_id} ({url})")
             return True
         except Exception as e:
@@ -711,8 +729,7 @@ class MCPBridge(BridgeBase):
                 for t in host.list_tools():
                     if t.name == tool_name:
                         print(f"[MCPBridge] 🔍 在 {host.server_id} 中找到工具 '{tool_name}'")
-                        result = host.call_tool(tool_name, arguments)
-                        return result
+                        return host.call_tool(tool_name, arguments)
             return f"⚠️ MCP 工具 '{tool_name}' 未找到对应处理器"
         except Exception as e:
             print(f"[MCPBridge] ❌ execute_tool 失败: {e}")

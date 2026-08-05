@@ -43,6 +43,7 @@ class AppController(QObject):
         # ---- Plugin 系统初始化 ----
         from plugins.manager import PluginManager
         self.plugin_manager = PluginManager()
+        self.plugin_manager.context = self  # 插件可访问 app_controller / webview
 
         # ---- Skill 系统初始化 ----
         from skills.manager import SkillManager

@@ -46,6 +46,13 @@ class PluginLoader:
                 spec = importlib.util.spec_from_file_location(entry, mod_path)
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
+                    # 设置包名，使插件内相对导入（如 from .model.monitor_observer import ...）可用
+                    mod.__package__ = f"plugins.builtin.{entry}"
+                    # 确保项目根目录在 sys.path（使 plugins.builtin.<entry> 包可解析）
+                    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    import sys as _sys
+                    if _project_root not in _sys.path:
+                        _sys.path.insert(0, _project_root)
                     spec.loader.exec_module(mod)
                     for name, obj in inspect.getmembers(mod):
                         if (inspect.isclass(obj) and issubclass(obj, BasePlugin)

@@ -94,12 +94,14 @@ class SkillLoader:
     # ---- MD 技能目录解析 ----
 
     def _scan_subdir_files(self, skill_dir: str, subdir: str) -> list:
-        """扫描技能目录下指定可选子目录中的文件，返回相对路径列表"""
+        """扫描技能目录下指定可选子目录中的文件，返回相对路径列表（跳过 __pycache__）"""
         files = []
         sub_path = os.path.join(skill_dir, subdir)
         if not os.path.isdir(sub_path):
             return files
-        for root, _, fnames in os.walk(sub_path):
+        for root, dirs, fnames in os.walk(sub_path):
+            # 跳过 Python 缓存目录
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
             for fname in sorted(fnames):
                 full = os.path.join(root, fname)
                 rel = os.path.relpath(full, skill_dir).replace(os.sep, "/")

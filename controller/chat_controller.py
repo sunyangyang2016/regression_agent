@@ -338,6 +338,17 @@ class ChatController(QObject):
         except Exception as e:
             print(f"{LOG} ⚠️ 保存/显示助手回复失败: {e}")
 
+        # ====== 发布 AI 回复事件（供插件订阅，如监控插件按 {{标记}} 提取结论/告警） ======
+        try:
+            from core.plugin_bus import PluginBus
+            PluginBus.publish(
+                "ai_reply",
+                content,
+                self.conversation_model.current_conversation_id or "",
+            )
+        except Exception as e:
+            print(f"{LOG} ⚠️ 发布 ai_reply 事件失败: {e}")
+
         try:
             if input_tokens == 0 and output_tokens == 0:
                 from ai.token_counter import TokenCounter

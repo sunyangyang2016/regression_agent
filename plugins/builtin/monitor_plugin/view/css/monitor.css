@@ -1,0 +1,596 @@
+/* ============================================
+   系统监控插件 - 深色主题样式
+   与安全插件保持一致色调：
+   页面 #0f1115 / 卡片 #1a1d23 / 边框 #2d3240 / 强调 #8ab4f8
+   ============================================ */
+.mon-dashboard {
+    width: 100%;
+    color: #e8eaed;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* ----- 指标卡片 4列 ----- */
+.mon-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 16px;
+}
+.mon-card {
+    background: #1a1d23;
+    border-radius: 10px;
+    padding: 16px 14px;
+    border: 1px solid #2d3240;
+    box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.6);
+    transition: 0.15s ease;
+    min-width: 0;
+}
+.mon-card:hover { border-color: #8ab4f8; background: #22252b; }
+.mon-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.mon-card-header span { font-weight: 500; color: #b0b6c0; font-size: 0.85rem; }
+.mon-card-header span i { margin-right: 5px; color: #8ab4f8; }
+.mon-card-icon { font-size: 1.2rem; color: #5f7f9c; }
+.mon-metric {
+    font-size: 1.8rem;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    margin-bottom: 10px;
+    color: #e8eaed;
+    line-height: 1;
+}
+.mon-metric small { font-size: 0.9rem; font-weight: 400; color: #b0b6c0; margin-left: 4px; }
+.mon-progress-track {
+    background: #2d3240;
+    height: 5px;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+.mon-progress-fill {
+    height: 100%;
+    border-radius: 12px;
+    width: 0%;
+    background: linear-gradient(90deg, #3b9eff, #5fc3e4);
+    transition: width 0.6s ease;
+}
+.fill-green { background: linear-gradient(90deg, #2ccf8a, #3dd68c); }
+.fill-yellow { background: linear-gradient(90deg, #e6b85e, #f5cd7a); }
+.fill-pink { background: linear-gradient(90deg, #d66b9e, #e88ab5); }
+.fill-purple { background: linear-gradient(90deg, #8b7be8, #a994f0); }
+.mon-sub-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 0.72rem;
+    color: #8a8f98;
+}
+.mon-sub-info span i { margin-right: 3px; color: #5f7f9c; }
+
+/* ----- 双栏 ----- */
+.mon-row-duo {
+    display: grid;
+    grid-template-columns: 1.4fr 1.4fr 1.4fr;
+    gap: 14px;
+    margin-bottom: 16px;
+}
+.mon-conclusion-box {
+    background: #0f1115;
+    border-radius: 8px;
+    border: 1px solid #2d3240;
+    padding: 14px;
+    min-height: 120px;
+}
+.mon-conclusion-text {
+    color: #b0b6c0;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.mon-card-large {
+    background: #1a1d23;
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid #2d3240;
+    box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.6);
+    min-width: 0;
+}
+.mon-card-large:hover { border-color: #8ab4f8; }
+.mon-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: #e8eaed;
+    margin-bottom: 14px;
+    font-size: 0.95rem;
+}
+.mon-card-title i { color: #8ab4f8; }
+.mon-badge {
+    background: #22252b;
+    padding: 2px 10px;
+    border-radius: 40px;
+    font-size: 0.7rem;
+    color: #b0b6c0;
+    border: 1px solid #2d3240;
+}
+
+/* ----- 进程列表 ----- */
+.mon-process-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-width: thin;
+}
+.mon-process-list::-webkit-scrollbar { width: 4px; }
+.mon-process-list::-webkit-scrollbar-track { background: #22252b; border-radius: 8px; }
+.mon-process-list::-webkit-scrollbar-thumb { background: #5a7f9c; border-radius: 8px; }
+.mon-loading {
+    text-align: center;
+    padding: 20px;
+    color: #8a8f98;
+    font-size: 0.85rem;
+}
+
+.mon-process-item {
+    background: #0f1115;
+    border-radius: 8px;
+    padding: 10px 12px;
+    border: 1px solid #2d3240;
+    transition: 0.1s;
+}
+.mon-process-item:hover { background: #22252b; border-color: #8ab4f8; }
+.mon-proc-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+}
+.mon-proc-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mon-proc-icon {
+    width: 28px;
+    height: 28px;
+    background: #22252b;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #8ab4f8;
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    border: 1px solid #2d3240;
+}
+.mon-proc-name {
+    font-weight: 500;
+    font-size: 0.88rem;
+    color: #e8eaed;
+    white-space: nowrap;
+}
+.mon-proc-pid { color: #8a8f98; font-size: 0.65rem; margin-left: 4px; font-weight: 400; }
+
+/* CPU / 内存占比只显示数据（去图标），RSS / VSZ / 线程保留标签 */
+.mon-proc-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 0.72rem;
+    color: #b0b6c0;
+    margin-top: 2px;
+    align-items: center;
+}
+.mon-proc-stats span i { margin-right: 3px; color: #8a8f98; width: 12px; font-size: 0.68rem; }
+.stat-cpu { color: #6fc3e8; font-size: 0.78rem; font-weight: 600; }
+.stat-mem { color: #f5cd7a; font-size: 0.78rem; font-weight: 600; }
+.stat-rss { color: #8be0a8; }
+.stat-vsz { color: #d68b9e; }
+.stat-thread { color: #a994f0; }
+
+/* ----- 汇总条 ----- */
+.mon-summary-bar {
+    margin-top: 10px;
+    font-size: 0.72rem;
+    color: #8a8f98;
+    border-top: 1px solid #2d3240;
+    padding-top: 10px;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.mon-summary-bar span i { margin-right: 3px; }
+.mon-summary-bar span:nth-child(1) i { color: #6fc3e8; }
+.mon-summary-bar span:nth-child(2) i { color: #f5cd7a; }
+.mon-summary-bar span:nth-child(3) i { color: #8be0a8; }
+.mon-summary-bar span:nth-child(4) i { color: #a994f0; }
+
+/* ----- 网络面板 ----- */
+.mon-net-stats { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.mon-net-item { display: flex; justify-content: space-between; align-items: center; }
+.mon-net-label { color: #b0b6c0; font-size: 0.85rem; }
+.mon-net-label i { margin-right: 6px; }
+.mon-net-value { font-weight: 500; font-size: 0.9rem; color: #e8eaed; }
+.mon-net-bar-bg {
+    width: 100%;
+    height: 4px;
+    background: #2d3240;
+    border-radius: 12px;
+    margin-top: 5px;
+}
+.mon-net-bar-fill { height: 100%; border-radius: 12px; width: 0%; transition: width 0.6s ease; }
+.mon-net-footer {
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    border-top: 1px solid #2d3240;
+    padding-top: 12px;
+    color: #b0b6c0;
+}
+
+/* ----- 负载框 ----- */
+.mon-load-box {
+    margin-top: 14px;
+    background: #0f1115;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #2d3240;
+}
+.mon-load-row { display: flex; gap: 16px; flex-wrap: wrap; color: #b0b6c0; font-size: 0.82rem; }
+.mon-load-row span i { color: #8ab4f8; margin-right: 4px; }
+.mon-load-sub {
+    margin-top: 8px;
+    display: flex;
+    gap: 16px;
+    font-size: 0.75rem;
+    color: #8a8f98;
+}
+.mon-load-sub span i { margin-right: 3px; color: #8ab4f8; }
+
+/* ----- 磁盘 ----- */
+.mon-disk-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 4px;
+}
+.mon-disk-item {
+    background: #0f1115;
+    padding: 14px 12px;
+    border-radius: 8px;
+    border: 1px solid #2d3240;
+    min-width: 0;
+    transition: 0.15s ease;
+}
+.mon-disk-item:hover { border-color: #8ab4f8; background: #22252b; }
+.mon-disk-label {
+    font-size: 0.82rem;
+    color: #b0b6c0;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+.mon-disk-usage { font-weight: 600; font-size: 1.05rem; margin: 8px 0 4px; color: #e8eaed; }
+.mon-disk-bar { background: #2d3240; height: 4px; border-radius: 12px; margin-top: 8px; }
+.mon-disk-bar .fill {
+    height: 100%;
+    border-radius: 12px;
+    background: #8ab4f8;
+    transition: width 0.6s ease;
+}
+.mon-disk-bar .fill-orange { background: #e6a84c; }
+.mon-disk-bar .fill-red { background: #d95b6b; }
+.mon-disk-footer {
+    margin-top: 14px;
+    color: #8a8f98;
+    font-size: 0.75rem;
+    border-top: 1px solid #2d3240;
+    padding-top: 12px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.mon-disk-footer i { color: #8ab4f8; }
+.mon-disk-loading {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 16px;
+    color: #8a8f98;
+    font-size: 0.82rem;
+}
+
+/* ============================================
+   数据源标记 + 不可用覆盖层
+   ============================================ */
+
+/* 数据源标记 */
+.mon-data-source {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(61, 214, 140, 0.12);
+    border: 1px solid rgba(61, 214, 140, 0.4);
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin-bottom: 14px;
+    color: #3dd68c;
+    font-size: 0.82rem;
+    width: fit-content;
+}
+.mon-data-source i { font-size: 0.9rem; }
+.mon-data-source strong { color: #e8eaed; margin-left: 4px; }
+
+/* 不可用覆盖层 */
+.mon-unavailable-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    margin-bottom: 16px;
+    background: #1a1d23;
+    border: 1px solid #2d3240;
+    border-radius: 10px;
+    text-align: center;
+}
+.mon-unavailable-icon {
+    font-size: 3rem;
+    color: #f5b942;
+    margin-bottom: 14px;
+    opacity: 0.8;
+}
+.mon-unavailable-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #e8eaed;
+    margin-bottom: 6px;
+}
+.mon-unavailable-msg {
+    font-size: 0.85rem;
+    color: #8a8f98;
+    max-width: 400px;
+}
+
+/* ============================================
+   异常提醒（系统性能监控 Skill 推送）
+   ============================================ */
+
+/* ----- 顶部横幅 ----- */
+.mon-alert-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    border: 1px solid #2d3240;
+    animation: monAlertSlideIn 0.3s ease;
+}
+@keyframes monAlertSlideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.mon-alert-banner-warning {
+    background: rgba(245, 185, 66, 0.12);
+    border-color: rgba(245, 185, 66, 0.45);
+}
+.mon-alert-banner-critical {
+    background: rgba(255, 92, 122, 0.12);
+    border-color: rgba(255, 92, 122, 0.5);
+}
+.mon-alert-banner-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+.mon-alert-banner-warning .mon-alert-banner-icon { color: #f5b942; }
+.mon-alert-banner-critical .mon-alert-banner-icon { color: #ff5c7a; }
+.mon-alert-banner-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.mon-alert-banner-title {
+    font-weight: 600;
+    color: #e8eaed;
+    font-size: 0.88rem;
+}
+.mon-alert-banner-msg {
+    color: #b0b6c0;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mon-alert-banner-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.mon-alert-detail-btn {
+    background: #22252b;
+    border: 1px solid #2d3240;
+    color: #b0b6c0;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: 0.15s;
+}
+.mon-alert-detail-btn:hover {
+    border-color: #8ab4f8;
+    color: #8ab4f8;
+}
+.mon-alert-dismiss-btn {
+    background: transparent;
+    border: none;
+    color: #8a8f98;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+.mon-alert-dismiss-btn:hover { color: #e8eaed; }
+
+/* ----- 提醒入口（有提醒时显示） ----- */
+.mon-alert-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a1d23;
+    border: 1px solid #f5b942;
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin-bottom: 14px;
+    color: #f5b942;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: 0.15s;
+    width: fit-content;
+}
+.mon-alert-entry:hover {
+    background: #22252b;
+    border-color: #ffd178;
+}
+.mon-alert-entry i { font-size: 0.9rem; }
+
+/* ----- 提醒面板（历史列表） ----- */
+.mon-alert-panel {
+    background: #1a1d23;
+    border: 1px solid #2d3240;
+    border-radius: 10px;
+    margin-bottom: 14px;
+    box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.6);
+}
+.mon-alert-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid #2d3240;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #e8eaed;
+}
+.mon-alert-panel-header i { color: #f5b942; margin-right: 5px; }
+.mon-alert-panel-actions {
+    display: flex;
+    gap: 4px;
+}
+.mon-alert-clear-btn,
+.mon-alert-close-btn {
+    background: transparent;
+    border: none;
+    color: #8a8f98;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.mon-alert-clear-btn:hover { color: #ff5c7a; background: rgba(255, 92, 122, 0.1); }
+.mon-alert-close-btn:hover { color: #e8eaed; background: #22252b; }
+.mon-alert-list {
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    scrollbar-width: thin;
+}
+.mon-alert-list::-webkit-scrollbar { width: 4px; }
+.mon-alert-list::-webkit-scrollbar-track { background: #22252b; border-radius: 8px; }
+.mon-alert-list::-webkit-scrollbar-thumb { background: #5a7f9c; border-radius: 8px; }
+
+/* ----- 单条提醒 ----- */
+.mon-alert-item {
+    display: flex;
+    gap: 10px;
+    background: #0f1115;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border: 1px solid #2d3240;
+    transition: 0.1s;
+}
+.mon-alert-item:hover { background: #22252b; }
+.mon-alert-item.alert-critical { border-left: 3px solid #ff5c7a; }
+.mon-alert-item.alert-warning { border-left: 3px solid #f5b942; }
+.mon-alert-item-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.mon-alert-item-content { flex: 1; min-width: 0; }
+.mon-alert-item-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #e8eaed;
+    margin-bottom: 3px;
+}
+.mon-alert-level {
+    font-size: 0.65rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+.alert-critical .mon-alert-level {
+    background: rgba(255, 92, 122, 0.15);
+    color: #ff5c7a;
+}
+.alert-warning .mon-alert-level {
+    background: rgba(245, 185, 66, 0.15);
+    color: #f5b942;
+}
+.mon-alert-title-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mon-alert-item-msg {
+    color: #b0b6c0;
+    font-size: 0.78rem;
+    margin-bottom: 5px;
+    line-height: 1.4;
+}
+.mon-alert-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 0.68rem;
+    color: #8a8f98;
+}
+.mon-alert-item-meta span i {
+    margin-right: 3px;
+    font-size: 0.62rem;
+    color: #5f7f9c;
+}
+.mon-alert-empty {
+    text-align: center;
+    padding: 16px;
+    color: #3dd68c;
+    font-size: 0.82rem;
+}
+
+/* ----- 响应式 ----- */
+@media (max-width: 1100px) {
+    .mon-grid { grid-template-columns: repeat(2, 1fr); }
+    .mon-row-duo { grid-template-columns: 1fr; }
+    .mon-disk-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+    .mon-grid { grid-template-columns: 1fr; }
+    .mon-disk-grid { grid-template-columns: 1fr; }
+    .mon-alert-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .mon-alert-banner-actions { align-self: flex-end; }
+}

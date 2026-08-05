@@ -14,6 +14,8 @@ class MonitorPlugin(BasePlugin):
     author = "系统"
 
     hook_handlers = {}
+    # 初始浮窗宽度：三栏布局（网络 | 磁盘 | AI 结论）需要更宽；高度由内容自适应
+    initial_size = {"width": 1100}
 
     CONFIG_NAME = "monitor_config.json"
 
@@ -23,7 +25,7 @@ class MonitorPlugin(BasePlugin):
         self._running = False
 
     def on_load(self):
-        """加载配置（配置文件位于插件目录 config/monitor_config.json）"""
+        """加载配置 + 注册 MCP 监控结果观察者（观察者模式）"""
         try:
             config_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "config", self.CONFIG_NAME
@@ -36,6 +38,17 @@ class MonitorPlugin(BasePlugin):
         except Exception as e:
             print(f"[MonitorPlugin] [WARN] 加载配置失败: {e}")
             self._cfg = {}
+
+        # 订阅插件结果（plugin_result）— 经 PluginBus，插件不依赖 MCPDispatcher
+        try:
+            from core.plugin_bus import PluginBus
+            from .model.monitor_observer import MonitorObserver
+
+            self._mcp_observer = MonitorObserver()
+            PluginBus.subscribe("plugin_result", self._mcp_observer.update)
+            print("[MonitorPlugin] ✅ 已订阅 plugin_result（经 PluginBus）")
+        except Exception as e:
+            print(f"[MonitorPlugin] ⚠️ 订阅 plugin_result 失败: {e}")
 
     async def run(self, context=None):
         """插件异步入口 - 轻量常驻循环"""

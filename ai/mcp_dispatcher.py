@@ -6,13 +6,23 @@ import asyncio
 import json
 from typing import Dict, Callable, Awaitable
 
+from core.plugin_bus import PluginBus
+
 
 class MCPDispatcher:
-    """MCP 工具调度器 - 负责将 MCP 工具调用路由到正确的 MCPHost"""
+    """MCP 工具调度器（Producer） - 执行工具成功后将结果发布到 PluginBus"""
 
     def __init__(self):
         self._handlers: Dict[str, Callable[[dict], Awaitable[str]]] = {}
         self._timeout: float = 60.0
+
+    # ================= 结果发布 =================
+    def _publish_result(self, tool_name, server_id, result):
+        """工具执行成功后经 PluginBus 发布「插件结果」事件（生产者不感知消费者）"""
+        try:
+            PluginBus.publish("plugin_result", tool_name, server_id or "", result)
+        except Exception as e:
+            print(f"[MCPDispatcher] ⚠️ 发布 plugin_result 失败: {e}")
 
     def register(self, name: str, handler: Callable[[dict], Awaitable[str]]):
         self._handlers[name] = handler
@@ -67,7 +77,9 @@ class MCPDispatcher:
             try:
                 result = await asyncio.wait_for(handler(arguments), timeout=self._timeout)
                 print(f"[MCPDispatcher] ✅ '{tool_name}' 执行成功")
-                return str(result)
+                result_str = str(result)
+                self._publish_result(tool_name, "", result_str)
+                return result_str
             except asyncio.TimeoutError:
                 print(f"[MCPDispatcher] ❌ '{tool_name}' 超时")
                 return f"❌ MCP 工具 '{tool_name}' 执行超时"
@@ -99,7 +111,9 @@ class MCPDispatcher:
                         timeout=self._timeout
                     )
                     print(f"[MCPDispatcher] ✅ '{tool_name}' 通过 MCPHost 执行成功")
-                    return str(result)
+                    result_str = str(result)
+                    self._publish_result(tool_name, client.server_id, result_str)
+                    return result_str
                 except AttributeError as e:
                     print(f"[MCPDispatcher] ❌ 客户端 '{type(client).__name__}' 缺少方法: {e}")
                     # 降级：尝试直接通过 host.execute_tool
@@ -110,7 +124,9 @@ class MCPDispatcher:
                             ),
                             timeout=self._timeout
                         )
-                        return str(result)
+                        result_str = str(result)
+                        self._publish_result(tool_name, client.server_id, result_str)
+                        return result_str
                     except Exception as e2:
                         return f"❌ MCP 工具 '{tool_name}' 调用失败: {str(e2)}"
                 except asyncio.TimeoutError:
@@ -126,7 +142,9 @@ class MCPDispatcher:
                     ),
                     timeout=self._timeout
                 )
-                return str(result)
+                result_str = str(result)
+                self._publish_result(tool_name, "linux_monitor", result_str)
+                return result_str
             except asyncio.TimeoutError:
                 return f"❌ MCP 工具 '{tool_name}' 执行超时"
             except Exception as e:

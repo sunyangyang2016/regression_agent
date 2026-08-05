@@ -17,6 +17,8 @@ class BasePlugin(ABC):
     # 声明：本插件需要 hook 的事件 → 本插件内的处理方法
     # handler 统一签名：handler(payload_json: str) -> str(JSON)
     hook_handlers: Dict[str, str] = {}
+    # 可选：插件浮窗初始尺寸（{"width": 1100, "height": 680}）；None 则用框架默认 560px
+    initial_size: Optional[Dict[str, int]] = None
 
     def __init__(self):
         self._enabled = True
@@ -117,6 +119,7 @@ class BasePlugin(ABC):
             "enabled": self._enabled,
             "hook_handlers": list(self.hook_handlers.keys()),
             "config_ui": self.get_config_ui(),
+            "initial_size": self.initial_size,
         }
 
 

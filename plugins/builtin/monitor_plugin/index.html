@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>系统监控 · 进程内存与线程</title>
+</head>
+<body>
+<div class="mon-dashboard">
+
+    <!-- 数据源标记 -->
+    <div class="mon-data-source" id="monDataSourceLabel" style="display:none;"></div>
+
+    <!-- 远程监控源不可用覆盖层 -->
+    <div class="mon-unavailable-overlay" id="monUnavailableOverlay" style="display:none;"></div>
+
+    <!-- 异常提醒历史列表（保留面板，供用户展开查看） -->
+    <div class="mon-alert-panel" id="monAlertPanel" style="display:none;">
+        <div class="mon-alert-panel-header">
+            <span><i class="fas fa-exclamation-triangle"></i> 异常提醒</span>
+            <span class="mon-alert-panel-actions">
+                <button class="mon-alert-clear-btn" onclick="clearMonitorAlerts()" title="清空提醒"><i class="fas fa-trash-alt"></i></button>
+                <button class="mon-alert-close-btn" onclick="toggleAlertPanel(false)" title="收起">✕</button>
+            </span>
+        </div>
+        <div class="mon-alert-list" id="monAlertList"></div>
+    </div>
+
+    <!-- 四指标卡片 -->
+    <div class="mon-grid">
+        <div class="mon-card">
+            <div class="mon-card-header"><span><i class="fas fa-microchip"></i> CPU</span><i class="fas fa-chart-line mon-card-icon"></i></div>
+            <div class="mon-metric" id="monCpuValue">0.0<small>%</small></div>
+            <div class="mon-progress-track"><div class="mon-progress-fill fill-green" id="monCpuBar" style="width:0%;"></div></div>
+            <div class="mon-sub-info"><span id="monCpuFreq">0 GHz</span><span id="monCpuCores">0 核</span></div>
+        </div>
+        <div class="mon-card">
+            <div class="mon-card-header"><span><i class="fas fa-memory"></i> 内存</span><i class="fas fa-chart-pie mon-card-icon"></i></div>
+            <div class="mon-metric" id="monMemValue">0.0 <small>GB</small></div>
+            <div class="mon-progress-track"><div class="mon-progress-fill fill-yellow" id="monMemBar" style="width:0%;"></div></div>
+            <div class="mon-sub-info"><span id="monMemTotal">总 0 GB</span><span id="monMemUsed">已用 0 GB</span></div>
+        </div>
+        <div class="mon-card">
+            <div class="mon-card-header"><span><i class="fas fa-hdd"></i> 磁盘 I/O</span><i class="fas fa-exchange-alt mon-card-icon"></i></div>
+            <div class="mon-metric" id="monDiskValue">0 <small>MB/s</small></div>
+            <div class="mon-progress-track"><div class="mon-progress-fill fill-pink" id="monDiskBar" style="width:0%;"></div></div>
+            <div class="mon-sub-info"><span id="monDiskRead">读 0 MB/s</span><span id="monDiskWrite">写 0 MB/s</span></div>
+        </div>
+        <div class="mon-card">
+            <div class="mon-card-header"><span><i class="fas fa-wifi"></i> 网络</span><i class="fas fa-globe mon-card-icon"></i></div>
+            <div class="mon-metric" id="monNetValue">0 <small>Mbps</small></div>
+            <div class="mon-progress-track"><div class="mon-progress-fill fill-purple" id="monNetBar" style="width:0%;"></div></div>
+            <div class="mon-sub-info"><span id="monNetRx">下行 0</span><span id="monNetTx">上行 0</span></div>
+        </div>
+    </div>
+
+    <!-- 进程资源详情（整行） -->
+    <div class="mon-card-large">
+        <div class="mon-card-title"><i class="fas fa-tasks"></i> 进程资源详情 <span class="mon-badge"><i class="far fa-circle"></i> 实时</span></div>
+        <div class="mon-process-list" id="monProcessList">
+            <div class="mon-loading">加载中…</div>
+        </div>
+        <div class="mon-summary-bar" id="monSummaryBar">
+            <span><i class="fas fa-microchip"></i> CPU 总计: 0%</span>
+            <span><i class="fas fa-memory"></i> 内存总计: 0%</span>
+            <span><i class="fas fa-database"></i> RSS 总计: 0M</span>
+            <span><i class="fas fa-fork"></i> 线程总计: 0</span>
+        </div>
+    </div>
+
+    <!-- 双栏: 网络流量 + 磁盘使用（同行） -->
+    <div class="mon-row-duo">
+        <!-- 左侧：网络流量 + 负载 -->
+        <div class="mon-card-large">
+            <div class="mon-card-title"><i class="fas fa-network-wired"></i> 网络流量</div>
+            <div class="mon-net-stats">
+                <div>
+                    <div class="mon-net-item"><span class="mon-net-label"><i class="fas fa-arrow-down" style="color:#4c9fdc;"></i> 接收</span> <span class="mon-net-value" id="monNetRxValue">0 B/s</span></div>
+                    <div class="mon-net-bar-bg"><div class="mon-net-bar-fill" id="monNetRxBar" style="width:0%; background:#4c9fdc;"></div></div>
+                </div>
+                <div>
+                    <div class="mon-net-item"><span class="mon-net-label"><i class="fas fa-arrow-up" style="color:#d68b5c;"></i> 发送</span> <span class="mon-net-value" id="monNetTxValue">0 B/s</span></div>
+                    <div class="mon-net-bar-bg"><div class="mon-net-bar-fill" id="monNetTxBar" style="width:0%; background:#d68b5c;"></div></div>
+                </div>
+                <div class="mon-net-footer">
+                    <span id="monNetConns"><i class="fas fa-flag"></i> 连接数: 0</span>
+                    <span id="monUptime"><i class="fas fa-clock"></i> 运行: 0d 0h</span>
+                </div>
+            </div>
+            <!-- 负载 -->
+            <div class="mon-load-box">
+                <div class="mon-load-row" id="monLoadRow">
+                    <span><i class="fas fa-tachometer-alt"></i> 1min: 0.00</span>
+                    <span><i class="fas fa-tachometer-alt"></i> 5min: 0.00</span>
+                    <span><i class="fas fa-tachometer-alt"></i> 15min: 0.00</span>
+                </div>
+                <div class="mon-load-sub" id="monHostInfo">
+                    <span><i class="fas fa-server"></i> <span id="monHostname">localhost</span></span>
+                    <span><i class="fas fa-tasks"></i> 进程 <span id="monProcCount">0</span></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中间：磁盘使用 -->
+        <div class="mon-card-large">
+            <div class="mon-card-title"><i class="fas fa-hdd"></i> 磁盘使用</div>
+            <div class="mon-disk-grid" id="monDiskGrid">
+                <div class="mon-disk-loading">加载中…</div>
+            </div>
+            <div class="mon-disk-footer">
+                <span id="monFsType"><i class="fas fa-check-circle" style="color:#3dd68c;"></i> 文件系统正常</span>
+                <span><i class="fas fa-sync-alt"></i> 自动刷新 <span id="monRefreshInterval">3</span>s</span>
+            </div>
+        </div>
+
+        <!-- 右侧：AI 结论 -->
+        <div class="mon-card-large">
+            <div class="mon-card-title"><i class="fas fa-clipboard-check"></i> AI 监控结论</div>
+            <div class="mon-conclusion-box">
+                <div class="mon-conclusion-text" id="monConclusionText">等待 AI 分析结论…</div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

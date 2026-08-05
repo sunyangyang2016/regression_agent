@@ -1,0 +1,12 @@
+{
+  "refresh_interval": 3,
+  "max_processes": 8,
+  "alert": {
+    "max_history": 50,
+    "disk_warn_pct": 85,
+    "disk_critical_pct": 95,
+    "load_critical_ratio": 1.0,
+    "max_consecutive_failures": 3,
+    "sensitive_ports": [3306, 5432, 6379, 27017]
+  }
+}
