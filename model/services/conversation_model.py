@@ -74,7 +74,8 @@ class ConversationModel(QObject):
     # 消息管理
     # ==========================================
 
-    def save_message(self, role: str, content: str, round_no: int = None, marker: str = None):
+    def save_message(self, role: str, content: str, round_no: int = None, marker: str = None,
+                     token_count: int = 0):
         """保存消息到数据库
 
         Args:
@@ -82,6 +83,8 @@ class ConversationModel(QObject):
             content: 消息内容
             round_no: 可选，AI 轮次序号（多轮工具调用时的轮次标记）
             marker: 可选，轮次标记（tool_call=工具调用轮 / final=最终完成轮）
+            token_count: 该条消息对应的 token 数。assistant 消息为 API 返回的
+                input+output 总 token（= 下一次发送前的 context 增量）；user 消息默认 0
         """
         if not self._current_conversation_id:
             return
@@ -93,6 +96,7 @@ class ConversationModel(QObject):
             content=content,
             round_no=round_no,
             marker=marker,
+            token_count=token_count,
             created_at=now
         )
         with self._save_lock:
@@ -106,15 +110,58 @@ class ConversationModel(QObject):
         
         self.message_added.emit(self._current_conversation_id, role, content)
 
-    def load_conversation_messages(self, conversation_id: str):
-        """加载指定对话的所有消息"""
-        with self._save_lock:
-            msgs = self._msg_repo.find_by_conversation(conversation_id)
-        
+    def load_conversation_messages(self, conversation_id: str, max_context: int = None):
+        """加载指定对话的消息（AI 上下文用，应用滑动窗口限制）
+
+        加载策略：
+        1. system 日志（prompt）全部保留，始终放在最前
+        2. 对话消息从最新往回逐条迭代，累加每条 token_count
+           （assistant 的 token_count = input+output，代表了该轮 context 增量），
+           直到超过 max_context × 90% 预算即停止（更旧的不返回）
+        3. 重组：system（最前）+ 最新对话（后面）
+
+        Args:
+            conversation_id: 会话 ID
+            max_context: 模型上下文最大容量，None 时默认 65536
+        """
+        # system 日志全部保留（数量少，一次取）
+        system_msgs = self._msg_repo.find_system_by_conversation(conversation_id)
+
+        # 从最新往回逐条迭代对话消息，累加 token_count，超预算即停
+        budget = int((max_context or 65536) * 0.9)
+        kept = []
+        cumulative = 0
+        for m in self._msg_repo.iter_dialogue(conversation_id, order="DESC"):
+            tok = m.token_count or 0
+            if kept and cumulative + tok > budget:
+                break  # 超预算，不再取更旧的
+            kept.insert(0, m)  # 保持时间正序
+            cumulative += tok
+
+        # 重组：system（最前）+ 最新对话（后面）
+        result = system_msgs + kept
+
         self._current_conversation_id = conversation_id
         self._current_user_content = None
         self.current_conversation_changed.emit(conversation_id)
-        
+
+        return [
+            {"role": m.role, "content": m.content, "time": m.created_at.isoformat() if m.created_at else ""}
+            for m in result
+        ]
+
+    def load_latest_messages(self, conversation_id: str, offset: int = 0, limit: int = 100):
+        """分页加载该会话最新对话消息（UI 显示用，不含 system prompt）
+
+        Args:
+            conversation_id: 会话 ID
+            offset: 偏移量（0 = 最新一页；大于 0 表示加载更早的历史）
+            limit: 每页条数
+
+        Returns:
+            [{role, content, time}, ...] 时间正序
+        """
+        msgs = self._msg_repo.find_latest_paged(conversation_id, offset=offset, limit=limit)
         return [
             {"role": m.role, "content": m.content, "time": m.created_at.isoformat() if m.created_at else ""}
             for m in msgs

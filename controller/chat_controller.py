@@ -21,7 +21,6 @@ class ChatController(QObject):
     complete_message = pyqtSignal(str)
     set_processing = pyqtSignal(bool)
     show_error = pyqtSignal(str)
-    add_tool_call = pyqtSignal(str, str)
     token_update = pyqtSignal(str)
     log_entry = pyqtSignal(str)
 
@@ -45,6 +44,8 @@ class ChatController(QObject):
         self._session_hit_tokens = 0
         self._session_miss_tokens = 0
         self._session_output_tokens = 0
+        # 当前 AI 工具调用轮次（由 _on_round 同步更新，用于 tool 消息归档到对应轮次）
+        self._current_round_no: Optional[int] = None
         # 发起 AI 调用时的会话 ID（用于回调时校验，防止跨会话写入 →「会话串了」）
         self._active_conversation_id: Optional[str] = None
 
@@ -104,6 +105,12 @@ class ChatController(QObject):
             self.model_config.get("api", "model") or "deepseek-chat"
         )
 
+        # ====== 发送前：基于真实累计 token 触发滑动/压缩 ======
+        # 滑动判断用 API 真实累计（_session_total_tokens），与 UI 百分比一致。
+        # 超 90% 时对 ai_controller.messages 执行滑动（保留最新 50% 对话、system 最前），
+        # 并同步更新 _session_total_tokens 与 UI 百分比。
+        self._apply_context_window_before_send()
+
         # 记录发起 AI 调用的会话 ID（用于回调时校验，防止跨会话写入 →「会话串了」）
         self._active_conversation_id = self.conversation_model.current_conversation_id
 
@@ -137,6 +144,53 @@ class ChatController(QObject):
 
         threading.Thread(target=do_ai_call, daemon=True).start()
 
+    def _apply_context_window_before_send(self):
+        """发送消息前基于真实累计 token 判断并执行滑动/压缩
+
+        根因修复：之前滑动判断在 stream_handler 内用 TokenCounter 估算内存消息，
+        与 UI 显示的 API 真实累计 token（_session_total_tokens）不联动，
+        导致界面已超 112% 但滑动估算值仍未达阈值 → 滑动从未触发。
+
+        现在：
+        1. 用 _session_total_tokens（API 真实累计，与 UI 百分比一致）判断是否超 90%
+        2. 超限时用 ContextWindowManager 对 ai_controller.messages 滑动
+           （保留最新 50% 对话、system prompt 最前）
+        3. 滑动结果同步更新 _session_total_tokens 并重推 UI 百分比
+        """
+        try:
+            max_ctx = self._get_max_context()
+            threshold = int(max_ctx * 0.9)
+            # 未超阈值不处理（也避免首次无数据时误触发）
+            if self._session_total_tokens <= threshold:
+                return
+
+            from ai.context_window import ContextWindowManager
+            mgr = ContextWindowManager(max_context=max_ctx)
+            # 用 force_slide：真实累计已超限，跳过 TokenCounter 估算触发判断，
+            # 直接按 keep_ratio(50%) 保留最新对话、system prompt 最前
+            new_messages, stats = mgr.force_slide(self.ai_controller.messages)
+            if not stats.get("triggered"):
+                return
+            # 应用滑动结果到 AI 上下文
+            self.ai_controller.messages = new_messages
+            # 滑动后 context 占用按保留比例估算（真实累计 × keep_ratio），同步 UI 百分比
+            removed_units = stats.get("removed_units", 0)
+            kept_ratio = stats.get("keep_ratio", 0.5)
+            self._session_total_tokens = int(self._session_total_tokens * kept_ratio)
+            max_ctx = self._get_max_context()
+            ctx_pct = (self._session_total_tokens / max_ctx) * 100
+            self.push_token_stats(
+                self._session_total_tokens,
+                self._session_hit_tokens + self._session_miss_tokens,
+                self._session_output_tokens, ctx_pct,
+                self._session_total_cost, max_ctx,
+                self._session_hit_tokens, self._session_miss_tokens
+            )
+            print(f"{LOG} ⚠️ 发送前触发滑动: 移除 {stats['removed_units']} 个旧对话单元, "
+                  f"保留最新 {stats['kept_units']} 个单元 (keep_ratio={stats['keep_ratio']}), prompt 保留")
+        except Exception as e:
+            print(f"{LOG} ⚠️ 发送前滑动窗口检查失败: {e}")
+
     def _interrupt_current_generation(self):
         """中断当前正在进行的 AI 回复（保留已生成的部分内容）"""
         try:
@@ -150,6 +204,41 @@ class ChatController(QObject):
             return
         print(f"{LOG} ⏹ 用户请求停止 AI 回复")
         self._interrupt_current_generation()
+
+    def handle_compress_context(self):
+        """处理用户主动点击「压缩上下文」按钮"""
+        if not self.ai_controller.connected:
+            self.show_error.emit("AI 客户端未连接，无法压缩上下文")
+            return
+        try:
+            stats = self.ai_controller.compress_context()
+            if stats.get("triggered"):
+                # 压缩已生效：同步会话累计 token 与 UI 百分比
+                after_tokens = stats.get("after_tokens", 0)
+                if after_tokens and after_tokens < self._session_total_tokens:
+                    self._session_total_tokens = after_tokens
+                max_ctx = self._get_max_context()
+                ctx_pct = (self._session_total_tokens / max_ctx) * 100
+                self.push_token_stats(
+                    self._session_total_tokens,
+                    self._session_hit_tokens + self._session_miss_tokens,
+                    self._session_output_tokens, ctx_pct,
+                    self._session_total_cost, max_ctx,
+                    self._session_hit_tokens, self._session_miss_tokens
+                )
+                msg = (f"✅ 上下文已压缩: {stats['before_tokens']} → "
+                       f"{stats['after_tokens']} tokens, 压缩 {stats['compressed_units']} 个旧对话单元")
+            else:
+                msg = f"ℹ️ 暂无需压缩: {stats.get('reason', '当前上下文无需压缩')}"
+            print(f"{LOG} {msg}")
+            if self.bridge:
+                import json as _json
+                self.bridge.execute_js(
+                    f"window.showToast({_json.dumps(msg, ensure_ascii=False)}, 'info');"
+                )
+        except Exception as e:
+            print(f"{LOG} ⚠️ 压缩上下文失败: {e}")
+            self.show_error.emit(f"压缩上下文失败: {e}")
 
     def _on_stream_cancelled(self, partial_content: str):
         """AI 流被中断：保存已生成的部分内容，恢复 UI"""
@@ -199,8 +288,16 @@ class ChatController(QObject):
                 pass
             self._active_conversation_id = None
 
-        messages = self.conversation_model.load_conversation_messages(conversation_id)
+        # ====== AI 上下文加载（应用滑动窗口限制：system + 最新 90%） ======
+        max_ctx = self._get_max_context()
+        messages = self.conversation_model.load_conversation_messages(
+            conversation_id, max_context=max_ctx
+        )
         self.ai_controller.reset_messages()
+        # ====== UI 显示加载（最新 100 条，分页滚动加载更早） ======
+        ui_messages = self.conversation_model.load_latest_messages(
+            conversation_id, offset=0, limit=100
+        )
         # 从数据库加载已保存的 token 数据（分类统计）
         token_stats = self.conversation_model.get_token_stats(conversation_id)
         self._session_total_tokens = token_stats["total"]
@@ -218,10 +315,16 @@ class ChatController(QObject):
                 self.ai_controller.messages.append({"role": "user", "content": content})
             elif role == "assistant":
                 self.ai_controller.messages.append({"role": "assistant", "content": content})
+            elif role == "tool":
+                # 历史工具调用消息：按时间正序加载，自然落在对应 assistant 轮次之后，
+                # 保持 OpenAI 协议配对（assistant(tool_calls) → tool）。
+                # 完整内容加载，不截断（用户明确要求工具调用「放入历史」）。
+                self.ai_controller.messages.append({"role": "tool", "content": content})
 
-        msgs_json = json.dumps(messages, ensure_ascii=False)
+        # 前端显示最新 100 条（不含 system prompt），更早的历史由滚动分页加载
+        ui_msgs_json = json.dumps(ui_messages, ensure_ascii=False)
         if self.bridge:
-            self.bridge.execute_js(f"loadConversationMessages({msgs_json});")
+            self.bridge.execute_js(f"loadConversationMessages({ui_msgs_json});")
             # 恢复会话的 token 统计显示（命中/未命中/输出 分类完整恢复）
             max_ctx = self._get_max_context()
             ctx_pct = (self._session_total_tokens / max_ctx) * 100
@@ -235,6 +338,23 @@ class ChatController(QObject):
 
         # ====== 加载该会话的历史 AI 通信日志 ======
         self._load_session_logs_from_db(conversation_id)
+
+    def load_more_messages(self, conversation_id: str, offset: int):
+        """滚动加载更早的历史消息（UI 顶部滚动触发）"""
+        try:
+            older = self.conversation_model.load_latest_messages(
+                conversation_id, offset=offset, limit=50
+            )
+            if not older:
+                if self.bridge:
+                    self.bridge.execute_js("window.onNoMoreHistory();")
+                return
+            if self.bridge:
+                self.bridge.execute_js(
+                    f"window.prependHistoryMessages({json.dumps(older, ensure_ascii=False)});"
+                )
+        except Exception as e:
+            print(f"{LOG} ⚠️ 滚动加载历史消息失败: {e}")
 
     # ==========================================
     # AI 通信日志持久化
@@ -427,9 +547,12 @@ class ChatController(QObject):
         except Exception as e:
             print(f"{LOG} ⚠️ 出站内容过滤失败: {e}")
 
-        # 使用提取的真实内容保存和显示
+        # 使用提取的真实内容保存和显示（token_count = input+output，代表该轮 context 增量）
         try:
-            self.conversation_model.save_message("assistant", content)
+            self.conversation_model.save_message(
+                "assistant", content,
+                token_count=input_tokens + output_tokens
+            )
             self.update_message.emit("", content)
             self.complete_message.emit("")
             self.set_processing.emit(False)
@@ -519,7 +642,12 @@ class ChatController(QObject):
         self._save_session_logs()
 
     def _on_round(self, round_json: str):
-        """接收 AI 每一轮的最终回复数据并写入 history_sessions_messages"""
+        """接收 AI 每一轮的回复数据并写入消息表
+
+        ⚠️ 只保存「工具调用中间轮」（marker = tool_call）。
+        最终回复（marker = final）由 _on_stream_complete 统一保存（含 token_count），
+        避免同一回复在 round 和 complete 两个事件中被重复写入数据库 → UI 显示两次。
+        """
         # ====== 会话 ID 校验：若当前会话已切换，忽略旧会话的 round 数据 ======
         if self._active_conversation_id is not None and \
            self._active_conversation_id != self.conversation_model.current_conversation_id:
@@ -529,10 +657,20 @@ class ChatController(QObject):
             round_no = int(data.get("round", 1))
             marker = data.get("marker", "final")
             text = data.get("text", "")
-            # 合并存储：将每轮 AI 回复写入消息表（带轮次序号和标记）
-            # round_no/marker 用于区分普通消息和 AI 轮次记录
+            # 同步当前工具调用轮次（供 _on_tool_call 归档 tool 消息使用）——先执行，
+            # 后续 return 分支也必须已更新轮次，保证工具消息归档正确
+            self._current_round_no = round_no
+            # final 轮不在此保存（_on_stream_complete 统一保存），避免重复
+            if marker == "final":
+                return
+            # 工具调用前的中间轮若无文本内容则不写历史（多轮工具调用的第一轮模型
+            # 只发 tool_calls 没有输出文本，无条件保存会产生空 assistant 记录 → 会话
+            # 加载时显示空白 AI 气泡，视觉上像「问了两次」）
+            if not text or not text.strip():
+                return
+            # 仅保存工具调用中间轮（多轮工具调用过程记录）
             self.conversation_model.save_message("assistant", text, round_no=round_no, marker=marker)
-            print(f"{LOG} 💾 AI 第 {round_no} 轮回复已写入消息表（标记: {marker}）")
+            print(f"{LOG} 💾 AI 第 {round_no} 轮工具调用回复已写入消息表（标记: {marker}）")
         except Exception as e:
             print(f"{LOG} ⚠️ 保存 AI 轮次数据失败: {e}")
 
@@ -552,26 +690,51 @@ class ChatController(QObject):
         self._is_generating = False
 
     def _on_tool_call(self, tool_name: str, arguments_json: str, result: str):
+        # ====== 会话 ID 校验：已切换会话时丢弃旧会话的工具调用归档，防止「会话串了」 ======
+        if self._active_conversation_id is not None and \
+           self._active_conversation_id != self.conversation_model.current_conversation_id:
+            print(f"{LOG} ⏹ 忽略跨会话工具调用归档（发起会话={self._active_conversation_id}, 当前={self.conversation_model.current_conversation_id}）")
+            self._active_conversation_id = None
+            return
+
+        # ====== 组装可读的工具调用文本（完整保留工具名/参数/结果，不截断） ======
+        try:
+            if isinstance(arguments_json, str):
+                try:
+                    args = json.loads(arguments_json)
+                    args_str = json.dumps(args, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    args_str = "{}"
+            elif isinstance(arguments_json, (dict, list)):
+                args_str = json.dumps(arguments_json, ensure_ascii=False)
+            else:
+                args_str = "{}"
+
+            result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else (result or "")
+            tool_content = f"🔧 工具调用: {tool_name}\n参数: {args_str}\n结果: {result_str}"
+        except Exception as e:
+            print(f"{LOG} ⚠️ 解析工具调用参数失败: {e}")
+            tool_content = f"🔧 工具调用: {tool_name}\n结果: {result or ''}"
+
+        # ====== 工具调用归档到历史（数据库持久化） ======
+        # 目的：工具调用信息「放入历史」，会话切换后仍可查看完整调用记录。
+        try:
+            self.conversation_model.save_message(
+                "tool", tool_content,
+                round_no=self._current_round_no,
+            )
+            print(f"{LOG} 💾 工具调用已归档到历史: {tool_name} (round={self._current_round_no})")
+        except Exception as e:
+            print(f"{LOG} ⚠️ 保存工具调用到历史失败: {e}")
+
+        # ====== 前端 tool 消息展示 ======
+        # 以 tool 消息样式显示（🔧 工具 + monospace 内容），并插入到 AI 回答之前，
+        # 与历史加载样式统一，不再使用 onAddToolCall 的「工具调用」卡片样式。
         if self.bridge:
             try:
-                if isinstance(arguments_json, str):
-                    try:
-                        args = json.loads(arguments_json)
-                        args_str = json.dumps(args, ensure_ascii=False)
-                    except json.JSONDecodeError:
-                        args_str = "{}"
-                elif isinstance(arguments_json, (dict, list)):
-                    args_str = json.dumps(arguments_json, ensure_ascii=False)
-                else:
-                    args_str = "{}"
-
-                safe_name = tool_name.replace("\\", "\\\\").replace("'", "\\'")
-                safe_args = args_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")[:1000]
-                safe_result = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
-                safe_result = safe_result.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")[:500]
-
-                js = f"window.onAddToolCall('{safe_name}', '{safe_args}', '{safe_result}');"
-                self.bridge.execute_js(js)
+                self.bridge.execute_js(
+                    f"window.chatApp.insertToolMessage({json.dumps(tool_content, ensure_ascii=False)});"
+                )
             except Exception as e:
                 print(f"{LOG} ❌ 显示工具调用失败: {e}")
 

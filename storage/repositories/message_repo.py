@@ -124,6 +124,45 @@ class MessageRepository:
         """按会话 ID 查找所有消息（兼容旧名，同 get_by_session）"""
         return self.get_by_session(conversation_id)
 
+    def find_system_by_conversation(self, conversation_id: str) -> List[ChatMessage]:
+        """按会话 ID 只查 system 日志（prompt，数量少）"""
+        rows = self.db.query(
+            f"SELECT * FROM {self.TABLE} WHERE session_id = ? AND role = 'system' ORDER BY created_at ASC",
+            (conversation_id,),
+        )
+        return [ChatMessage.from_dict(self._deserialize(r)) for r in rows]
+
+    def iter_dialogue(self, conversation_id: str, order: str = "DESC"):
+        """逐条迭代该会话的对话消息（非 system），支持提前终止
+
+        使用游标 fetchone 逐行取，不一次性加载到内存。
+        调用方在达到预算后 break 即可提前终止，释放游标。
+        """
+        conn = self.db.connect()
+        try:
+            cursor = conn.execute(
+                f"SELECT * FROM {self.TABLE} WHERE session_id = ? AND role != 'system' "
+                f"ORDER BY created_at {order}",
+                (conversation_id,),
+            )
+            while True:
+                row = cursor.fetchone()
+                if row is None:
+                    break
+                yield ChatMessage.from_dict(self._deserialize(dict(row)))
+        finally:
+            self.db.release_conn(conn)
+
+    def find_latest_paged(self, conversation_id: str, offset: int = 0, limit: int = 100) -> List[ChatMessage]:
+        """SQL 分页查询该会话最新 limit 条（offset=0 最新一页）"""
+        rows = self.db.query(
+            f"SELECT * FROM {self.TABLE} WHERE session_id = ? AND role != 'system' "
+            f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (conversation_id, limit, offset),
+        )
+        # 倒序（最新在前）翻转成正序（最早在前）便于 UI 渲染
+        return [ChatMessage.from_dict(self._deserialize(r)) for r in reversed(rows)]
+
     def count_by_session(self, session_id: str) -> int:
         """统计某会话的消息数"""
         return self.db.query_value(

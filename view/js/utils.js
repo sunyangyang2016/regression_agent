@@ -2,9 +2,36 @@
 // Utils - 通用工具函数
 // ============================================
 function showToast(msg,type){var t=document.getElementById('toast'),m=document.getElementById('toastMessage');t.className='toast show '+type;m.textContent=msg;setTimeout(function(){t.classList.remove('show');},2000);}
-function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('active');}
-document.getElementById('sidebarOverlay').addEventListener('click',function(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('active');});
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){closePanel();document.getElementById('sidebar').classList.remove('open');}});
+function toggleSidebar(){
+    var sidebar = document.getElementById('sidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (!sidebar) return;
+    if (window.innerWidth <= 768) {
+        sidebar.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('active');
+    } else {
+        var isCollapsed = sidebar.classList.toggle('collapsed');
+        var headerMenuBtn = document.querySelector('.header-menu-btn');
+        if (headerMenuBtn) headerMenuBtn.style.display = isCollapsed ? 'block' : 'none';
+    }
+}
+document.getElementById('sidebarOverlay').addEventListener('click',function(){
+    var sidebar = document.getElementById('sidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) { sidebar.classList.remove('open'); sidebar.classList.remove('collapsed'); }
+    if (overlay) overlay.classList.remove('active');
+    var headerMenuBtn = document.querySelector('.header-menu-btn');
+    if (headerMenuBtn && window.innerWidth > 768) headerMenuBtn.style.display = 'none';
+});
+document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){
+        closePanel();
+        var sidebar = document.getElementById('sidebar');
+        if (sidebar) { sidebar.classList.remove('open'); sidebar.classList.remove('collapsed'); }
+        var headerMenuBtn = document.querySelector('.header-menu-btn');
+        if (headerMenuBtn && window.innerWidth > 768) headerMenuBtn.style.display = 'none';
+    }
+});
 function toggleAttachment(){showToast('附件功能开发中','info');}
 function toggleCodeBlock(){showToast('代码块功能开发中','info');}
 function showMCPStatus(){showToast('MCP 状态: '+appState.mcpServers.filter(function(s){return s.enabled;}).length+' 个服务器','info');}

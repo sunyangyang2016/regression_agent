@@ -159,6 +159,17 @@ window.chatApp = {
         }
     },
 
+    // 压缩当前会话上下文（用户主动触发）
+    compressContext: function() {
+        console.log('[chatApp] 用户点击压缩上下文按钮');
+        if (window.py_bridge && typeof window.py_bridge.compressContext === 'function') {
+            try { window.py_bridge.compressContext(); }
+            catch(e) { console.error('[chatApp] compressContext 失败:', e); }
+        } else {
+            if (typeof showToast === 'function') showToast('桥接未就绪，无法压缩上下文', 'error');
+        }
+    },
+
     _simulateResponse: function() {
         var self = this;
         var msgId = this._currentAssistantId;
@@ -201,6 +212,35 @@ window.chatApp = {
         container.appendChild(div);
         this._scrollToBottom();
         this.messages.push({id:id,role:role,content:content||''});
+        return id;
+    },
+
+    // 插入工具调用消息：显示在 AI 回答之前（若存在 assistant 气泡则插到其前面）
+    insertToolMessage: function(content) {
+        var container = document.getElementById('chatMessages');
+        if (!container) return null;
+        var id = 'msg_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
+        var div = document.createElement('div');
+        div.className = 'message tool';
+        div.innerHTML = '<div class="message-avatar tool"><i class="fas fa-plug"></i></div>' +
+            '<div class="message-content">' +
+            '<div class="message-header"><span class="message-role">🔧 工具</span>' +
+            '<span class="message-time">'+new Date().toLocaleTimeString()+'</span></div>' +
+            '<div class="message-body" id="'+id+'" style="font-family:monospace;font-size:12px;background:var(--bg-tertiary);padding:8px 12px;border-radius:var(--radius-sm);white-space:pre-wrap;word-break:break-all;">'+content+'</div></div>';
+
+        // 若存在 AI assistant 气泡，插入到其之前（工具显示在 AI 回答上方）
+        var assistantEl = null;
+        if (this._currentAssistantId) {
+            var el = document.getElementById(this._currentAssistantId);
+            if (el && el.closest) assistantEl = el.closest('.message');
+        }
+        if (assistantEl) {
+            container.insertBefore(div, assistantEl);
+        } else {
+            container.appendChild(div);
+        }
+        this._scrollToBottom();
+        this.messages.push({id:id, role:'tool', content:content||''});
         return id;
     },
 
@@ -345,36 +385,6 @@ window.onShowError = function(errorMsg) {
     }
     window.chatApp.completeMessage();
 };
-window.onAddToolCall = function(toolName, argsJson, result) {
-    var container = document.getElementById('chatMessages');
-    if (!container) return;
-    
-    // argsJson 可能是对象也可能是字符串，统一转成字符串处理
-    var argsStr = typeof argsJson === 'string' ? argsJson : JSON.stringify(argsJson);
-    
-    // ====== 过滤空参数或无意义的调用 ======
-    if ((!argsStr || argsStr === '{}') && (!result || result.length < 5)) return;
-    
-    var div = document.createElement('div');
-    div.style.cssText = 'background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px 16px;margin:8px 0;font-size:13px;';
-    
-    var html = '<div style="display:flex;align-items:center;gap:8px;color:var(--text-secondary);margin-bottom:6px;">';
-    html += '<i class="fas fa-plug" style="color:var(--accent-purple);"></i> <strong>工具调用:</strong> ' + toolName + '</div>';
-    if (argsJson) {
-        html += '<div style="font-family:monospace;background:var(--bg-secondary);padding:8px 12px;border-radius:var(--radius-sm);overflow-x:auto;margin-bottom:4px;color:var(--text-muted);font-size:12px;">参数: ' + argsJson + '</div>';
-    }
-    if (result && result.length >= 5) {
-        var displayResult = result.length > 500 ? result.substring(0, 500) + '...' : result;
-        html += '<div style="font-family:monospace;background:var(--bg-secondary);padding:8px 12px;border-radius:var(--radius-sm);overflow-x:auto;color:var(--text-primary);font-size:12px;white-space:pre-wrap;word-break:break-all;">📥 结果: ' + displayResult + '</div>';
-    }
-    div.innerHTML = html;
-    container.appendChild(div);
-    var scrollEl = document.querySelector('.chat-container');
-    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-    
-    window.chatApp._currentAssistantId = null;
-};
-
 // ============================================
 // 后端回调 — Token 更新
 // ============================================
@@ -397,6 +407,7 @@ function handleInputKeydown(e) {
 }
 function sendMessage() { window.chatApp.sendMessage(); }
 function stopAI() { window.chatApp.stopAI(); }
+function compressContext() { window.chatApp.compressContext(); }
 function newChat() {
     window.chatApp.newChat();
     // 通知后端创建新会话并刷新侧边栏

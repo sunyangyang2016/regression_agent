@@ -146,9 +146,6 @@ class AppController(QObject):
         cc.show_error.connect(
             lambda msg: self._bridge.on_show_error(msg)
         )
-        cc.add_tool_call.connect(
-            lambda name, args: self._bridge.on_add_tool_call(name, args)
-        )
         # 侧边栏列表更新时同步到前端（queue在主线程执行，防止AI线程冲突）
         self.conversation_model.conversation_list_changed.connect(
             lambda data: QTimer.singleShot(0, lambda: self._bridge.execute_js(

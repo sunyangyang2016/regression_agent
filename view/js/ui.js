@@ -71,7 +71,19 @@ function switchPanelTab(tab) {
     }
 }
 function closePanel(){document.getElementById('rightPanel').classList.remove('open');document.querySelectorAll('.header-btn').forEach(b=>b.classList.remove('active'));}
-function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('active');}
+function toggleSidebar(){
+    var sidebar = document.getElementById('sidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (!sidebar) return;
+    if (window.innerWidth <= 768) {
+        sidebar.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('active');
+    } else {
+        var isCollapsed = sidebar.classList.toggle('collapsed');
+        var headerMenuBtn = document.querySelector('.header-menu-btn');
+        if (headerMenuBtn) headerMenuBtn.style.display = isCollapsed ? 'block' : 'none';
+    }
+}
 function switchMCPSubTab(tab){
     console.log('[UI] switchMCPSubTab:', tab);
     document.querySelectorAll('.mcp-sub-tab').forEach(t=>t.classList.remove('active'));
@@ -118,27 +130,83 @@ function formatMessage(text) {
     text = text.replace(/(\d+\.\s)/g, '<span style="margin-left:2px;">$1</span>');
     return text;
 }
+// 分页加载状态（UI 顶部滚动加载更早历史用）
+var loadMoreState = { offset: 0, hasMore: true, loading: false };
+
+function renderMessageInto(container, msg) {
+    var role = msg.role || 'user';
+    var content = msg.content || '';
+    var time = msg.time || '';
+    var icons = {user:'fa-user', assistant:'fa-robot'};
+    var names = {user:'你', assistant: appState.currentModel?.name || 'AI'};
+    var div = document.createElement('div');
+    div.className = 'message ' + role;
+    div.innerHTML = '<div class="message-avatar '+role+'"><i class="fas '+(icons[role]||'fa-user')+'"></i></div>' +
+        '<div class="message-content">' +
+        '<div class="message-header"><span class="message-role">'+(names[role]||role)+'</span>' +
+        '<span class="message-time">'+time+'</span></div>' +
+        '<div class="message-body">'+formatMessage(content)+'</div></div>';
+    container.appendChild(div);
+}
+
 function loadConversationMessages(data) {
     var container = document.getElementById('chatMessages');
     if (!container) return;
     var welcome = document.getElementById('welcomeScreen');
     if (welcome) welcome.remove();
     container.innerHTML = '';
-    (data || []).forEach(function(msg) {
-        var role = msg.role || 'user';
-        var content = msg.content || '';
-        var time = msg.time || '';
-        var icons = {user:'fa-user', assistant:'fa-robot'};
-        var names = {user:'你', assistant: appState.currentModel?.name || 'AI'};
-        var div = document.createElement('div');
-        div.className = 'message ' + role;
-        div.innerHTML = '<div class="message-avatar '+role+'"><i class="fas '+(icons[role]||'fa-user')+'"></i></div>' +
-            '<div class="message-content">' +
-            '<div class="message-header"><span class="message-role">'+(names[role]||role)+'</span>' +
-            '<span class="message-time">'+time+'</span></div>' +
-            '<div class="message-body">'+formatMessage(content)+'</div></div>';
-        container.appendChild(div);
-    });
+    data = data || [];
+    data.forEach(function(msg) { renderMessageInto(container, msg); });
+    // 记录分页状态：offset = 已加载条数（下次加载更早的 50 条）
+    loadMoreState.offset = data.length;
+    loadMoreState.hasMore = true;
+    loadMoreState.loading = false;
     container.scrollTop = container.scrollHeight;
+}
+
+// 滚动加载更多历史：将更早的消息插入到聊天顶部，并保持滚动位置
+function prependHistoryMessages(olderData) {
+    var container = document.getElementById('chatMessages');
+    if (!container || !olderData || olderData.length === 0) return;
+    var scrollHeightBefore = container.scrollHeight;
+    var scrollTopBefore = container.scrollTop;
+    var frag = document.createDocumentFragment();
+    olderData.forEach(function(msg) { renderMessageInto(frag, msg); });
+    container.insertBefore(frag, container.firstChild);
+    loadMoreState.offset += olderData.length;
+    loadMoreState.loading = false;
+    // 保持用户当前位置（滚动的历史消息不跳动）
+    container.scrollTop = container.scrollHeight - scrollHeightBefore + scrollTopBefore;
+}
+
+// 没有更多历史时触发（后端调用）
+function onNoMoreHistory() {
+    loadMoreState.hasMore = false;
+    loadMoreState.loading = false;
+}
+
+// 聊天容器滚动处理：滚动到顶部时加载更早的历史（分页）
+function handleChatScroll(el) {
+    if (!el) return;
+    // 仅当接近顶部时才触发加载（scrollTop <= 30 容差）
+    if (el.scrollTop > 30) return;
+    if (!loadMoreState.hasMore || loadMoreState.loading) return;
+    loadMoreState.loading = true;
+    if (window.py_bridge && typeof window.py_bridge.loadMoreMessages === 'function') {
+        try {
+            var cid = window.currentChatId || '';
+            if (cid) {
+                console.log('[UI] 滚动到顶部，加载更早历史 offset=', loadMoreState.offset);
+                window.py_bridge.loadMoreMessages(cid, loadMoreState.offset);
+            } else {
+                loadMoreState.loading = false;
+            }
+        } catch(e) {
+            console.error('[UI] 加载更多历史失败:', e);
+            loadMoreState.loading = false;
+        }
+    } else {
+        loadMoreState.loading = false;
+    }
 }
 function syncConfig() {}

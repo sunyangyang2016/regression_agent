@@ -56,13 +56,15 @@ class AIStreamCallback:
 class ModelConfig:
     """模型配置"""
     def __init__(self, base_url: str = "", api_key: str = "", model: str = "",
-                 temperature: float = 0.7, max_tokens: int = 4096, stream: bool = True):
+                 temperature: float = 0.7, max_tokens: int = 4096, stream: bool = True,
+                 max_context: int = 65536):
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.stream = stream
+        self.max_context = max_context
     
     @classmethod
     def from_dict(cls, config: dict) -> "ModelConfig":
@@ -73,4 +75,5 @@ class ModelConfig:
             temperature=config.get("chat", {}).get("temperature", 0.7),
             max_tokens=config.get("chat", {}).get("max_tokens", 4096),
             stream=config.get("chat", {}).get("stream", True),
+            max_context=config.get("api", {}).get("max_context", 65536),
         )

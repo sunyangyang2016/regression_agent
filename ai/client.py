@@ -249,6 +249,12 @@ class AIClient:
         # 注入后 AI 可直接据此回答，不再绕行调用文件/目录操作工具。
         self._inject_tool_context_into_system(tools)
         
+        # 3.2 读取模型最大上下文容量（用于滑动窗口）
+        try:
+            max_context = self.model_config.get("api", "max_context") or 65536
+        except Exception:
+            max_context = 65536
+        
         # 4. 启动流式对话
         loop = self._get_or_create_loop()
         
@@ -257,7 +263,8 @@ class AIClient:
                 async for event in self.stream_handler.stream_chat(
                     messages=self.messages,
                     tools=tools,
-                    max_rounds=30
+                    max_rounds=30,
+                    max_context=max_context
                 ):
                     if event.type == "chunk":
                         if on_chunk:

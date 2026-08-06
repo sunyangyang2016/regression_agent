@@ -145,6 +145,26 @@ class AIController(QObject):
             system_prompt = self.model_config.get("chat", "system_prompt")
             self.messages[0] = {"role": "system", "content": system_prompt + context_text}
 
+    def compress_context(self, strategy="truncate"):
+        """手动压缩当前会话上下文（用户主动触发）
+
+        Returns:
+            dict: 压缩统计信息（{triggered, before_tokens, after_tokens, ...}）
+        """
+        try:
+            from ai.context_window import ContextWindowManager
+            max_ctx = self.model_config.get("api", "max_context") or 65536
+            mgr = ContextWindowManager(max_context=max_ctx)
+            new_messages, stats = mgr.compress(self.messages, strategy=strategy)
+            if stats.get("triggered"):
+                self.messages = new_messages
+                print(f"[ContextWindow] ⏳ 手动压缩完成: {stats['before_tokens']} → "
+                      f"{stats['after_tokens']} tokens, 压缩 {stats['compressed_units']} 个旧对话单元")
+            return stats
+        except Exception as e:
+            print(f"[ContextWindow] ❌ 手动压缩失败: {e}")
+            return {"triggered": False, "error": str(e)}
+
     def reset_messages(self):
         # 递增生成令牌：使旧 AI 任务的回调全部失效（防止旧回复写入新消息列表）
         self._generation_token += 1

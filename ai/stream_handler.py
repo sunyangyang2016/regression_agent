@@ -8,6 +8,7 @@ from typing import AsyncIterator, Optional, Callable
 from openai import AsyncOpenAI
 from ai.protocol import AIStreamEvent, ToolCallInfo, ModelConfig
 from ai.tool_names import resolve_original_name, sanitize_tools_for_api
+from ai.context_window import ContextWindowManager
 
 
 class StreamHandler:
@@ -29,6 +30,8 @@ class StreamHandler:
         self._progress_acc_output = 0
         self._progress_acc_hit = 0
         self._progress_acc_miss = 0
+        # 上下文滑动窗口管理器（延迟实例化，由 stream_chat 按需创建）
+        self.context_window: Optional[ContextWindowManager] = None
     
     def create_client(self):
         """创建异步客户端"""
@@ -136,6 +139,7 @@ class StreamHandler:
         messages: list,
         tools: Optional[list] = None,
         max_rounds: int = 30,
+        max_context: Optional[int] = None,
     ) -> AsyncIterator[AIStreamEvent]:
         """异步流式对话 - 支持多轮工具调用
         
@@ -143,6 +147,7 @@ class StreamHandler:
             messages: 消息列表（会被修改，追加新消息）
             tools: OpenAI tools 格式的工具定义
             max_rounds: 最大工具调用轮数
+            max_context: 模型上下文最大容量（token 数），启用后自动滑动窗口
         
         Yields:
             AIStreamEvent 事件
@@ -174,6 +179,19 @@ class StreamHandler:
                 print("[StreamHandler] ⏹ 检测到取消请求，退出流式对话")
                 yield AIStreamEvent(type="cancelled", data=collected_content)
                 return
+            
+            # ====== 上下文滑动窗口检查（自动触发） ======
+            if max_context:
+                if self.context_window is None or self.context_window.max_context != max_context:
+                    self.context_window = ContextWindowManager(max_context=max_context)
+                try:
+                    new_messages, stats = self.context_window.check_and_slide(current_messages)
+                    if stats.get("triggered"):
+                        print(f"[ContextWindow] ⚠️ 触发滑动窗口: {stats['before_tokens']} → "
+                              f"{stats['after_tokens']} tokens, 移除 {stats['removed_units']} 个旧对话单元, prompt 保留")
+                        current_messages = new_messages
+                except Exception as e:
+                    print(f"[ContextWindow] ⚠️ 滑动窗口检查失败: {e}")
             
             try:
                 # 第一轮调用

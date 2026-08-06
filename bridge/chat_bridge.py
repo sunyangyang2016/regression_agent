@@ -48,6 +48,18 @@ class ChatBridge(BridgeBase):
         if self.app_controller and hasattr(self.app_controller, 'chat_controller'):
             self.app_controller.chat_controller.handle_stop_ai()
 
+    @pyqtSlot()
+    def compressContext(self):
+        """压缩当前会话上下文（用户点击压缩按钮主动触发）"""
+        if self.app_controller and hasattr(self.app_controller, 'chat_controller'):
+            self.app_controller.chat_controller.handle_compress_context()
+
+    @pyqtSlot(str, int)
+    def loadMoreMessages(self, conversation_id, offset):
+        """分页加载更早的历史消息（UI 滚动到顶部时触发）"""
+        if self.app_controller and hasattr(self.app_controller, 'chat_controller'):
+            self.app_controller.chat_controller.load_more_messages(conversation_id, offset)
+
     @pyqtSlot(str)
     def loadConversation(self, conversation_id):
         """加载历史会话"""
@@ -116,6 +128,9 @@ class ChatBridge(BridgeBase):
 
         # 5. 重置标题更新标志（新会话首条回复生成新标题）
         cc._first_reply = True
+
+        # 5.1 重置当前工具调用轮次（防止旧会话的轮次标记串入新会话）
+        cc._current_round_no = None
 
         # 6. 推送归零的 token 统计到 UI
         try:
@@ -231,9 +246,3 @@ class ChatBridge(BridgeBase):
         """显示错误消息"""
         e = json.dumps(error_msg)
         self.execute_js(f"window.onShowError({e});")
-
-    def on_add_tool_call(self, tool_name: str, arguments_json: str):
-        """添加工具调用卡片"""
-        n = json.dumps(tool_name)
-        a = json.dumps(arguments_json)
-        self.execute_js(f"window.onAddToolCall({n}, {a});")

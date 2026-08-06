@@ -4,12 +4,31 @@
 
 // 侧边栏控制
 function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
-    document.getElementById('sidebarOverlay').classList.toggle('active');
+    var sidebar = document.getElementById('sidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (!sidebar) return;
+    if (window.innerWidth <= 768) {
+        // 移动端：切换 open class（通过 left 定位显示）
+        sidebar.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('active');
+    } else {
+        // 桌面端：切换 collapsed class（通过 margin-left 收起）
+        var isCollapsed = sidebar.classList.toggle('collapsed');
+        // 折叠后显示 header 中的展开按钮（☰），展开后隐藏
+        var headerMenuBtn = document.querySelector('.header-menu-btn');
+        if (headerMenuBtn) headerMenuBtn.style.display = isCollapsed ? 'block' : 'none';
+    }
 }
 function closeSidebar() {
-    document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('sidebarOverlay').classList.remove('active');
+    var sidebar = document.getElementById('sidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) {
+        sidebar.classList.remove('open');
+        sidebar.classList.remove('collapsed');
+    }
+    if (overlay) overlay.classList.remove('active');
+    var headerMenuBtn = document.querySelector('.header-menu-btn');
+    if (headerMenuBtn && window.innerWidth > 768) headerMenuBtn.style.display = 'none';
 }
 
 // 渲染对话列表
