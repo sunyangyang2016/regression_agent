@@ -89,6 +89,8 @@ window.chatApp = {
         var input = document.getElementById('messageInput');
         var content = input.value.trim();
         if (!content) return;
+        // 开新一轮对话：重置工具锚点（多轮工具调用时顺序插入用）
+        this._lastToolAnchor = null;
         // AI 回复中发送新消息：允许（后端会先中断旧回复再处理新消息）
         if (this.isProcessing) {
             console.log('[chatApp] AI 回复中，先中断旧回复再发送新消息');
@@ -219,7 +221,11 @@ window.chatApp = {
         return id;
     },
 
-    // 插入工具调用消息：显示在 AI 回答之前（若存在 assistant 气泡则插到其前面）
+    // 插入工具调用消息：
+    // 1) 若当前 assistant 气泡有中间文本（工具调用前的 AI 输出），封存为独立气泡并断开引用，
+    //    后续 AI 最终回答自动新建气泡 → 与会话历史保存的「中间轮 / tool / 最终」分开显示一致
+    // 2) 若当前 assistant 气泡为空（第一轮直接调工具），移除空气泡
+    // 3) 工具消息插入位置：封存气泡之后 / 上一 tool 之后 / 末尾
     insertToolMessage: function(content) {
         var container = document.getElementById('chatMessages');
         if (!container) return null;
@@ -235,17 +241,37 @@ window.chatApp = {
         // 注意：div 尚未插入 document，不能 document.getElementById，须用 div 子树查找
         div.querySelector('.message-body').textContent = content || '';
 
-        // 若存在 AI assistant 气泡，插入到其之前（工具显示在 AI 回答上方）
-        var assistantEl = null;
+        // ===== 封存当前 assistant 气泡 =====
+        var anchor = null;
         if (this._currentAssistantId) {
-            var el = document.getElementById(this._currentAssistantId);
-            if (el && el.closest) assistantEl = el.closest('.message');
+            var bodyEl = document.getElementById(this._currentAssistantId);
+            if (bodyEl) {
+                var msgEl = bodyEl.closest('.message');
+                if (msgEl) {
+                    if (!bodyEl.textContent.trim()) {
+                        // 气泡为空（第一轮直接调工具，无中间文本）：移除空气泡
+                        if (msgEl.parentNode) msgEl.parentNode.removeChild(msgEl);
+                    } else {
+                        // 有中间文本：封存为独立气泡，tool 插入其后
+                        anchor = msgEl;
+                    }
+                }
+            }
+            // 断开引用：后续 AI 输出（最终回答）自动新建气泡
+            this._currentAssistantId = null;
         }
-        if (assistantEl) {
-            container.insertBefore(div, assistantEl);
+
+        // ===== 工具消息插入位置 =====
+        if (anchor && anchor.parentNode) {
+            // 中间文本气泡之后（最终回答新建气泡会排在 tool 后）
+            anchor.parentNode.insertBefore(div, anchor.nextSibling);
+        } else if (this._lastToolAnchor && this._lastToolAnchor.parentNode) {
+            // 多个工具连续调用：保持顺序，插到上一个 tool 之后
+            this._lastToolAnchor.parentNode.insertBefore(div, this._lastToolAnchor.nextSibling);
         } else {
             container.appendChild(div);
         }
+        this._lastToolAnchor = div;
         this._scrollToBottom();
         this.messages.push({id:id, role:'tool', content:content||''});
         return id;
@@ -276,12 +302,14 @@ window.chatApp = {
         }
         this.isProcessing = false;
         this._currentAssistantId = null;
+        this._lastToolAnchor = null;
         this.setSendButtonStopMode(false);
         document.getElementById('sendBtn').disabled = false;
         document.getElementById('messageInput').focus();
     },
 
     newChat: function() {
+        this._lastToolAnchor = null;
         document.getElementById('chatTitle').textContent = '新对话';
         var html = '<div class="welcome-screen" id="welcomeScreen">' +
             '<div class="welcome-icon">🤖</div>' +
