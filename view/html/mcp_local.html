@@ -43,6 +43,7 @@
         </div>
         <div style="margin-top:16px;display:flex;gap:10px;">
             <button onclick="addLocalMCPServer()" style="padding:8px 20px;background:var(--accent-primary);color:white;border:none;border-radius:var(--radius-md);cursor:pointer;font-size:14px;"><i class="fas fa-plus"></i> 添加并启动</button>
+            <button id="localCancelEditBtn" onclick="cancelLocalEdit()" style="display:none;padding:8px 20px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:var(--radius-md);cursor:pointer;font-size:14px;"><i class="fas fa-times"></i> 取消编辑</button>
             <button onclick="clearLocalForm()" style="padding:8px 20px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:var(--radius-md);cursor:pointer;font-size:14px;"><i class="fas fa-undo"></i> 重置</button>
         </div>
     </div>
