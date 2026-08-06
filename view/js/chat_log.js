@@ -1,45 +1,116 @@
 // ============================================
 // chat_log.js - AI 通信日志模块（独立逻辑）
 // 负责日志悬浮窗渲染、拖动缩放、时间戳过滤
+// 性能优化：
+//  - 增量渲染：新日志到达时只 append 新 DOM，不重建整个列表
+//  - 默认折叠：日志条目只显示概要（方向/模型/时间/token），大 JSON 点击展开
+//  - 惰性加载：历史日志只渲染前 50 条，滚动到底部加载更多
 // ============================================
+
+// ============================================
+// 配置常量
+// ============================================
+var LOG_PAGE_SIZE = 50;          // 惰性加载每页条数
+var LOG_COLLAPSE_THRESHOLD = 1024; // JSON 小于此字节数时默认展开，大于则折叠
 
 // ============================================
 // 渲染单条日志条目
 // - type: "raw" → 底层 AI 通信原始完整 JSON（request/response）
+// 默认折叠：只显示概要头部，完整 JSON 默认折叠（显著减小初始 DOM 量）
 // ============================================
-function renderLogEntry(entry) {
-    var list = document.getElementById('logList');
-    if (!list) return;
-    var empty = list.querySelector('.log-empty');
-    if (empty) empty.remove();
+
+// 计算条目概要 token 信息（用于头部显示）
+function getLogEntrySummary(entry) {
+    var data = entry.data || {};
+    var usage = data.usage;
+    var inputTokens = 0, outputTokens = 0, cachedTokens = 0;
+    if (usage) {
+        inputTokens = usage.prompt_tokens || 0;
+        outputTokens = usage.completion_tokens || 0;
+        cachedTokens = usage.cached_tokens || 0;
+    }
+    return { inputTokens: inputTokens, outputTokens: outputTokens, cachedTokens: cachedTokens };
+}
+
+// 构建单条日志的 DOM 元素（返回 Element，不直接操作 innerHTML 拼接大 JSON）
+function buildLogEntryElement(entry) {
+    var isReq = entry.direction === 'request';
+    var directionLabel = isReq ? '⬆️ 请求 (Request)' : '⬇️ 响应 (Response)';
+    var accentColor = isReq ? 'var(--accent-primary)' : 'var(--accent-success)';
+    var summary = getLogEntrySummary(entry);
 
     var div = document.createElement('div');
     div.className = 'log-entry';
     div.style.marginBottom = '10px';
 
-    // ====== 底层 AI 通信原始 JSON 日志（type: "raw"）======
-    var isReq = entry.direction === 'request';
-    var directionLabel = isReq ? '⬆️ 请求 (Request)' : '⬇️ 响应 (Response)';
-    var accentColor = isReq ? 'var(--accent-primary)' : 'var(--accent-success)';
-
-    var headerHtml = '<div class="log-entry-header" style="cursor:default;">' +
-        '<div style="display:flex;align-items:center;gap:8px;">' +
+    // ====== 头部（始终显示） ======
+    var headerHtml = '<div class="log-entry-header" style="cursor:pointer;" onclick="toggleLogBody(this)">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
         '<span style="font-weight:600;color:' + accentColor + ';">' + directionLabel + '</span>' +
-        '<span class="log-model">' + escapeHtml(entry.model || 'AI') + '</span></div>' +
+        '<span class="log-model">' + escapeHtml(entry.model || 'AI') + '</span>' +
+        (summary.inputTokens > 0 || summary.outputTokens > 0
+            ? '<span class="log-tokens">' +
+                (summary.cachedTokens > 0 ? '<span style="color:var(--accent-success);" title="缓存命中">hit ' + summary.cachedTokens + '</span>' : '') +
+                (summary.inputTokens - summary.cachedTokens > 0 ? '<span style="color:var(--accent-warning);" title="未命中输入">in ' + (summary.inputTokens - summary.cachedTokens) + '</span>' : '') +
+                (summary.outputTokens > 0 ? '<span style="color:var(--accent-primary);" title="输出">out ' + summary.outputTokens + '</span>' : '') +
+              '</span>'
+            : '') +
+        '<span class="log-expand"><i class="fas fa-chevron-right"></i></span>' +
+        '</div>' +
         '<span class="log-time">' + new Date((entry.timestamp || Date.now()) * 1000).toLocaleString() + '</span></div>';
 
+    // ====== 载荷正文（默认折叠，点击头部展开） ======
     var rawJson = JSON.stringify(entry.data || {}, null, 2);
-    // 双击内容区弹出放大查看窗口（事件委托，见下方 logList dblclick 监听）
-    // 使用 data-log-direction / data-log-model 记录元数据，避免 JSON 拼入 HTML 属性被破坏
-    var bodyHtml = '<div class="log-entry-body">' +
+    var shouldCollapse = rawJson.length > LOG_COLLAPSE_THRESHOLD;
+    var bodyStyle = shouldCollapse ? 'display:none;' : '';
+
+    var bodyHtml = '<div class="log-entry-body" style="' + bodyStyle + '">' +
         '<pre class="log-payload" data-log-direction="' + (isReq ? 'request' : 'response') +
         '" data-log-model="' + escapeHtml(entry.model || 'AI') +
         '" title="双击放大查看" style="cursor:zoom-in;margin:0;padding:10px 12px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:var(--bg-primary);border:1px solid var(--border-color);border-left:3px solid ' + accentColor + ';border-radius:var(--radius-sm);max-height:400px;overflow-y:auto;color:var(--text-secondary);">' +
         escapeHtml(rawJson) + '</pre></div>';
 
     div.innerHTML = headerHtml + bodyHtml;
-    list.appendChild(div);
+    return div;
+}
+
+// 切换日志条目展开/收起
+function toggleLogBody(headerEl) {
+    var entry = headerEl.closest('.log-entry');
+    if (!entry) return;
+    var body = entry.querySelector('.log-entry-body');
+    var expand = headerEl.querySelector('.log-expand');
+    if (body) {
+        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    }
+    if (expand) {
+        expand.classList.toggle('expanded');
+    }
+}
+
+// 将单条日志条目追加到列表末尾（增量渲染核心函数）
+function appendLogEntry(entry) {
+    var list = document.getElementById('logList');
+    if (!list) return;
+    // 若当前有过滤条件，不能走增量渲染（可能不匹配过滤条件）
+    if (logFilterState.start !== null || logFilterState.end !== null) {
+        renderFilteredLogs();
+        return;
+    }
+    // 移除空状态占位
+    var empty = list.querySelector('.log-empty');
+    if (empty) empty.remove();
+    var el = buildLogEntryElement(entry);
+    // 若存在「加载更多」指示器，将新条目插入到它之前，保持指示器在最后
+    var loadMore = document.getElementById('logLoadMore');
+    if (loadMore) {
+        list.insertBefore(el, loadMore);
+    } else {
+        list.appendChild(el);
+    }
     list.scrollTop = list.scrollHeight;
+    // 更新过滤计数（无过滤时显示总数）
+    updateLogFilterCount();
 }
 
 // ============================================
@@ -282,8 +353,42 @@ function logMatchesFilter(entry) {
     return true;
 }
 
-// 重新渲染日志列表（应用当前过滤条件）
+// 更新过滤计数显示
+function updateLogFilterCount() {
+    var countEl = document.getElementById('logFilterCount');
+    if (!countEl) return;
+    var all = (window.chatApp && window.chatApp.aiLogs) || [];
+    var hasFilter = logFilterState.start !== null || logFilterState.end !== null;
+    if (hasFilter) {
+        var filtered = all.filter(logMatchesFilter);
+        countEl.textContent = all.length === 0 ? '' : (filtered.length + ' / ' + all.length);
+    } else {
+        countEl.textContent = all.length === 0 ? '' : String(all.length);
+    }
+}
+
+// ============================================
+// 惰性加载状态
+// ============================================
+var _renderedLogCount = 0;  // 当前已渲染到列表中的日志条数
+
+// 绑定列表滚动到底部自动加载更多（只绑定一次，事件委托）
+function setupLogListScrollLoadMore() {
+    var list = document.getElementById('logList');
+    if (!list || list.__logScrollBound) return;
+    list.__logScrollBound = true;
+    list.addEventListener('scroll', function() {
+        // 距底部不足 40px 时自动加载下一页
+        if (list.scrollTop + list.clientHeight >= list.scrollHeight - 40) {
+            loadMoreLogs();
+        }
+    });
+}
+
+// 重新渲染日志列表（应用当前过滤条件 + 惰性加载）
 function renderFilteredLogs() {
+    // 确保滚动自动加载已绑定
+    setupLogListScrollLoadMore();
     var modal = document.getElementById('logModal');
     if (!modal || modal.style.display === 'none') return;
     var list = document.getElementById('logList');
@@ -292,20 +397,64 @@ function renderFilteredLogs() {
     var all = (window.chatApp && window.chatApp.aiLogs) || [];
     var filtered = all.filter(logMatchesFilter);
 
+    // 重置已渲染计数
+    _renderedLogCount = 0;
+
     list.innerHTML = '';
     if (filtered.length === 0) {
         list.innerHTML = '<div class="log-empty">' +
             (all.length === 0 ? '暂无日志记录' : '没有匹配时间范围的日志') +
             '</div>';
     } else {
-        filtered.forEach(function(entry) { renderLogEntry(entry); });
+        // 惰性加载：先渲染第一页
+        var pageCount = Math.min(LOG_PAGE_SIZE, filtered.length);
+        for (var i = 0; i < pageCount; i++) {
+            list.appendChild(buildLogEntryElement(filtered[i]));
+            _renderedLogCount++;
+        }
+        // 若还有更多，显示加载指示器
+        if (_renderedLogCount < filtered.length) {
+            var loadMore = document.createElement('div');
+            loadMore.className = 'log-load-more';
+            loadMore.id = 'logLoadMore';
+            loadMore.innerHTML = '↓ 加载更多 (' + (filtered.length - _renderedLogCount) + ' 条)';
+            loadMore.style.cssText = 'text-align:center;padding:10px;color:var(--text-muted);font-size:12px;cursor:pointer;';
+            loadMore.onclick = loadMoreLogs;
+            list.appendChild(loadMore);
+        }
         list.scrollTop = list.scrollHeight;
     }
 
-    // 更新过滤计数
-    var countEl = document.getElementById('logFilterCount');
-    if (countEl) {
-        countEl.textContent = all.length === 0 ? '' : (filtered.length + ' / ' + all.length);
+    updateLogFilterCount();
+}
+
+// 加载更多日志（惰性加载下一页）
+function loadMoreLogs() {
+    var list = document.getElementById('logList');
+    if (!list) return;
+    var all = (window.chatApp && window.chatApp.aiLogs) || [];
+    var filtered = all.filter(logMatchesFilter);
+
+    // 移除加载更多指示器
+    var loadMore = document.getElementById('logLoadMore');
+    if (loadMore) loadMore.remove();
+
+    var start = _renderedLogCount;
+    var end = Math.min(start + LOG_PAGE_SIZE, filtered.length);
+    for (var i = start; i < end; i++) {
+        list.appendChild(buildLogEntryElement(filtered[i]));
+        _renderedLogCount++;
+    }
+
+    // 若还有更多，重新添加加载指示器
+    if (_renderedLogCount < filtered.length) {
+        var more = document.createElement('div');
+        more.className = 'log-load-more';
+        more.id = 'logLoadMore';
+        more.innerHTML = '↓ 加载更多 (' + (filtered.length - _renderedLogCount) + ' 条)';
+        more.style.cssText = 'text-align:center;padding:10px;color:var(--text-muted);font-size:12px;cursor:pointer;';
+        more.onclick = loadMoreLogs;
+        list.appendChild(more);
     }
 }
 
@@ -332,18 +481,6 @@ function clearLogFilter() {
 // ============================================
 // 悬浮窗控制
 // ============================================
-
-// 切换日志条目展开/收起
-function toggleLogBody(headerEl) {
-    var body = headerEl.nextElementSibling;
-    var expand = headerEl.querySelector('.log-expand');
-    if (body) {
-        body.style.display = body.style.display === 'none' ? 'block' : 'none';
-    }
-    if (expand) {
-        expand.classList.toggle('expanded');
-    }
-}
 
 // 打开/关闭日志悬浮窗（非模态）
 function toggleAILog(event) {
@@ -484,6 +621,7 @@ function clearAILog() {
     if (list) list.innerHTML = '<div class="log-empty">暂无日志记录</div>';
     var countEl = document.getElementById('logFilterCount');
     if (countEl) countEl.textContent = '';
+    _renderedLogCount = 0;
     showToast('日志已清空', 'success');
 }
 
@@ -531,9 +669,7 @@ window.loadConversationLogs = function(logsJson) {
         badge.textContent = String(logs.length);
         badge.style.display = logs.length > 0 ? 'inline-flex' : 'none';
     }
-    // 若面板已打开，重新渲染（应用过滤）
-    renderFilteredLogs();
-    // 清空过滤条件，避免跨会话残留
+    // 清空过滤条件避免跨会话残留（clearLogFilter 内部会触发 renderFilteredLogs，只需一次渲染）
     clearLogFilter();
 };
 

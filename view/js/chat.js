@@ -55,19 +55,31 @@ window.chatApp = {
         if (costEl) costEl.textContent = '$' + s.cost.toFixed(4);
     },
 
-    // 添加 AI 通信日志条目
+    // 添加 AI 通信日志条目（默认最多保留 200 条，避免无限增长拖慢渲染）
     addLogEntry: function(entry) {
         this.aiLogs.push(entry);
+        // 超过上限时丢弃最旧的日志（先入先出）
+        var MAX_LOG_ENTRIES = 200;
+        if (this.aiLogs.length > MAX_LOG_ENTRIES) {
+            this.aiLogs.splice(0, this.aiLogs.length - MAX_LOG_ENTRIES);
+        }
         // 更新日志徽章
         var badge = document.getElementById('logBadge');
         if (badge) {
             badge.textContent = this.aiLogs.length;
             badge.style.display = 'inline-flex';
         }
-        // 如果日志面板已打开，交由 chat_log.js 渲染（应用时间过滤）
-        if (typeof renderFilteredLogs === 'function') {
-            var modal = document.getElementById('logModal');
-            if (modal && modal.style.display !== 'none') {
+        // 如果日志面板已打开：无过滤条件时走增量渲染（只 append 新 DOM），
+        // 有过滤条件时才全量重渲染（保证过滤结果正确）
+        var modal = document.getElementById('logModal');
+        if (modal && modal.style.display !== 'none') {
+            var hasFilter = (typeof logFilterState !== 'undefined') &&
+                (logFilterState.start !== null || logFilterState.end !== null);
+            if (hasFilter && typeof renderFilteredLogs === 'function') {
+                renderFilteredLogs();
+            } else if (typeof appendLogEntry === 'function') {
+                appendLogEntry(entry);
+            } else if (typeof renderFilteredLogs === 'function') {
                 renderFilteredLogs();
             }
         }

@@ -14,13 +14,15 @@
 │  │ 4. AI 输出结论/告警标记 {{CONCLUSION:}} / {{ALERT:}}          │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────┬─────────────────────────────────────┘
-                               │ 只写共享文件
+                               │ 共享内存快照 + 事件标记
 ┌──────────────────────────────▼─────────────────────────────────────┐
 │  监控插件（纯展示，无 AI）                                          │
 │  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ getAll()   → 读快照 → 渲染远程数据 + "远程数据源"标签          │  │
+│  │ observer：MCP 完整快照 → 内存 _SNAPSHOT_STORE               │  │
+│  │ observer：AI 结论/告警标记 → ai_judgment / monitor_alerts   │  │
+│  │ getAll()  → 读内存快照 → 渲染远程数据 + "远程数据源"标签      │  │
 │  │ getAlerts()→ 读提醒队列 → 异常横幅 + 历史列表                 │  │
-│  │ 快照缺失/过期 → 显示"远程监控源不可用"                         │  │
+│  │ 无快照 → 显示"远程监控源不可用"                               │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -30,7 +32,7 @@
 | 层 | 职责 | AI 参与 | 说明 |
 |----|------|--------|------|
 | **AI 层** | 发现远程 MCP → 采集数据 → 智能判断 → 输出结论/告警标记 | ✅ 有 | 严格按 `system-monitor` SKILL.md 指令执行 |
-| **监控插件** | 只读 AI 写入的快照/提醒，纯展示 | ❌ 无 | 绝不接触 MCP、绝不显示本机数据 |
+| **监控插件** | 读取 MCP 返回的完整快照 + 解析 AI 标记，纯展示 | ❌ 无 | 绝不接触 MCP、绝不显示本机数据 |
 
 ## 三、数据流
 
@@ -50,11 +52,6 @@ AI 读取 SKILL.md 指令
   ↓
 ⑤ 结论/告警：AI 输出 {{CONCLUSION: ...}} / {{ALERT: ...}} 标记
         插件 observer 解析 → ai_judgment（面板右侧）/ monitor_alerts.json（异常横幅）
-④ 展示：MCP 完整快照 → 插件 observer 缓存到内存 _SNAPSHOT_STORE
-        面板 monitor.js（每 3 秒 getAll）读取 → 渲染远程数据
-  ↓
-⑤ 结论/告警：AI 输出 {{CONCLUSION: ...}} / {{ALERT: ...}} 标记
-        插件 observer 解析 → ai_judgment（面板右侧）/ monitor_alerts.json（异常横幅）
 ```
 
 ## 四、组件说明
@@ -64,22 +61,23 @@ AI 读取 SKILL.md 指令
 |------|------|
 | `SKILL.md` | AI 指令书：定义发现/采集/判断/结论/告警标记的完整动作 |
 | `references/thresholds.md` | 异常判断参考阈值（AI 综合判断，非机械执行） |
-| ~~`scripts/collect_stats.py`~~ | ❌ 已删除（不再通过脚本写快照，由插件 observer 处理内存快照） |
-| ~~`scripts/push_alert.py`~~ | ❌ 已删除（异常提醒改由 AI 输出 `{{ALERT:}}` 标记，插件解析） |
+{{ALERT:}}` 标记，插件解析） |
 
 ### 2. 监控插件：`plugins/builtin/monitor_plugin/`
 | 文件 | 作用 |
 |------|------|
-| `bridge/monitor_bridge.py` | 只读快照 + 提醒队列；仅返回 `data_source=remote` 数据 |
+| `bridge/monitor_bridge.py` | 只读内存快照 + 提醒队列；仅返回 `data_source=remote` 数据 |
+| `model/monitor_observer.py` | MCP 完整快照 → 内存存储；解析 AI 结论/告警标记 |
 | `view/js/monitor.js` | 只渲染远程数据；不可用显示空状态；移除 mock 分支 |
 | `view/js/index.html` | 数据源标签 + 不可用覆盖层 |
 | `view/css/monitor.css` | 数据源标记 + 不可用空状态样式 |
 
-### 3. 共享文件
-| 文件 | 写入方 | 读取方 |
+### 3. 数据通道/共享存储
+| 通道 | 写入方 | 读取方 |
 |------|--------|--------|
-| `storage/remote_monitor_data.json` | AI（collect_stats.py） | MonitorBridge.getAll |
-| `storage/monitor_alerts.json` | AI（push_alert.py） | MonitorBridge.getAlerts |
+| 内存快照 `_SNAPSHOT_STORE` | 插件 observer（MCP 完整快照） | MonitorBridge.getAll |
+| `storage/monitor_alerts.json` | 插件 observer（AI `{{ALERT:}}` 标记） | MonitorBridge.getAlerts |
+| `storage/remote_monitor_data.json` | 插件 observer（AI `{{CONCLUSION:}}` 结论落盘） | MonitorBridge（读取回退） |
 
 ## 五、远程 MCP 工具契约
 
@@ -111,7 +109,7 @@ AI 读取 SKILL.md 指令
 }
 ```
 
-## 六、快照文件结构（AI 写入）
+## 六、快照数据结构（插件 observer 维护）
 
 ```json
 {
@@ -121,7 +119,7 @@ AI 读取 SKILL.md 指令
     "cpu": {...}, "memory": {...}, "disk_io": {...},
     "network": {...}, "load": [...], "uptime": "...",
     "processes": [...], "disks": [...], "summary": {...},
-    "alerts": [{"level": "warning", "title": "...", "message": "...", "metric": "disk"}]
+    "ai_judgment": "本次监控共 N 轮，整体健康：CPU 均值 ... 全程无异常"
 }
 ```
 
@@ -161,7 +159,7 @@ AI 对采集数据**智能判断**异常（参考阈值但非机械执行）：
 
 | 场景 | 预期表现 |
 |------|---------|
-| 无快照文件 | 面板显示"远程监控源不可用"空状态 |
-| AI 写入快照 | 面板渲染远程数据 + "远程数据源"标签 |
-| 快照过期（>3秒未更新） | 面板显示"远程监控源不可用" |
-| AI 写入异常提醒 | 面板显示异常横幅 + 历史列表 |
+| 无快照 | 面板显示"远程监控源不可用"空状态 |
+| MCP 返回完整快照 | 面板渲染远程数据 + "远程数据源"标签 |
+| AI 输出结论标记 | 面板右侧「AI 监控结论」显示最终总结 |
+| AI 输出告警标记 | 面板显示异常横幅 + 历史列表 |
