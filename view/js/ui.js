@@ -137,8 +137,8 @@ function renderMessageInto(container, msg) {
     var role = msg.role || 'user';
     var content = msg.content || '';
     var time = msg.time || '';
-    var icons = {user:'fa-user', assistant:'fa-robot'};
-    var names = {user:'你', assistant: appState.currentModel?.name || 'AI'};
+    var icons = {user:'fa-user', assistant:'fa-robot', tool:'fa-plug'};
+    var names = {user:'user', assistant: appState.currentModel?.name || 'AI', tool:'tool'};
     var div = document.createElement('div');
     div.className = 'message ' + role;
     div.innerHTML = '<div class="message-avatar '+role+'"><i class="fas '+(icons[role]||'fa-user')+'"></i></div>' +

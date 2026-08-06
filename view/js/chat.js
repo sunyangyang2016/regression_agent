@@ -191,7 +191,7 @@ window.chatApp = {
     addMessage: function(role, content) {
         var container = document.getElementById('chatMessages');
         var icons = {user:'fa-user', assistant:'fa-robot', tool:'fa-plug'};
-        var names = {user:'你', assistant:appState.currentModel?.name||'AI', tool:'工具调用'};
+        var names = {user:'user', assistant:appState.currentModel?.name||'AI', tool:'tool'};
         var id = 'msg_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
         var div = document.createElement('div');
         div.className = 'message ' + role;
@@ -199,9 +199,13 @@ window.chatApp = {
         if (role === 'tool') {
             div.innerHTML = '<div class="message-avatar tool"><i class="fas fa-plug"></i></div>' +
                 '<div class="message-content">' +
-                '<div class="message-header"><span class="message-role">🔧 工具</span>' +
+                '<div class="message-header"><span class="message-role">tool</span>' +
                 '<span class="message-time">'+new Date().toLocaleTimeString()+'</span></div>' +
-                '<div class="message-body" id="'+id+'" style="font-family:monospace;font-size:12px;background:var(--bg-tertiary);padding:8px 12px;border-radius:var(--radius-sm);white-space:pre-wrap;word-break:break-all;">'+content+'</div></div>';
+                '<div class="message-body" id="'+id+'"></div></div>';
+            // 工具结果可能含 HTML/CSS 片段（如 get_weather 返回 <link>），
+            // 必须用 textContent 防止注入导致页面背景/样式被篡改。
+            // 注意：div 尚未插入 document，不能 document.getElementById，须用 div 子树查找
+            div.querySelector('.message-body').textContent = content || '';
         } else {
             div.innerHTML = '<div class="message-avatar '+role+'"><i class="fas '+(icons[role]||'fa-user')+'"></i></div>' +
                 '<div class="message-content">' +
@@ -224,9 +228,12 @@ window.chatApp = {
         div.className = 'message tool';
         div.innerHTML = '<div class="message-avatar tool"><i class="fas fa-plug"></i></div>' +
             '<div class="message-content">' +
-            '<div class="message-header"><span class="message-role">🔧 工具</span>' +
+            '<div class="message-header"><span class="message-role">tool</span>' +
             '<span class="message-time">'+new Date().toLocaleTimeString()+'</span></div>' +
-            '<div class="message-body" id="'+id+'" style="font-family:monospace;font-size:12px;background:var(--bg-tertiary);padding:8px 12px;border-radius:var(--radius-sm);white-space:pre-wrap;word-break:break-all;">'+content+'</div></div>';
+            '<div class="message-body" id="'+id+'"></div></div>';
+        // 工具结果可能含 HTML/CSS 片段，用 textContent 防止注入篡改页面背景/样式。
+        // 注意：div 尚未插入 document，不能 document.getElementById，须用 div 子树查找
+        div.querySelector('.message-body').textContent = content || '';
 
         // 若存在 AI assistant 气泡，插入到其之前（工具显示在 AI 回答上方）
         var assistantEl = null;
