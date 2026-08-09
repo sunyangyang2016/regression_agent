@@ -20,6 +20,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if(typeof loadAgentConfigTheme==='function')loadAgentConfigTheme();
     updateModelUI(); renderMCPServers(); renderMCPLocalServers(); renderMCPMarket(); renderModelList();
     renderTools(); renderSkills(); renderPlugins(); updateMCPBadge(); updateModelCount();
+    // 初始化聊天/插件 Tab 栏（固定「聊天」Tab 始终显示）
+    try { if (typeof initPluginTabs === 'function') initPluginTabs(); } catch(e) { console.warn('[App] initPluginTabs error:', e); }
     ['tabMCP','tabModels','tabTools','tabSkills','tabPlugins','tabSettings','tabAbout'].forEach(function(id){
         var el=document.getElementById(id);
         if(el) el.style.display = id==='tabMCP' ? 'block' : 'none';

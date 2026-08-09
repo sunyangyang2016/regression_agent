@@ -100,7 +100,10 @@ function selectChat(el, id, title) {
     document.querySelectorAll('.chat-item').forEach(function(i){i.classList.remove('active');});
     el.classList.add('active');
     if (title) {
-        document.getElementById('chatTitle').textContent = title;
+        // 会话标题显示在「聊天」Tab 上
+        if (typeof updateChatTabTitle === 'function') {
+            try { updateChatTabTitle(title); } catch(e) {}
+        }
     }
     if (window.py_bridge) {
         try { window.py_bridge.loadConversation(id); } catch(e) { console.warn('[Sidebar] loadConversation:', e); }
@@ -121,7 +124,9 @@ function deleteChat(event, el) {
             window.py_bridge.deleteConversationAndNew(id);
             item.remove();
             if (isActive) {
-                document.getElementById('chatTitle').textContent = '新对话';
+                if (typeof updateChatTabTitle === 'function') {
+                    try { updateChatTabTitle('新对话'); } catch(e) {}
+                }
                 var html = '<div class="welcome-screen" id="welcomeScreen">' +
                     '<div class="welcome-icon">🤖</div>' +
                     '<h1 class="welcome-title">AI 智能助手</h1>' +
@@ -135,7 +140,9 @@ function deleteChat(event, el) {
 
 function newChat() {
     closeSidebar();
-    document.getElementById('chatTitle').textContent = '新对话';
+    if (typeof updateChatTabTitle === 'function') {
+        try { updateChatTabTitle('新对话'); } catch(e) {}
+    }
     document.getElementById('chatMessages').innerHTML = 
         '<div class="welcome-screen" id="welcomeScreen">' +
         '<div class="welcome-icon">🤖</div>' +

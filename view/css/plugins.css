@@ -21,75 +21,133 @@
     border-color: var(--accent-primary, #6366f1);
 }
 
-/* ---- 插件独立悬浮窗壳（非模态、可拖动；内容由插件自身 css 提供）---- */
-.plugin-float-window {
-    position: fixed;
+/* ============================================
+   Chat 区域 Tab 面板
+   聊天区 + 插件共用同一 Tab 栏，可互相切换
+   ============================================ */
+
+/* chat-container 始终为 flex column 布局：
+   Tab 栏固定在顶部，内容区（聊天/插件）撑满剩余空间 */
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.chat-container .chat-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-width: var(--chat-max-width, 900px);
+    margin: 0 auto;
+    padding: 24px 0 24px;
+}
+.chat-container .chat-messages .welcome-screen {
+    min-height: 50vh;
+}
+
+/* Tab 栏：横向排列，支持溢出滚动 */
+.plugin-tab-bar {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 8px 12px 0;
+    background: var(--bg-primary, #0d1117);
+    border-bottom: 1px solid var(--border-color, #2a2f3d);
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-height: 40px;
+    user-select: none;
+    scrollbar-width: thin;
+}
+.plugin-tab-bar::-webkit-scrollbar {
+    height: 4px;
+}
+.plugin-tab-bar::-webkit-scrollbar-thumb {
+    background: var(--border-color, #2a2f3d);
+    border-radius: 2px;
+}
+
+/* 单个 Tab 标签 */
+.plugin-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
     background: var(--bg-secondary, #141821);
     border: 1px solid var(--border-color, #2a2f3d);
-    border-radius: 12px;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-    overflow: auto;
-    z-index: 9999;
-    user-select: none;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+    color: var(--text-secondary, #9aa0b0);
+    font-size: 13px;
+    font-family: var(--font-family, 'Inter', sans-serif);
+    transition: background 0.2s, color 0.2s;
+    position: relative;
+    top: 1px;
 }
-.plugin-float-header {
-    display: flex;
+.plugin-tab:hover {
+    background: var(--bg-hover, #1e2230);
+    color: var(--text-primary, #e5e7eb);
+}
+.plugin-tab.active {
+    background: var(--bg-tertiary, #1a2030);
+    color: var(--text-primary, #e5e7eb);
+    border-color: var(--border-color, #2a2f3d);
+    box-shadow: 0 -2px 0 var(--accent-primary, #6366f1) inset;
+}
+
+.plugin-tab-icon {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 18px;
-    border-bottom: 1px solid var(--border-color, #2a2f3d);
-    cursor: move;
-    user-select: none;
+    font-size: 13px;
 }
-.plugin-float-header h3 {
-    font-size: 15px;
-    font-weight: 600;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+
+.plugin-tab-title {
+    font-size: 13px;
+    font-weight: 500;
 }
-.plugin-float-controls {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-}
-.plugin-float-close,
-.plugin-float-min,
-.plugin-float-max {
+
+/* 关闭按钮 */
+.plugin-tab-close {
     background: transparent;
     border: none;
     color: var(--text-muted, #6b7280);
-    font-size: 16px;
+    font-size: 12px;
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 2px 5px;
     line-height: 1;
     border-radius: 4px;
     transition: background 0.2s, color 0.2s;
+    margin-left: 2px;
 }
-.plugin-float-close:hover {
-    color: var(--text-primary, #e5e7eb);
-}
-.plugin-float-min:hover {
-    color: var(--text-primary, #e5e7eb);
-}
-.plugin-float-max:hover {
-    color: var(--text-primary, #e5e7eb);
-}
-.plugin-float-close:hover {
+.plugin-tab-close:hover {
     background: rgba(239, 68, 68, 0.15);
     color: #ef4444;
 }
-.plugin-float-min:hover {
-    background: rgba(100, 116, 139, 0.2);
+
+/* 内容面板容器（插件模式下替代聊天区） */
+.plugin-tab-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: var(--bg-primary, #0d1117);
+    position: relative;
 }
-.plugin-float-max:hover {
-    background: rgba(100, 116, 139, 0.2);
+
+/* 单个插件内容面板 */
+.plugin-tab-panel {
+    height: 100%;
+    min-height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
-.plugin-float-max.on {
-    color: var(--accent-primary, #6366f1);
-}
-.plugin-float-body {
-    padding: 16px 18px;
+
+/* 插件内容主体（包含插件自身 html） */
+.plugin-tab-body {
+    padding: 16px 20px;
     user-select: text;
 }

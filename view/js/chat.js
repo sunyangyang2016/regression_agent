@@ -89,6 +89,10 @@ window.chatApp = {
         var input = document.getElementById('messageInput');
         var content = input.value.trim();
         if (!content) return;
+        // 发送消息时自动切回聊天 Tab
+        if (typeof focusChatTab === 'function') {
+            try { focusChatTab(); } catch(e) {}
+        }
         // 开新一轮对话：重置工具锚点（多轮工具调用时顺序插入用）
         this._lastToolAnchor = null;
         // AI 回复中发送新消息：允许（后端会先中断旧回复再处理新消息）
@@ -188,8 +192,6 @@ window.chatApp = {
     },
 
     _scrollToBottom: function() {
-        var el = document.querySelector('.chat-container');
-        if (el) { el.scrollTop = el.scrollHeight; return; }
         var container = document.getElementById('chatMessages');
         if (container) container.scrollTop = container.scrollHeight;
     },
@@ -323,7 +325,13 @@ window.chatApp = {
 
     newChat: function() {
         this._lastToolAnchor = null;
-        document.getElementById('chatTitle').textContent = '新对话';
+        // 新对话时自动切回聊天 Tab
+        if (typeof focusChatTab === 'function') {
+            try { focusChatTab(); } catch(e) { console.warn('[Chat] 切换聊天 Tab 失败:', e); }
+        }
+        if (typeof updateChatTabTitle === 'function') {
+            try { updateChatTabTitle('新对话'); } catch(e) {}
+        }
         var html = '<div class="welcome-screen" id="welcomeScreen">' +
             '<div class="welcome-icon">🤖</div>' +
             '<h1 class="welcome-title">AI 智能助手</h1>' +
@@ -409,8 +417,8 @@ window.onStreamUpdate = function(content) {
                 }
             }
         }
-        // 每次更新内容后自动向下滚动（使用 .chat-container 因为它是 overflow-y:auto 的容器）
-        var scrollEl = document.querySelector('.chat-container');
+        // 每次更新内容后自动向下滚动（使用 #chatMessages 因为它是 overflow-y:auto 的容器）
+        var scrollEl = document.getElementById('chatMessages');
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
     }
 };

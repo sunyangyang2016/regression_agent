@@ -1,6 +1,6 @@
 // ============================================
 // Plugins - 插件管理面板（三卡片 + 开关 + 显示按钮）
-// 配置窗口只做「壳」：注入插件自身 index.html 片段 + 执行插件自身 js
+// 插件显示改为 Chat 区域 Tab 形式：聊天区 + 插件共存在 Tab 栏中
 // ============================================
 
 const PLUGIN_ICONS = {
@@ -56,7 +56,7 @@ function renderPlugins() {
                         ' onchange="togglePlugin(this, \'' + String(p.name).replace(/'/g, "\\'") + '\')">' +
                     '<span class="slider"></span>' +
                 '</label>' +
-                '<button class="plugin-show-btn" onclick="showPlugin(\'' + String(p.name).replace(/'/g, "\\'") + '\')" title="打开配置面板">' +
+                '<button class="plugin-show-btn" onclick="showPlugin(\'' + String(p.name).replace(/'/g, "\\'") + '\')" title="在聊天区域打开插件">' +
                     '<i class="fas fa-external-link-alt"></i> 显示' +
                 '</button>' +
             '</div>' +
@@ -107,14 +107,78 @@ function togglePlugin(checkbox, name) {
 }
 
 // ============================================
-// 配置窗口壳 - 每个插件独立窗口，互不覆盖
-// 窗口内注入插件自身 config_ui.html/css/js（由后端 get_config_ui 提供）
+// 插件 Tab 面板 - 聊天区 + 插件共存于 Tab 栏
+// Tab 栏始终显示，第一个 Tab 固定为「聊天」
 // ============================================
+
+// 当前激活的 Tab 名（'chat' = 聊天区，其余为插件名）
+var _activePluginTab = 'chat';
+
+function _getPluginTabBar() {
+    var bar = document.getElementById('pluginTabBar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'pluginTabBar';
+        bar.className = 'plugin-tab-bar';
+        var container = document.getElementById('chatContainer');
+        if (container) {
+            container.insertBefore(bar, document.getElementById('pluginTabContent') || container.firstChild);
+        }
+    }
+    return bar;
+}
+
+function _getPluginTabContent() {
+    var content = document.getElementById('pluginTabContent');
+    if (!content) {
+        content = document.createElement('div');
+        content.id = 'pluginTabContent';
+        content.className = 'plugin-tab-content';
+        var container = document.getElementById('chatContainer');
+        if (container) {
+            container.insertBefore(content, document.getElementById('chatMessages') || null);
+        }
+    }
+    return content;
+}
+
+// 初始化 Tab 栏：创建固定的「聊天」Tab
+function initPluginTabs() {
+    var bar = _getPluginTabBar();
+    if (bar.querySelector('.plugin-tab[data-plugin="chat"]')) return;
+
+    // 创建「聊天」Tab（第一个，固定存在，不可关闭）
+    // 标题显示当前会话标题，默认「新对话」
+    var chatTab = document.createElement('div');
+    chatTab.id = 'pluginTab_chat';
+    chatTab.className = 'plugin-tab active';
+    chatTab.setAttribute('data-plugin', 'chat');
+    chatTab.innerHTML = '<span class="plugin-tab-icon"><i class="fas fa-comments"></i></span>' +
+        '<span class="plugin-tab-title" id="pluginChatTitle">新对话</span>';
+    chatTab.onclick = function() { activatePluginTab('chat'); };
+    bar.appendChild(chatTab);
+
+    // Tab 栏始终显示
+    bar.style.display = '';
+    var content = document.getElementById('pluginTabContent');
+    if (content) content.style.display = 'none';
+}
+
+// 更新聊天 Tab 标题（会话标题显示在「聊天」Tab 上）
+function updateChatTabTitle(title) {
+    var el = document.getElementById('pluginChatTitle');
+    if (el) el.textContent = title || '新对话';
+}
+
+// 显示插件：在 Tab 栏创建/激活对应插件 Tab
 function showPlugin(name) {
-    // 若窗口已存在则直接显示
-    var win = document.getElementById('pluginFloat_' + name);
-    if (win) {
-        win.style.display = 'block';
+    initPluginTabs();
+    var bar = _getPluginTabBar();
+    var content = _getPluginTabContent();
+
+    // 若 Tab 已存在，直接激活
+    if (document.getElementById('pluginTab_' + name)) {
+        activatePluginTab(name);
         return;
     }
 
@@ -131,139 +195,32 @@ function showPlugin(name) {
                 name === 'monitor_plugin' ? '系统监控' :
                 name === 'git_plugin' ? 'Git 集成' : '插件配置';
 
-    // 创建独立窗口
-    win = document.createElement('div');
-    win.id = 'pluginFloat_' + name;
-    win.className = 'plugin-float-window';
-    win.style.display = 'block';
+    // ===== 创建 Tab 标签按钮 =====
+    var tabBtn = document.createElement('div');
+    tabBtn.id = 'pluginTab_' + name;
+    tabBtn.className = 'plugin-tab';
+    tabBtn.setAttribute('data-plugin', name);
+    tabBtn.innerHTML = '<span class="plugin-tab-icon"><i class="fas ' + icon + '" style="color:' + fg + ';"></i></span>' +
+        '<span class="plugin-tab-title">' + title + '</span>' +
+        '<button class="plugin-tab-close" onclick="event.stopPropagation();closePlugin(\'' + String(name).replace(/'/g, "\\'") + '\')" title="关闭">✕</button>';
+    tabBtn.onclick = function() { activatePluginTab(name); };
+    bar.appendChild(tabBtn);
 
-    var head = '<div class="plugin-float-header">' +
-        '<h3><i class="fas ' + icon + '" style="color:' + fg + ';"></i> ' + title + '</h3>' +
-        '<div class="plugin-float-controls">' +
-            '<button class="plugin-float-min" onclick="minimizePlugin(\'' + name + '\')" title="隐藏">─</button>' +
-            '<button class="plugin-float-max" onclick="maximizePlugin(\'' + name + '\')" title="最大化 / 还原">□</button>' +
-            '<button class="plugin-float-close" onclick="closePlugin(\'' + name + '\')" title="关闭">✕</button>' +
-        '</div>' +
-    '</div>';
+    // ===== 创建内容面板 =====
+    var panel = document.createElement('div');
+    panel.id = 'pluginTabPanel_' + name;
+    panel.className = 'plugin-tab-panel';
+    panel.style.display = 'none';
 
     var styleTag = css ? '<style>' + css + '</style>' : '';
-    var bodyDiv = '<div class="plugin-float-body">' + html + '</div>';
+    var bodyDiv = '<div class="plugin-tab-body">' + html + '</div>';
+    panel.innerHTML = styleTag + bodyDiv;
+    content.appendChild(panel);
 
-    win.innerHTML = head + styleTag + bodyDiv;
-    document.body.appendChild(win);
+    // ===== 激活此 Tab =====
+    activatePluginTab(name);
 
-    // 窗口拖拽 + 边缘调整大小（结合实现）
-    // - 按住标题栏/内容空白区域拖动 → 移动窗口
-    // - 鼠标移到窗口四角/四边 → 出现 resize 光标，按住拖动 → 动态调整大小
-    // - 交互元素（按钮/输入框/文本域/下拉框/链接/标签等）不触发任何拖拽
-    var drag = null;
-    var RESIZE_EDGE = 8;   // 边缘检测阈值（px）
-    var MIN_W = 220;       // 最小宽度
-    var MIN_H = 160;       // 最小高度
-
-    // 根据鼠标位置返回调整方向：'' 表示不在边缘
-    function hitTestResize(e) {
-        var r = win.getBoundingClientRect();
-        var x = e.clientX - r.left;
-        var y = e.clientY - r.top;
-        var nearN = y <= RESIZE_EDGE, nearS = y >= r.height - RESIZE_EDGE;
-        var nearW = x <= RESIZE_EDGE, nearE = x >= r.width - RESIZE_EDGE;
-        if (nearN && nearW) return 'nw';
-        if (nearN && nearE) return 'ne';
-        if (nearS && nearW) return 'sw';
-        if (nearS && nearE) return 'se';
-        if (nearN) return 'n';
-        if (nearS) return 's';
-        if (nearW) return 'w';
-        if (nearE) return 'e';
-        return '';
-    }
-
-    // 鼠标在窗口内移动时更新光标，提示可调整大小
-    win.addEventListener('mousemove', function(e) {
-        var dir = hitTestResize(e);
-        var map = {
-            n: 'ns-resize', s: 'ns-resize',
-            w: 'ew-resize', e: 'ew-resize',
-            nw: 'nwse-resize', se: 'nwse-resize',
-            ne: 'nesw-resize', sw: 'nesw-resize'
-        };
-        win.style.cursor = dir ? (map[dir] || '') : '';
-    });
-
-    // 边缘拖拽动态调整大小
-    function startResize(e, dir) {
-        var startX = e.clientX, startY = e.clientY;
-        var r = win.getBoundingClientRect();
-        var startLeft = r.left, startTop = r.top;
-        var startW = r.width, startH = r.height;
-        // 若处于最大化状态，先退出
-        if (win.dataset.max === '1') {
-            win.dataset.max = '0';
-            var mb = win.querySelector('.plugin-float-max');
-            if (mb) mb.innerHTML = '□';
-        }
-        win.style.maxWidth = 'none';
-        function doResize(ev) {
-            var dx = ev.clientX - startX, dy = ev.clientY - startY;
-            var w = startW, h = startH, left = startLeft, top = startTop;
-            if (dir.indexOf('e') !== -1) w = startW + dx;
-            if (dir.indexOf('s') !== -1) h = startH + dy;
-            if (dir.indexOf('w') !== -1) { w = startW - dx; left = startLeft + dx; }
-            if (dir.indexOf('n') !== -1) { h = startH - dy; top = startTop + dy; }
-            if (w < MIN_W) { if (dir.indexOf('w') !== -1) left = startLeft + (startW - MIN_W); w = MIN_W; }
-            if (h < MIN_H) { if (dir.indexOf('n') !== -1) top = startTop + (startH - MIN_H); h = MIN_H; }
-            win.style.width = w + 'px';
-            win.style.height = h + 'px';
-            win.style.left = left + 'px';
-            win.style.top = top + 'px';
-        }
-        function upResize() {
-            document.removeEventListener('mousemove', doResize);
-            document.removeEventListener('mouseup', upResize);
-        }
-        document.addEventListener('mousemove', doResize);
-        document.addEventListener('mouseup', upResize);
-        e.preventDefault();
-    }
-
-    // 窗口按下：边缘 → 调整大小；否则 → 移动
-    function startDrag(e) {
-        var t = e.target;
-        var interactive = t && t.closest && t.closest('button, input, textarea, select, a, label, .plugin-float-controls');
-        if (interactive) return;
-        var dir = hitTestResize(e);
-        if (dir) { startResize(e, dir); return; }
-        drag = { x: e.clientX - win.offsetLeft, y: e.clientY - win.offsetTop };
-        function move(ev) {
-            win.style.left = (ev.clientX - drag.x) + 'px';
-            win.style.top = (ev.clientY - drag.y) + 'px';
-        }
-        function up() {
-            document.removeEventListener('mousemove', move);
-            document.removeEventListener('mouseup', up);
-        }
-        document.addEventListener('mousemove', move);
-        document.addEventListener('mouseup', up);
-        e.preventDefault();
-    }
-    win.addEventListener('mousedown', startDrag);
-
-    // 定位（右上角层叠；支持插件自定义初始宽度，默认 560px）
-    // 窗口高度完全由内容自适应：不设 height、也不用插件的 height 限制，
-    // 仅设置视口级 max-height 防止内容超高时溢出屏幕。
-    var initW = 560;
-    if (p && p.initial_size) {
-        initW = Number(p.initial_size.width) || 560;
-    }
-    win.style.position = 'fixed';
-    win.style.width = initW + 'px';
-    win.style.maxWidth = 'calc(100vw - 48px)';
-    win.style.maxHeight = 'calc(100vh - 48px)';
-    win.style.top = Math.max(24, (window.innerHeight - 300) / 3 + 20) + 'px';
-    win.style.left = Math.max(24, window.innerWidth - initW - 60) + 'px';
-
-    // 执行插件自身 js（依赖 window.security_bridge，由 app.js 全局注入）
+    // ===== 执行插件自身 js（依赖 window.security_bridge 等，由 app.js 全局注入）=====
     if (js) {
         try {
             // eslint-disable-next-line no-new-func
@@ -274,49 +231,63 @@ function showPlugin(name) {
     }
 }
 
-function closePlugin(name) {
-    var win = document.getElementById('pluginFloat_' + name);
-    if (win) win.style.display = 'none';
-}
+// 激活指定 Tab：'chat' 显示聊天区，插件名显示对应插件面板
+function activatePluginTab(name) {
+    _activePluginTab = name;
+    var bar = document.getElementById('pluginTabBar');
+    var content = document.getElementById('pluginTabContent');
+    if (!bar) return;
 
-// 隐藏（最小化）：同关闭，但保留数据以便再次「显示」直接恢复
-function minimizePlugin(name) {
-    var win = document.getElementById('pluginFloat_' + name);
-    if (win) win.style.display = 'none';
-}
+    // Tab 标签高亮
+    bar.querySelectorAll('.plugin-tab').forEach(function(t) {
+        t.classList.toggle('active', t.getAttribute('data-plugin') === name);
+    });
 
-// 最大化 / 还原：切换窗口尺寸，记录原尺寸与位置
-function maximizePlugin(name) {
-    var win = document.getElementById('pluginFloat_' + name);
-    if (!win) return;
-    if (win.dataset.max === '1') {
-        // 还原
-        win.dataset.max = '0';
-        var orig = {};
-        try { orig = JSON.parse(win.dataset.orig || '{}'); } catch(e) { orig = {}; }
-        win.style.width = orig.width || '560px';
-        win.style.height = orig.height || '';
-        win.style.maxWidth = 'calc(100vw - 48px)';
-        win.style.top = orig.top || '24px';
-        win.style.left = orig.left || 'auto';
-        var btn = win.querySelector('.plugin-float-max');
-        if (btn) btn.innerHTML = '□';
+    var chatMessages = document.getElementById('chatMessages');
+
+    if (name === 'chat') {
+        // 聊天 Tab：显示聊天消息区，隐藏插件内容容器
+        if (chatMessages) chatMessages.style.display = '';
+        if (content) content.style.display = 'none';
     } else {
-        // 记录当前尺寸/位置
-        win.dataset.max = '1';
-        win.dataset.orig = JSON.stringify({
-            width: win.style.width || '560px',
-            height: win.style.height || '',
-            top: win.style.top || '',
-            left: win.style.left || ''
-        });
-        // 最大化：铺满视口（留 24px 边距）
-        win.style.width = 'calc(100vw - 48px)';
-        win.style.height = 'calc(100vh - 48px)';
-        win.style.maxWidth = 'none';
-        win.style.top = '24px';
-        win.style.left = '24px';
-        var btn = win.querySelector('.plugin-float-max');
-        if (btn) btn.innerHTML = '❐';
+        // 插件 Tab：隐藏聊天消息区，显示插件内容容器
+        if (chatMessages) chatMessages.style.display = 'none';
+        if (content) content.style.display = '';
+        if (content) {
+            content.querySelectorAll('.plugin-tab-panel').forEach(function(p) {
+                p.style.display = p.id === 'pluginTabPanel_' + name ? 'block' : 'none';
+            });
+        }
     }
+}
+
+// 关闭插件 Tab（聊天 Tab 不可关闭）
+function closePlugin(name) {
+    if (name === 'chat') return;
+    var tab = document.getElementById('pluginTab_' + name);
+    var panel = document.getElementById('pluginTabPanel_' + name);
+    if (tab) tab.remove();
+    if (panel) panel.remove();
+
+    // 如果关闭的是当前激活的插件，切回聊天
+    if (_activePluginTab === name) {
+        activatePluginTab('chat');
+    }
+}
+
+// 关闭所有插件 Tab，切回聊天
+function closeAllPlugins() {
+    var bar = document.getElementById('pluginTabBar');
+    var content = document.getElementById('pluginTabContent');
+    if (bar) {
+        bar.querySelectorAll('.plugin-tab[data-plugin!="chat"]').forEach(function(t) { t.remove(); });
+    }
+    if (content) content.innerHTML = '';
+    activatePluginTab('chat');
+}
+
+// 新对话 / 需要聚焦聊天时调用：切换到聊天 Tab
+function focusChatTab() {
+    initPluginTabs();
+    activatePluginTab('chat');
 }

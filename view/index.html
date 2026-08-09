@@ -111,7 +111,7 @@
         <header class="header">
             <div class="header-left">
                 <button class="header-menu-btn" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-                <div class="header-title"><span id="chatTitle">新对话</span><div class="model-selector" onclick="toggleModelDropdown(event)"><span class="model-label" id="headerModelLabel">DeepSeek</span><span class="provider-label" id="headerProviderLabel">(deepseek)</span><i class="fas fa-chevron-down"></i><div class="model-dropdown" id="modelDropdown" onclick="event.stopPropagation();"><div class="model-dropdown-header">切换模型</div><div class="model-dropdown-list" id="modelDropdownList"></div></div></div></div>
+                <div class="header-title"><div class="model-selector" onclick="toggleModelDropdown(event)"><span class="model-label" id="headerModelLabel">DeepSeek</span><span class="provider-label" id="headerProviderLabel">(deepseek)</span><i class="fas fa-chevron-down"></i><div class="model-dropdown" id="modelDropdown" onclick="event.stopPropagation();"><div class="model-dropdown-header">切换模型</div><div class="model-dropdown-list" id="modelDropdownList"></div></div></div></div>
             </div>
             <div class="header-right">
                 <button class="header-btn active" onclick="switchPanelTab('mcp')"><i class="fas fa-plug"></i><span class="badge" id="mcpBadge" style="display:none;"></span></button>
@@ -123,8 +123,11 @@
                 <button class="header-btn" onclick="switchPanelTab('about')"><i class="fas fa-info-circle"></i></button>
             </div>
         </header>
-        <div class="chat-container" id="chatContainer" onscroll="handleChatScroll(this)">
-            <div class="chat-messages" id="chatMessages">
+        <div class="chat-container" id="chatContainer">
+            <!-- 聊天/插件 Tab 栏：第一个 Tab 固定为「聊天」，插件打开后追加 Tab -->
+            <div class="plugin-tab-bar" id="pluginTabBar"></div>
+            <div class="plugin-tab-content" id="pluginTabContent" style="display:none;"></div>
+            <div class="chat-messages" id="chatMessages" onscroll="handleChatScroll(this)">
                 <div class="welcome-screen" id="welcomeScreen">
                     <div class="welcome-icon">🤖</div>
                     <h1 class="welcome-title">AI 智能助手</h1>
