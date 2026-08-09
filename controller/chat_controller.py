@@ -131,9 +131,9 @@ class ChatController(QObject):
 
         def do_ai_call():
             try:
-                # 在后台线程注入 MCP 上下文，避免主线程与 MCP 后台加载线程
-                # 并发读写 MCPHost._clients（可能导致 UI 卡顿或字典迭代异常）
-                self._inject_mcp_context()
+                # 工具上下文（MCP 状态 + 工具清单）由 AIClient.send_message_async
+                # 在每次发送前统一注入（_inject_mcp_server_context /
+                # _inject_tool_context_into_system），无需在此重复注入。
                 self._is_generating = True
                 self.ai_controller.send_message(content)
             except Exception as ex:
@@ -851,36 +851,6 @@ class ChatController(QObject):
         except Exception as e:
             print(f"{LOG} ❌ 日志条目信号发射失败: {e}")
 
-    def _inject_mcp_context(self):
-        try:
-            from tools.mcp.host import MCPHost
-            mgr = MCPHost()
-            tools = mgr.get_tools()
-            if tools:
-                # 构建「工具名 -> 所属服务器 ID」映射（用于空描述工具补占位文案）
-                server_of_tool = {}
-                if hasattr(mgr, "_clients"):
-                    for server_id, host in mgr._clients.items():
-                        try:
-                            for t in host.list_tools():
-                                server_of_tool[t.name] = server_id
-                        except Exception:
-                            continue
-
-                tool_descs = []
-                for t in tools:
-                    fn = t.get("function") or {}
-                    name = fn.get("name", "")
-                    desc = (fn.get("description") or "").strip()
-                    if not desc:
-                        # 空描述补占位：标明来源服务器，避免 AI 无法理解工具用途
-                        src = server_of_tool.get(name, "MCP")
-                        desc = f"（{src} 服务器提供的 MCP 工具）"
-                    tool_descs.append(f"- `{name}`: {desc}")
-                context = "\n\n## 可用工具\n你可以使用以下 MCP 工具来帮助用户：\n" + "\n".join(tool_descs)
-                self.ai_controller.inject_context(context)
-        except Exception as e:
-            print(f"{LOG} ⚠️ 注入 MCP 上下文失败: {e}")
 
     def sync_conversations_to_view(self):
         data = self.conversation_model.get_sidebar_data()

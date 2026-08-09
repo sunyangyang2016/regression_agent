@@ -24,10 +24,11 @@ class _FakeTool:
 
 
 class _FakeClient:
-    """模拟一个已上线的 MCP 客户端（纯内存，不启动子进程）"""
+    """模拟一个 MCP 客户端（纯内存，不启动子进程）"""
 
-    def __init__(self, names=None):
+    def __init__(self, names=None, running=True):
         self._tools = [_FakeTool(n) for n in (names or [])]
+        self._running = running
 
     def list_tools(self):
         return self._tools
@@ -43,7 +44,7 @@ class _FakeClient:
         } for t in self._tools]
 
     def is_running(self):
-        return True
+        return self._running
 
 
 class _FakeHost:
@@ -93,13 +94,17 @@ def test_inject_mcp_context_returns_immediately_while_loading(monkeypatch):
     _patch_host(monkeypatch, _FakeHost(loading=True))
     client = object.__new__(AIClient)
     client._system_prompt = "SYSTEM"
+    client.messages = []
 
     start = time.time()
     client._inject_mcp_server_context()
     elapsed = time.time() - start
 
     assert elapsed < 1.0, f"_inject_mcp_server_context 被阻塞了 {elapsed:.1f}s"
-    assert "## MCP 服务器状态" in client._system_prompt
+    # MCP 状态注入到 messages 末尾的独立 system 消息（保持首条 system 稳定以命中缓存）
+    assert any(
+        "## MCP 服务器状态" in (m.get("content") or "") for m in client.messages
+    )
 
 
 def test_inject_mcp_context_skips_when_no_servers(monkeypatch):
@@ -114,6 +119,24 @@ def test_inject_mcp_context_skips_when_no_servers(monkeypatch):
     client._inject_mcp_server_context()
 
     assert client._system_prompt == "SYSTEM"
+
+
+def test_host_get_tools_skips_not_running_clients():
+    """Token 优化回归：get_tools 必须跳过未运行（离线/启动失败）客户端的工具"""
+    host = object.__new__(host_module.MCPHost)
+    host._clients = {
+        "online_a": _FakeClient(["tool_a"], running=True),
+        "offline_b": _FakeClient(["tool_b", "tool_c"], running=False),
+        "online_d": _FakeClient(["tool_d"], running=True),
+    }
+
+    tools = host.get_tools()
+
+    names = [t["function"]["name"] for t in tools]
+    # 只保留在线客户端的工具
+    assert names == ["tool_a", "tool_d"]
+    assert "tool_b" not in names
+    assert "tool_c" not in names
 
 
 def test_host_get_tools_thread_safe_during_concurrent_insert():

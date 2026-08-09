@@ -426,7 +426,8 @@ class AIClient:
             name = fn.get("name", "")
             desc = (fn.get("description") or "").strip().replace("\n", " ")
             if name:
-                lines.append(f"- `{name}`: {desc[:120]}")
+                # Token 优化：清单仅截断前 40 字符（完整描述在 tools 参数中，无需重复）
+                lines.append(f"- `{name}`: {desc[:40]}")
         tool_block = "\n".join(lines)
 
         marker = "## 当前已安装的工具清单"
@@ -524,13 +525,8 @@ class AIClient:
             lines = ["\n\n## MCP 服务器状态"]
             for s in all_servers:
                 status = "✅ 在线" if s.get("online") else "❌ 离线"
-                tools_info = ""
-                host = mgr._clients.get(s["id"])
-                if host:
-                    tool_names = [t.name for t in host.list_tools()]
-                    if tool_names:
-                        tools_info = f" [工具: {', '.join(tool_names)}]"
-                lines.append(f"- `{s['id']}`: {status}{tools_info}")
+                # Token 优化：不再重复列出工具名（工具清单已包含全部工具，避免 4 重冗余）
+                lines.append(f"- `{s['id']}`: {status}")
             
             # Token 优化：MCP 服务器状态作为独立 system 消息追加到末尾，
             # 不修改第一条稳定 system prompt（以命中 prompt cache）

@@ -280,16 +280,30 @@ class MCPHost:
     # ==========================================
     
     def get_tools(self) -> List[Dict]:
-        """获取所有 MCP 工具定义（OpenAI 格式）
+        """获取所有*在线* MCP 工具定义（OpenAI 格式）
         
-        遍历所有已连接的 MCPClient，合并它们的工具列表。
+        遍历所有已连接的 MCPClient，仅收集「正在运行」客户端的工具。
         这是 AI 模型看到的所有 MCP 工具合集。
+        
+        Token 优化（零风险）：未运行/启动失败的客户端（is_running()==False）
+        其工具无法被调用，发送给模型只是冗余 token（如离线服务器 20+ 个
+        工具的完整 Schema 每次都白烧 ~3000 token），且在 MCP 状态中已明确
+        标注离线。因此这里直接跳过，不影响任何在线工具的能力。
+        
         线程安全：后台加载线程可能并发向 _clients 插入新客户端，
         遍历前先做快照，避免字典在迭代时被修改。
         """
         tools = []
         # 后台加载线程可能正并发修改 _clients，先快照再遍历
         for sid, client in list(self._clients.items()):
+            # 跳过未运行的客户端（离线/启动失败），其工具无法调用
+            try:
+                if not client.is_running():
+                    print(f"{LOG} ⏭️ [{sid}] 未运行，跳过其 {len(client.list_tools())} 个工具")
+                    continue
+            except Exception as e:
+                print(f"{LOG} ⚠️ [{sid}] is_running 检查异常，跳过: {e}")
+                continue
             client_tools = client.get_openai_tools()
             if client_tools:
                 print(f"{LOG} 📋 [{sid}] 提供 {len(client_tools)} 个工具")

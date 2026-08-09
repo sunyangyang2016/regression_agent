@@ -177,9 +177,6 @@ class AppController(QObject):
     def _delayed_init(self):
         """延迟初始化（避免阻塞 UI）"""
         try:
-            # 注入 MCP 上下文
-            self.chat_controller._inject_mcp_context()
-
             # 初始化插件系统（加载插件并注册 hook）
             # 幂等保护：若 start() 已预加载过（count > 0），此处不再重复加载，避免 hooks 重复注册/run 重复启动
             try:
@@ -527,7 +524,6 @@ class AppController(QObject):
 
             if registered_tools > 0:
                 print(f"{LOG} ✅ 注册 {registered_tools} 个工具")
-                self.chat_controller._inject_mcp_context()
             else:
                 print(f"{LOG} 📌 MCP 后台加载中，工具后续自动注册")
         except Exception as e:
