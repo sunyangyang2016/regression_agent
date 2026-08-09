@@ -12,6 +12,7 @@ from skills.registry import SkillRegistry
 from skills.loader import SkillLoader
 from skills.executor import SkillExecutor
 from skills.validator import SkillValidator
+from config.user_config import read_config, save_config
 
 
 # 受保护的内置 MD 技能（禁止删除、禁止上传同名覆盖）
@@ -211,6 +212,70 @@ class SkillManager:
             return True
         except Exception as e:
             print(f"[SkillManager] 切换技能状态失败: {e}")
+            return False
+
+    # ---- Python 内建技能启用/禁用（配置持久化） ----
+
+    @staticmethod
+    def _get_builtin_skill_config() -> set:
+        """读取 skills_config.json 中已启用的 Python 内建技能名集合
+
+        白名单制：enabled_skills 列表中的技能才启用，列表外/空列表表示
+        全部默认禁用。与内建工具 builtin_tools_config.json 的读取模式保持一致：
+        优先 user/ 目录，回退 defaults/ 目录（defaults 不被修改）。
+        """
+        try:
+            cfg = read_config("skills_config.json")
+            enabled = cfg.get("enabled_skills", [])
+            if not isinstance(enabled, list):
+                return set()
+            return set(enabled)
+        except Exception as e:
+            print(f"[SkillManager] ⚠️ 读取技能配置失败: {e}")
+            return set()
+
+    def apply_builtin_skill_config(self) -> int:
+        """应用 skills_config.json 中的启用状态到已注册的 Python 内建技能
+
+        白名单制：仅在 enabled_skills 列表中的技能被启用，其余全部禁用。
+        在技能加载后、注册到 SkillDispatcher 前调用。
+        返回受配置影响的技能数量。
+        """
+        enabled_set = self._get_builtin_skill_config()
+        count = 0
+        for skill in self.registry.get_all():
+            from skills.md_skill import MdSkill
+            if isinstance(skill, MdSkill):
+                continue
+            should_enable = skill.name in enabled_set
+            if skill.enabled != should_enable:
+                skill.set_enabled(should_enable)
+                count += 1
+        return count
+
+    def toggle_builtin_skill(self, name: str) -> bool:
+        """切换 Python 内建技能的启用状态（持久化到 skills_config.json）"""
+        skill = self.registry.get(name)
+        if not skill:
+            print(f"[SkillManager] ⛔ 技能 '{name}' 未注册，无法切换")
+            return False
+        from skills.md_skill import MdSkill
+        if isinstance(skill, MdSkill):
+            print(f"[SkillManager] ⛔ '{name}' 是 MD 技能，请使用 toggle_md_skill")
+            return False
+
+        try:
+            skill.set_enabled(not bool(skill.enabled))
+            enabled_set = self._get_builtin_skill_config()
+            if skill.enabled:
+                enabled_set.add(name)
+            else:
+                enabled_set.discard(name)
+            save_config("skills_config.json", {"enabled_skills": sorted(enabled_set)})
+            print(f"[SkillManager] 内建技能 '{name}' 已{'启用' if skill.enabled else '禁用'}")
+            return True
+        except Exception as e:
+            print(f"[SkillManager] 切换内建技能失败: {e}")
             return False
 
     # ---- 前端数据 ----

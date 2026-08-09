@@ -229,6 +229,11 @@ class AppController(QObject):
             # 1. 加载技能（内建 Python 类）
             self.skill_manager.initialize()
 
+            # 1.1 应用用户保存的内建技能启停配置（skills_config.json）
+            applied = self.skill_manager.apply_builtin_skill_config()
+            if applied:
+                print(f"[AppController] 🎛️ 已应用 {applied} 个内建技能启停配置")
+
             # 2. 将已启用的 skill 注册到 SkillDispatcher
             count = self.skill_dispatcher.register_from_registry(
                 self.skill_manager.registry
@@ -449,6 +454,53 @@ class AppController(QObject):
             return count
         except Exception as e:
             print(f"[AppController] 同步 MD 技能到 AI 失败: {e}")
+            return 0
+
+    # ---- Python 内建技能 AI 工具同步 ----
+
+    def _register_builtin_skill_tool(self, skill_name: str):
+        """注册单个 Python 内建技能的 AI 工具处理器"""
+        if not self.ai_client:
+            return
+        tool_name = f"skill_{skill_name}"
+        skill_disp = self.skill_dispatcher
+
+        async def make_handler(args_dict, sn=skill_name):
+            args = args_dict or {}
+            return await skill_disp.execute_skill(sn, args)
+
+        self.ai_client.tool_dispatcher.register(tool_name, make_handler)
+        print(f"[AppController] Skill 工具已注册: {tool_name}")
+
+    def _resync_builtin_skill_tools(self) -> int:
+        """将 Python 内建技能的启用状态同步到 AI（前端切换后调用）
+
+        策略：先注销所有已注册的 Python 内建技能 handler，再按当前
+        enabled 状态重新注册，确保与注册表状态一致。
+        """
+        try:
+            from skills.md_skill import MdSkill
+            # 1. 先清理所有 Python 内建技能的 AI 工具处理器
+            if self.ai_client:
+                for skill in self.skill_manager.registry.get_all():
+                    if isinstance(skill, MdSkill):
+                        continue
+                    tool_name = f"skill_{skill.name}"
+                    try:
+                        self.ai_client.tool_dispatcher.unregister(tool_name)
+                    except Exception:
+                        pass
+                # 2. 重新注册当前已启用的内建技能
+                count = 0
+                for skill in self.skill_manager.registry.get_all():
+                    if isinstance(skill, MdSkill) or not skill.enabled:
+                        continue
+                    self._register_builtin_skill_tool(skill.name)
+                    count += 1
+                return count
+            return 0
+        except Exception as e:
+            print(f"[AppController] 同步内建技能到 AI 失败: {e}")
             return 0
 
     def _start_mcp_servers(self):

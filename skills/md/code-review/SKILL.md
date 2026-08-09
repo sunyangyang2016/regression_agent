@@ -1,6 +1,6 @@
 ---
 name: code-review
-enabled: true
+enabled: false
 description: 代码审查助手
 ---
 

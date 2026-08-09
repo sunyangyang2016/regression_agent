@@ -178,8 +178,22 @@ class SkillBridge(BridgeBase):
 
     @pyqtSlot(str)
     def on_toggle_skill(self, name):
+        """切换技能启用状态（MD 技能 + Python 内建技能）"""
+        import os
         mgr = self._get_skill_mgr()
-        if mgr:
+        if not mgr:
+            return
+        # 判断是否为 MD 技能（磁盘上存在 skills/md/<name>/SKILL.md）
+        md_path = os.path.join(mgr.loader.md_dir, name, "SKILL.md")
+        is_md = os.path.exists(md_path)
+        if is_md:
             mgr.toggle_md_skill(name)
             self._sync_md_tools()
-            self._refresh_frontend()
+        else:
+            ok = mgr.toggle_builtin_skill(name)
+            if ok and self.app_controller and hasattr(self.app_controller, "_resync_builtin_skill_tools"):
+                try:
+                    self.app_controller._resync_builtin_skill_tools()
+                except Exception as e:
+                    print(f"[SkillBridge] ⚠️ 同步内建技能到 AI 失败: {e}")
+        self._refresh_frontend()
