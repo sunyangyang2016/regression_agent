@@ -65,11 +65,11 @@ TOOLS = [
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "Read/Write 操作时的字节偏移位置（Read从0开始，Write时-1=覆盖整个文件）"
+                        "description": "Read/Write 操作时的字节偏移位置（Read为UTF-8字节偏移，从0开始；Write时-1=覆盖整个文件）。注意：中文等非ASCII字符在UTF-8中占3字节，offset可能落在字符中间，此时会显示替换符但不报错。"
                     },
                     "length": {
                         "type": "integer",
-                        "description": "Read 操作时读取的字节数（可选，不填则读取到末尾）"
+                        "description": "Read 操作时读取的字节数（可选）。不填则读取到文件末尾并返回全文；大文件超过12000字符时会截断，如需继续请用 offset 分段读取。"
                     },
                     "mode": {
                         "type": "string",
@@ -210,8 +210,19 @@ def _do_copy(source: str, dest: str) -> str:
         return f"❌ 复制失败: {e}"
 
 
+# Read 操作返回内容的字符上限。
+# 未指定 length 时，若文件字符数超过该值则截断并提示用 offset 分段读取。
+# 避免超大文件撑爆上下文。
+MAX_FULL_READ_CHARS = 12000
+
+
 def _do_read(path: str, offset: int = 0, length: int = 0) -> str:
-    """读取指定文件的内容，支持偏移和长度"""
+    """读取指定文件的内容，支持字节偏移和长度（UTF-8 安全）
+
+    - offset: 字节偏移（从 0 开始）。注意中文等非 ASCII 字符在 UTF-8 下占多字节，
+      offset 可能落在字符中间，此时该字符会被替换为 U+FFFD，但不会报错。
+    - length: 读取的字节数（缺省/<=0 表示读取到末尾或达到 MAX_FULL_READ_CHARS 上限）
+    """
     if not path:
         return "❌ 请提供文件路径"
 
@@ -221,20 +232,49 @@ def _do_read(path: str, offset: int = 0, length: int = 0) -> str:
         return f"❌ 文件不存在: {abs_path}"
 
     try:
-        with open(abs_path, "r", encoding="utf-8") as f:
-            if offset > 0:
-                f.seek(offset)
-            if length > 0:
-                content = f.read(length)
-            else:
-                content = f.read()
-        size = len(content)
+        # 二进制读取，避免文本模式 seek 到多字节字符中间时解码崩溃
+        with open(abs_path, "rb") as f:
+            data = f.read()
+
+        total_bytes = len(data)
+        offset = int(offset) if offset else 0
+        if offset < 0:
+            offset = 0
+        if offset >= total_bytes:
+            return f"❌ 偏移 {offset} 超出文件大小 {total_bytes} 字节: {abs_path}"
+
+        # 字节切片
+        if length and length > 0:
+            byte_slice = data[offset:offset + length]
+            truncated = (offset + length) < total_bytes
+        else:
+            byte_slice = data[offset:]
+            truncated = False
+
+        # UTF-8 容错解码：offset 落在多字节字符中间时不崩溃，用 U+FFFD 替换坏字节
+        text = byte_slice.decode("utf-8", errors="replace")
+
+        # 未指定 length 时的安全上限保护
+        if not (length and length > 0) and len(text) > MAX_FULL_READ_CHARS:
+            text = text[:MAX_FULL_READ_CHARS]
+            truncated = True
+
+        size = len(text)
+        total_lines = text.count("\n") + 1
         meta = _format_metadata(abs_path)
-        lines = content.count("\n") + 1
-        preview = content[:200] + ("..." if len(content) > 200 else "")
-        return (f"📄 {abs_path} ({size} 字符, {lines} 行)\n"
+
+        # 完整读取（offset=0 且未截断）：返回全文，便于 AI 一次性掌握内容
+        if offset == 0 and not truncated:
+            return (f"📄 {abs_path} ({total_bytes} 字节, {total_lines} 行)\n"
+                    f"📋 元数据: {meta}\n"
+                    f"--- 内容 ---\n{text}")
+
+        # 部分读取
+        return (f"📄 {abs_path} ({total_bytes} 字节, 本次显示 {size} 字符)\n"
                 f"📋 元数据: {meta}\n"
-                f"--- 内容预览 (前 {min(size, 200)} 字符) ---\n{preview}")
+                f"--- 内容 (字节偏移 {offset}) ---\n{text}"
+                + ("\n\n⚠️ 内容较长已截断，如需剩余部分请用 offset 继续读取"
+                   if truncated else ""))
     except FileNotFoundError:
         return f"❌ 文件未找到: {abs_path}"
     except Exception as e:

@@ -4,11 +4,13 @@
 """
 import asyncio
 import json
+import re
 from typing import AsyncIterator, Optional, Callable
 from openai import AsyncOpenAI
 from ai.protocol import AIStreamEvent, ToolCallInfo, ModelConfig
 from ai.tool_names import resolve_original_name, sanitize_tools_for_api
 from ai.context_window import ContextWindowManager
+from ai.token_optimizer import AgentTokenOptimizer
 
 
 class StreamHandler:
@@ -32,6 +34,8 @@ class StreamHandler:
         self._progress_acc_miss = 0
         # 上下文滑动窗口管理器（延迟实例化，由 stream_chat 按需创建）
         self.context_window: Optional[ContextWindowManager] = None
+        # Token 优化器（稳定 system prompt + 消息瘦身 + 请求统计）
+        self.token_optimizer = AgentTokenOptimizer(enabled=True, verbose=True)
     
     def create_client(self):
         """创建异步客户端"""
@@ -192,6 +196,16 @@ class StreamHandler:
                         current_messages = new_messages
                 except Exception as e:
                     print(f"[ContextWindow] ⚠️ 滑动窗口检查失败: {e}")
+
+            # ====== Token 优化（稳定 system prompt + 消息瘦身） ======
+            # 将动态注入的工具清单/MCP 状态从第一条 system 消息中拆离，
+            # 保持核心 system prompt 稳定以命中 prompt cache；同时清理冗余空消息。
+            try:
+                optimized_messages, opt_stats = self.token_optimizer.optimize_messages(current_messages)
+                if opt_stats.get("triggered"):
+                    current_messages = optimized_messages
+            except Exception as e:
+                print(f"[StreamHandler] ⚠️ Token 优化失败（不影响主流程）: {e}")
             
             try:
                 # 第一轮调用
@@ -259,6 +273,33 @@ class StreamHandler:
                                 if tc.function.arguments:
                                     tool_calls_buffer[idx]["function"]["arguments"] += tc.function.arguments
                 
+                # ====== 兼容 Claude 格式 <｜｜DSML｜｜tool_calls>：非 OpenAI 工具调用结构 ======
+                # 某些模型（如 deepseek-v4-flash）在工具调用时会输出 Anthropic/Claude 的
+                # <｜｜DSML｜｜tool_calls><invoke name="..."><parameter ...> 结构而非 OpenAI 原生
+                # delta.tool_calls。此时 SDK 会把整段 XML 累积到 collected_content 中，
+                # tool_calls_buffer 为空 → 会导致工具调用丢失、目标操作无法完成。
+                # 这里检测到 <｜｜DSML｜｜tool_calls> 标记时，用 ResponseParser 将其解析为
+                # OpenAI tool_calls 兼容格式并回填 tool_calls_buffer。
+                if not tool_calls_buffer and "<｜｜DSML｜｜tool_calls>" in collected_content:
+                    anthropic_calls = ResponseParser.parse_anthropic_tool_calls(collected_content)
+                    if anthropic_calls:
+                        print(f"[StreamHandler] 🔄 检测到 Claude 格式 <｜｜DSML｜｜tool_calls>，解析出 {len(anthropic_calls)} 个工具调用")
+                        for idx, ac in enumerate(anthropic_calls):
+                            # 用 collected_content 中的原始文本片段作为临时占位，回填 buffer
+                            tool_calls_buffer[idx] = {
+                                "id": ac.get("id", f"anthropic-{idx + 1}"),
+                                "type": "function",
+                                "function": {
+                                    "name": ac["function"]["name"],
+                                    "arguments": ac["function"]["arguments"],
+                                }
+                            }
+                            # 从 collected_content 中移除 <｜｜DSML｜｜tool_calls> 块，避免作为纯文本展示
+                        collected_content = re.sub(
+                            r'<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>', "",
+                            collected_content, flags=re.DOTALL
+                        ).strip()
+
                 # ====== 底层日志：捕获 AI 返回的完整响应载荷 ======
                 response_payload = {
                     "content": collected_content,

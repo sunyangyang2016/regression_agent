@@ -30,6 +30,17 @@ class MCPBridge(BridgeBase):
 
     GITHUB_API_ISSUES = "https://api.github.com/repos/cline/mcp-marketplace/issues"
 
+    # GitHub 克隆加速镜像前缀（按顺序尝试）
+    # 直连失败时自动切换镜像；用户可在 agent_config.json 中配置 github_mirror 自定义前缀（优先级最高）
+    GITHUB_MIRRORS = [
+        "https://ghfast.top/",
+        "https://gh-proxy.com/",
+        "https://github.moeyy.xyz/",
+        "https://ghproxy.net/",
+    ]
+    # 单次克隆连接的拨号超时（秒）— 直连/每个镜像只尝试一次，快速切换到下一个可用源
+    CLONE_CONNECT_TIMEOUT = 30
+
     _js_exec_signal = pyqtSignal(str)
 
     def __init__(self, app_controller):
@@ -960,6 +971,142 @@ class MCPBridge(BridgeBase):
         except Exception:
             return {}
 
+    # ==========================================
+    # GitHub 克隆加速：直连 + 镜像多级轮询
+    # ==========================================
+
+    def _get_user_github_mirror(self) -> str:
+        """从 agent_config 读取用户自定义 GitHub 镜像前缀（优先级最高）"""
+        try:
+            from config.user_config import read_config
+            cfg = read_config("agent_config.json")
+            mirror = (cfg.get("github_mirror") or "").strip().rstrip("/")
+            if mirror:
+                if not (mirror.startswith("http://") or mirror.startswith("https://")):
+                    mirror = "https://" + mirror
+                return mirror + "/"
+        except Exception:
+            pass
+        return ""
+
+    def _get_clone_urls(self, repo_url: str) -> list:
+        """生成克隆候选 URL 列表（按优先级排列）
+
+        优先级：用户自定义镜像 > 直连 > 内置镜像列表
+        直连和用户镜像各自成对去重，避免镜像前缀包裹后出现重复 URL。
+        """
+        urls = []
+        seen = set()
+        repo_url = (repo_url or "").strip()
+        if not repo_url:
+            return urls
+
+        def _add(url):
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+
+        # 1. 用户自定义镜像（最高优先级）
+        user_mirror = self._get_user_github_mirror()
+        if user_mirror:
+            _add(user_mirror + repo_url)
+
+        # 2. 直连
+        _add(repo_url)
+
+        # 3. 内置镜像列表
+        for mirror in self.GITHUB_MIRRORS:
+            _add(mirror + repo_url)
+        return urls
+
+    def _parse_clone_error(self, output: str) -> str:
+        """从 git clone 输出中解析错误类型，返回用户可读的诊断信息"""
+        output = output or ""
+        out_lower = output.lower()
+        if "repository not found" in out_lower or "not found" in out_lower and "remote" in out_lower:
+            return "仓库不存在或已删除（404）"
+        if "could not connect" in out_lower or "failed to connect" in out_lower:
+            return "无法连接到服务器（网络不通/被墙/防火墙拦截）"
+        if "timed out" in out_lower or "timeout" in out_lower:
+            return "连接超时（网络延迟过高或服务器无响应）"
+        if "authentication failed" in out_lower or "permission denied" in out_lower:
+            return "认证失败（仓库为私有或需要凭据）"
+        if "does not appear to be a git repository" in out_lower:
+            return "目标地址不是有效的 Git 仓库"
+        if "access denied" in out_lower or "403" in out_lower:
+            return "访问被拒绝（403）"
+        if "ssl" in out_lower or "certificate" in out_lower:
+            return "SSL 证书校验失败"
+        if "could not resolve host" in out_lower or "dns" in out_lower:
+            return "DNS 解析失败（域名无法解析）"
+        # 截取最后一行有意义的错误
+        lines = [l.strip() for l in output.strip().splitlines() if l.strip()]
+        return lines[-1][:150] if lines else "未知错误"
+
+    def _get_proxy_env(self) -> dict:
+        """检测系统代理环境变量，供 git 克隆时使用"""
+        proxy = {}
+        for env_key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            val = os.environ.get(env_key, "").strip()
+            if val:
+                proxy[env_key] = val
+        return proxy
+
+    def _run_git_clone_with_fallback(self, item_id: str, repo_url: str, clone_dir: str) -> tuple:
+        """尝试直连和多个镜像克隆仓库，返回 (是否成功, 成功/失败详情列表)
+
+        每个候选 URL 只尝试一次（不重复重试），快速切换到下一个可用源；
+        单次尝试超时由 _run_subprocess_with_log 的 timeout 控制（拨号快速失败）。
+        全部失败后返回失败原因汇总，便于前端诊断。
+        """
+        import time as _time
+        # 确保父目录存在
+        parent = os.path.dirname(clone_dir)
+        if parent and not os.path.exists(parent):
+            try:
+                os.makedirs(parent, exist_ok=True)
+            except Exception:
+                pass
+
+        candidate_urls = self._get_clone_urls(repo_url)
+        failures = []
+        proxy_env = self._get_proxy_env()
+        self._last_clone_errors = []  # 供调用方在失败后输出诊断
+
+        for idx, url in enumerate(candidate_urls):
+            # 已克隆成功则直接返回
+            if os.path.exists(os.path.join(clone_dir, ".git")) or (os.path.isdir(clone_dir) and os.listdir(clone_dir)):
+                return True, failures
+
+            url_label = "直连" if url == repo_url else (
+                "自定义镜像" if self._get_user_github_mirror() and url.startswith(self._get_user_github_mirror()) else f"镜像{idx}"
+            )
+            label_detail = url if url == repo_url else url.replace("https://", "").rstrip("/")
+
+            self._js_log(item_id, f"  ⏳ 尝试 [{url_label}]: {label_detail}")
+            if idx > 0:
+                self._js_log(item_id, f"  🔄 直连失败，自动切换加速通道...")
+
+            # git clone 命令（浅克隆）
+            clone_cmd = f"git clone --depth 1 \"{url}\" \"{clone_dir}\""
+
+            # 若有系统代理，在命令中显式传给 git（解决 git 不自带代理的问题）
+            if proxy_env:
+                https_proxy = proxy_env.get("HTTPS_PROXY") or proxy_env.get("https_proxy") or proxy_env.get("HTTP_PROXY") or proxy_env.get("http_proxy")
+                if https_proxy:
+                    clone_cmd = f"git -c http.proxy=\"{https_proxy}\" -c https.proxy=\"{https_proxy}\" clone --depth 1 \"{url}\" \"{clone_dir}\""
+                    self._js_log(item_id, f"  🔌 已检测到系统代理并自动应用")
+
+            # 单次尝试，不在此方法内重试（_run_subprocess_with_log 会对同一命令重试 1 次）
+            # 但仍限制总超时，避免网络无响应时长时间挂起
+            code = self._run_subprocess_with_log(item_id, clone_cmd, "克隆仓库", timeout=self.CLONE_CONNECT_TIMEOUT)
+            if code == 0:
+                return True, failures
+            failures.append((url, code))
+            self._last_clone_errors = list(failures)
+
+        return False, failures
+
     def _run_subprocess_with_log(self, item_id: str, cmd: str, action: str, timeout: int = 120):
         """运行子进程并实时输出日志，支持超时和自动重试"""
         import subprocess
@@ -1134,9 +1281,9 @@ class MCPBridge(BridgeBase):
                 self.execute_js(f"mcpAppendLog('{item_id}', '📥 正在克隆仓库（浅克隆 --depth 1）...');")
                 self.execute_js(f"mcpAppendLog('{item_id}', '   源: {install_url}');")
                 self.execute_js(f"mcpAppendLog('{item_id}', '   目标: {clone_dir}');")
-                # 浅克隆：只取最新代码，减少下载量，避免网络超时
-                clone_cmd = f"git clone --depth 1 \"{install_url}\" \"{clone_dir}\""
-                clone_code = self._run_subprocess_with_log(item_id, clone_cmd, "克隆仓库", timeout=180)
+                # 多级加速链：直连 → 用户自定义镜像 → 内置镜像列表，自动切换失败通道
+                clone_ok, clone_errors = self._run_git_clone_with_fallback(item_id, install_url, clone_dir)
+                clone_code = 0 if clone_ok else -1
                 self.execute_js(f"mcpAppendLog('{item_id}', '   ⏱️ 克隆耗时: {_time.time()-t1:.1f}s');")
                 # 克隆成功后，检查是否有依赖需要安装
                 if clone_code == 0:
@@ -1146,8 +1293,22 @@ class MCPBridge(BridgeBase):
                 clone_code = 0
 
             if clone_code != 0:
-                self.execute_js(f"mcpAppendLog('{item_id}', '❌ 仓库克隆失败，code={clone_code}');")
-                self.execute_js(f"mcpAppendLog('{item_id}', '💡 请检查网络/Git 是否安装/仓库地址');")
+                self.execute_js(f"mcpAppendLog('{item_id}', '❌ 仓库克隆失败，全部通道均不可用');")
+                # 输出详细诊断信息
+                self.execute_js(f"mcpAppendLog('{item_id}', '─── 尝试过的通道 ───');")
+                if hasattr(self, '_last_clone_errors') and self._last_clone_errors:
+                    for url, code in self._last_clone_errors:
+                        host = url.replace('https://', '').replace('http://', '').rstrip('/').split('/')[0]
+                        self.execute_js(f"mcpAppendLog('{item_id}', '  ✗ {host} (code={code})');")
+                    self._last_clone_errors = []
+                # 清理残留的空目录（git clone 失败可能留下空目录，导致下次误判为"已存在"）
+                try:
+                    if os.path.isdir(clone_dir) and not os.listdir(clone_dir):
+                        os.rmdir(clone_dir)
+                        self._js_log(item_id, "  🧹 已清理残留的空目录")
+                except Exception:
+                    pass
+                self.execute_js(f"mcpAppendLog('{item_id}', '💡 请检查：1) 网络/代理是否可用  2) 仓库是否存在  3) 可在设置中配置 GitHub 镜像前缀');")
                 return
 
             if os.path.exists(clone_dir):

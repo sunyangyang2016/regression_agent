@@ -854,12 +854,29 @@ class ChatController(QObject):
     def _inject_mcp_context(self):
         try:
             from tools.mcp.host import MCPHost
-            tools = MCPHost().get_tools()
+            mgr = MCPHost()
+            tools = mgr.get_tools()
             if tools:
-                tool_descs = [
-                    f"- `{t['function']['name']}`: {t['function']['description']}"
-                    for t in tools
-                ]
+                # 构建「工具名 -> 所属服务器 ID」映射（用于空描述工具补占位文案）
+                server_of_tool = {}
+                if hasattr(mgr, "_clients"):
+                    for server_id, host in mgr._clients.items():
+                        try:
+                            for t in host.list_tools():
+                                server_of_tool[t.name] = server_id
+                        except Exception:
+                            continue
+
+                tool_descs = []
+                for t in tools:
+                    fn = t.get("function") or {}
+                    name = fn.get("name", "")
+                    desc = (fn.get("description") or "").strip()
+                    if not desc:
+                        # 空描述补占位：标明来源服务器，避免 AI 无法理解工具用途
+                        src = server_of_tool.get(name, "MCP")
+                        desc = f"（{src} 服务器提供的 MCP 工具）"
+                    tool_descs.append(f"- `{name}`: {desc}")
                 context = "\n\n## 可用工具\n你可以使用以下 MCP 工具来帮助用户：\n" + "\n".join(tool_descs)
                 self.ai_controller.inject_context(context)
         except Exception as e:

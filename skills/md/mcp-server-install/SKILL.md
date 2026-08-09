@@ -27,6 +27,8 @@ description: MCP 服务器安装助手 - 按 5 步标准流程完成 MCP 服务�
 - 打开并阅读项目的关键文件，以识别入口与启动方式
 - 重点关注：`.mcp.json`、`package.json`、`pyproject.toml`、`README.md`、入口文件（如 `index.js`、`server.py`、`main.py`）
 - 从 README 中确认启动方式（npx / pip / uvx / node）和所需的环境变量
+- **读取文件时一次性完整读取**：`file_ops(Read, path=...)` 不传 `length` 即可返回全文（≤12000 字符时完整返回，超过则提示截断）。**不要用 `offset` 分段读取**含中文等非 ASCII 字符的文件——`offset` 是字节偏移，可能落在 UTF-8 多字节字符中间导致显示乱码。若提示内容过长已截断，先用 `file_ops(Read, path=..., offset=0)` 获取完整内容；确实需要分段时，后续 `offset` 应大于上一次返回的结束偏移
+- 若读取失败，不要反复重试或复制文件变通：先检查路径是否存在、是否是二进制/日志文件；仍失败则跳过该文件继续后续步骤
 
 ## 第 3 步：安装依赖
 

@@ -141,9 +141,30 @@ class AIController(QObject):
         )
 
     def inject_context(self, context_text: str):
-        if self.messages and self.messages[0]["role"] == "system":
-            system_prompt = self.model_config.get("chat", "system_prompt")
-            self.messages[0] = {"role": "system", "content": system_prompt + context_text}
+        """将动态上下文注入为消息列表末尾的独立 system 消息（幂等）
+
+        注意（Token 优化）：
+        - 不再将动态上下文拼接到第一条 system 消息，
+          以保持核心 system prompt 稳定（命中 Prompt Cache 降价）。
+        - 动态上下文以「system 设备」追加到消息列表末尾，
+          已存在相同 marker 的 system 消息时替换旧内容。
+        """
+        if not context_text or not context_text.strip():
+            return
+        # 提取 marker（取内容中第一个 "##" 标题作为标识）
+        marker_found = False
+        for line in context_text.strip().splitlines():
+            line = line.strip()
+            if line.startswith("## "):
+                for i in range(len(self.messages) - 1, -1, -1):
+                    msg = self.messages[i]
+                    if msg.get("role") == "system" and line in (msg.get("content", "") or ""):
+                        self.messages[i] = {"role": "system", "content": context_text.strip()}
+                        marker_found = True
+                        break
+                break
+        if not marker_found:
+            self.messages.append({"role": "system", "content": context_text.strip()})
 
     def compress_context(self, strategy="truncate"):
         """手动压缩当前会话上下文（用户主动触发）

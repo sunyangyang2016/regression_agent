@@ -12,3 +12,8 @@ dependencies = [
 members = [
     "mcp_server/server/uweather",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

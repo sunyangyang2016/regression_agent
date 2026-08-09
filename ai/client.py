@@ -410,11 +410,16 @@ class AIClient:
 
         幂等性：以「## 当前已安装的工具清单」为标记，已注入时先移除旧块再注入新块，
         保证启用状态变化后清单始终是最新的。
+
+        注意（Token 优化）：
+        - 动态内容不再拼接到第一条 system 消息中（保持核心 system prompt 稳定，
+          以命中 API 提供商的 prompt cache，降低成本）。
+        - 改为在消息列表末尾追加/替换独立 system 消息。
         """
         if not tools:
             return
 
-        lines = ["\n## 当前已安装的工具清单"]
+        lines = ["## 当前已安装的工具清单"]
         lines.append("当用户询问安装了哪些工具、有哪些可用能力时，直接根据以下列表回答，不要调用任何工具去查看。")
         for t in tools:
             fn = t.get("function") or {}
@@ -425,15 +430,13 @@ class AIClient:
         tool_block = "\n".join(lines)
 
         marker = "## 当前已安装的工具清单"
-        for i, msg in enumerate(self.messages):
-            if msg.get("role") == "system":
-                content = msg.get("content", "")
-                if marker in content:
-                    # 替换旧块，保持最新启用状态
-                    content = content.split(marker)[0].rstrip()
-                content = (content + "\n" + tool_block).strip()
-                self.messages[i] = {"role": "system", "content": content}
-                break
+        # 从消息列表末尾向前查找已有的动态 system 消息，替换；未找到则追加
+        for i in range(len(self.messages) - 1, -1, -1):
+            if self.messages[i].get("role") == "system" and marker in (self.messages[i].get("content", "") or ""):
+                self.messages[i] = {"role": "system", "content": tool_block}
+                return
+        # 未找到：追加到末尾（不改变第一条稳定 system 消息）
+        self.messages.append({"role": "system", "content": tool_block})
 
 
     def _get_builtin_tools(self) -> list:
@@ -529,12 +532,19 @@ class AIClient:
                         tools_info = f" [工具: {', '.join(tool_names)}]"
                 lines.append(f"- `{s['id']}`: {status}{tools_info}")
             
+            # Token 优化：MCP 服务器状态作为独立 system 消息追加到末尾，
+            # 不修改第一条稳定 system prompt（以命中 prompt cache）
+            marker = "## MCP 服务器状态"
             context = "\n".join(lines)
-            # 追加到 system prompt，避免重复注入
-            if context not in self._system_prompt:
-                enhanced = self._system_prompt + context
-                self.set_system_prompt(enhanced)
-                print(f"[AI] 📊 已注入 MCP 服务器状态 ({len(online_servers)}/{len(all_servers)} 在线)")
+            # 从末尾向前查找已有 MCP 状态 system 消息，替换；未找到则追加
+            for i in range(len(self.messages) - 1, -1, -1):
+                if self.messages[i].get("role") == "system" and marker in (self.messages[i].get("content", "") or ""):
+                    self.messages[i] = {"role": "system", "content": context}
+                    print(f"[AI] 📊 已更新 MCP 服务器状态 ({len(online_servers)}/{len(all_servers)} 在线)")
+                    return
+            # 未找到：追加到末尾（不改变第一条稳定 system 消息）
+            self.messages.append({"role": "system", "content": context})
+            print(f"[AI] 📊 已注入 MCP 服务器状态 ({len(online_servers)}/{len(all_servers)} 在线)")
         except Exception as e:
             print(f"[AI] ⚠️ 注入 MCP 服务器状态失败: {e}")
 
