@@ -90,19 +90,12 @@ class MonitorBridge(QObject):
 
     @pyqtSlot(str)
     def pushData(self, data_json):
-        """MCP 监控工具返回的数据推送到内存，立即弹监控面板，并发出 dataPushed 信号"""
+        """MCP 监控工具返回的数据推送到内存，发出 dataPushed 信号。
+        注意：不再自动弹出/切换监控面板，避免打断用户当前 Tab。"""
         try:
             self._latest_data = json.loads(data_json)
-            # 插件拿到 view：收到数据 → 仅当面板尚未显示时才弹出（避免每次推送重复 show）
-            if self._webview is not None:
-                self._webview.page().runJavaScript(
-                    "if(typeof showPlugin==='function'){"
-                    "var _w=document.getElementById('pluginFloat_monitor_plugin');"
-                    "if(!_w||_w.style.display==='none'){showPlugin('monitor_plugin');}"
-                    "}"
-                )
             self.dataPushed.emit()
-            print("[MonitorBridge] ✅ pushData 已缓存并触发弹窗")
+            print("[MonitorBridge] ✅ pushData 已缓存并通知前端渲染")
         except Exception as e:
             print(f"[MonitorBridge] ⚠️ pushData 解析失败: {e}")
 

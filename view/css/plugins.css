@@ -27,8 +27,12 @@
    ============================================ */
 
 /* chat-container 始终为 flex column 布局：
-   Tab 栏固定在顶部，内容区（聊天/插件）撑满剩余空间 */
+   Tab 栏固定在顶部，内容区（聊天/插件）撑满剩余空间。
+   注意：必须保留 flex: 1 使其占满 .main-content 中除
+   header / status-bar / input 之外的剩余空间 */
 .chat-container {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -38,9 +42,8 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    max-width: var(--chat-max-width, 900px);
-    margin: 0 auto;
-    padding: 24px 0 24px;
+    width: 100%;           /* 铺满整个宽度，与系统监控插件一致 */
+    padding: 24px;
 }
 .chat-container .chat-messages .welcome-screen {
     min-height: 50vh;
@@ -146,8 +149,9 @@
     overflow-x: hidden;
 }
 
-/* 插件内容主体（包含插件自身 html） */
+/* 插件内容主体（包含插件自身 html）
+   不提供默认 padding，由各插件自身容器控制内边距 */
 .plugin-tab-body {
-    padding: 16px 20px;
+    padding: 0;
     user-select: text;
 }

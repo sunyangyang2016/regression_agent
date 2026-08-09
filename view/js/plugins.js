@@ -170,6 +170,11 @@ function updateChatTabTitle(title) {
     if (el) el.textContent = title || '新对话';
 }
 
+// 判断指定插件是否已在 Tab 栏中打开
+function isPluginTabOpen(name) {
+    return !!document.getElementById('pluginTab_' + name);
+}
+
 // 显示插件：在 Tab 栏创建/激活对应插件 Tab
 function showPlugin(name) {
     initPluginTabs();

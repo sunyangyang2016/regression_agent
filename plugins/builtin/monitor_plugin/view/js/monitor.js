@@ -272,15 +272,8 @@
         data.remote_server = data.remote_server || 'linux_monitor';
         applyAll(data);
         renderConclusion(data);
-        // 自动弹出监控面板（仅当面板尚未显示时才 show，避免每次推送重复弹窗）
-        if (typeof showPlugin === 'function') {
-            try {
-                var _win = document.getElementById('pluginFloat_monitor_plugin');
-                if (!_win || _win.style.display === 'none') {
-                    showPlugin('monitor_plugin');
-                }
-            } catch(e) { console.warn('[Monitor] 自动弹窗失败:', e); }
-        }
+        // 注意：不自动切换/打开监控 Tab，避免打断用户当前视图
+        // 数据只在后台静默渲染，用户手动切到监控 Tab 时即可看到最新数据
     };
 
     // ============================================

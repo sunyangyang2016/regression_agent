@@ -5,6 +5,8 @@
    ============================================ */
 .mon-dashboard {
     width: 100%;
+    padding: 20px;
+    box-sizing: border-box;
     color: #e8eaed;
     font-family: 'Inter', system-ui, sans-serif;
 }

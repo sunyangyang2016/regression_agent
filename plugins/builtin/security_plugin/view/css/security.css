@@ -1,8 +1,67 @@
-body { font-family: 'Inter', sans-serif; background: #0f1115; color: #e8eaed; padding: 20px; }
-h2 { font-size: 18px; margin-bottom: 16px; }
-h3 { font-size: 14px; margin-bottom: 10px; color: #8ab4f8; }
-.sec-section { background: #1a1d23; border: 1px solid #2d3240; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-label { display: block; font-size: 13px; color: #b0b6c0; margin-bottom: 10px; }
-select, textarea { width: 100%; background: #22252b; color: #e8eaed; border: 1px solid #2d3240; border-radius: 6px; padding: 8px; margin-top: 4px; font-size: 13px; box-sizing: border-box; }
-button { background: #8ab4f8; color: #0f1115; border: none; border-radius: 6px; padding: 8px 24px; font-size: 14px; font-weight: 600; cursor: pointer; }
-#statusMsg { margin-top: 12px; font-size: 13px; min-height: 18px; }
+/* 安全插件样式 - 适配 Tab 注入场景（与系统监控插件视觉一致） */
+.security-plugin-container {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #e8eaed;
+    padding: 20px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.security-plugin-container h2 {
+    font-size: 18px;
+    margin-bottom: 16px;
+    color: #e8eaed;
+    font-weight: 600;
+}
+.security-plugin-container h3 {
+    font-size: 14px;
+    margin-bottom: 10px;
+    color: #8ab4f8;
+}
+.security-plugin-container .sec-section {
+    background: #1a1d23;
+    border: 1px solid #2d3240;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.security-plugin-container label {
+    display: block;
+    font-size: 13px;
+    color: #b0b6c0;
+    margin-bottom: 10px;
+}
+.security-plugin-container select,
+.security-plugin-container textarea {
+    width: 100%;
+    background: #22252b;
+    color: #e8eaed;
+    border: 1px solid #2d3240;
+    border-radius: 6px;
+    padding: 8px;
+    margin-top: 4px;
+    font-size: 13px;
+    box-sizing: border-box;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+.security-plugin-container button {
+    background: #8ab4f8;
+    color: #0f1115;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.15s;
+}
+.security-plugin-container button:hover {
+    background: #a5c9ff;
+}
+.security-plugin-container #statusMsg {
+    margin-top: 12px;
+    font-size: 13px;
+    min-height: 18px;
+    color: #b0b6c0;
+}
