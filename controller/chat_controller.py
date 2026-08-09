@@ -145,40 +145,56 @@ class ChatController(QObject):
         threading.Thread(target=do_ai_call, daemon=True).start()
 
     def _apply_context_window_before_send(self):
-        """发送消息前基于真实累计 token 判断并执行滑动/压缩
+        """发送消息前基于「当前实际上下文占用」判断并执行滑动
 
-        根因修复：之前滑动判断在 stream_handler 内用 TokenCounter 估算内存消息，
-        与 UI 显示的 API 真实累计 token（_session_total_tokens）不联动，
-        导致界面已超 112% 但滑动估算值仍未达阈值 → 滑动从未触发。
+        根因修复：之前用 _session_total_tokens（历史累计口径，随轮次虚高）判断，
+        与真实上下文压力脱节，导致 UI 显示 >100% 但滑动不按需触发；
+        且滑动后仅按比例缩放累计值，UI 百分比与实际消息占用不符。
 
         现在：
-        1. 用 _session_total_tokens（API 真实累计，与 UI 百分比一致）判断是否超 90%
-        2. 超限时用 ContextWindowManager 对 ai_controller.messages 滑动
-           （保留最新 50% 对话、system prompt 最前）
-        3. 滑动结果同步更新 _session_total_tokens 并重推 UI 百分比
+        1. 用 TokenCounter 估算当前内存消息真实占用（含注入的 system/工具清单）
+        2. 超过 max_context × 90% 时 force_slide：保留最新 50% 对话、system 最前
+        3. 滑动结果应用回 ai_controller.messages，UI 由 push_token_stats 按真实占用刷新
+
+        注意：push_token_stats 的 totalTokens 保留累计口径（_session_total_tokens），
+        contextPercent 由 push_token_stats 内部基于真实消息占用计算。
         """
         try:
+            from ai.token_counter import TokenCounter
             max_ctx = self._get_max_context()
             threshold = int(max_ctx * 0.9)
-            # 未超阈值不处理（也避免首次无数据时误触发）
-            if self._session_total_tokens <= threshold:
+            messages = self.ai_controller.messages or []
+            current_usage = TokenCounter.count_messages(messages)
+            ctx_pct = (current_usage / max_ctx) * 100 if max_ctx else 0
+            # 未超阈值：仅同步一次真实占用到 UI（保持展示与实际一致）
+            if current_usage <= threshold:
+                self.push_token_stats(
+                    self._session_total_tokens,
+                    self._session_hit_tokens + self._session_miss_tokens,
+                    self._session_output_tokens, ctx_pct,
+                    self._session_total_cost, max_ctx,
+                    self._session_hit_tokens, self._session_miss_tokens
+                )
                 return
 
             from ai.context_window import ContextWindowManager
             mgr = ContextWindowManager(max_context=max_ctx)
-            # 用 force_slide：真实累计已超限，跳过 TokenCounter 估算触发判断，
-            # 直接按 keep_ratio(50%) 保留最新对话、system prompt 最前
-            new_messages, stats = mgr.force_slide(self.ai_controller.messages)
-            if not stats.get("triggered"):
+            new_messages, stats = mgr.force_slide(messages)
+            if not stats.get("triggered") or stats.get("removed_units", 0) <= 0:
+                # 无可滑动的对话单元（如全部为 system）——仅同步真实占用
+                self.push_token_stats(
+                    self._session_total_tokens,
+                    self._session_hit_tokens + self._session_miss_tokens,
+                    self._session_output_tokens, ctx_pct,
+                    self._session_total_cost, max_ctx,
+                    self._session_hit_tokens, self._session_miss_tokens
+                )
                 return
             # 应用滑动结果到 AI 上下文
             self.ai_controller.messages = new_messages
-            # 滑动后 context 占用按保留比例估算（真实累计 × keep_ratio），同步 UI 百分比
-            removed_units = stats.get("removed_units", 0)
-            kept_ratio = stats.get("keep_ratio", 0.5)
-            self._session_total_tokens = int(self._session_total_tokens * kept_ratio)
-            max_ctx = self._get_max_context()
-            ctx_pct = (self._session_total_tokens / max_ctx) * 100
+            # 滑动后 UI 按「滑动后的真实占用」刷新（totalTokens 仍用累计口径）
+            after_usage = TokenCounter.count_messages(new_messages)
+            ctx_pct = (after_usage / max_ctx) * 100 if max_ctx else 0
             self.push_token_stats(
                 self._session_total_tokens,
                 self._session_hit_tokens + self._session_miss_tokens,
@@ -186,8 +202,8 @@ class ChatController(QObject):
                 self._session_total_cost, max_ctx,
                 self._session_hit_tokens, self._session_miss_tokens
             )
-            print(f"{LOG} ⚠️ 发送前触发滑动: 移除 {stats['removed_units']} 个旧对话单元, "
-                  f"保留最新 {stats['kept_units']} 个单元 (keep_ratio={stats['keep_ratio']}), prompt 保留")
+            print(f"{LOG} ⚠️ 发送前触发滑动: 上下文 {current_usage} → {after_usage} tokens, "
+                  f"移除 {stats['removed_units']} 个旧对话单元, prompt 保留")
         except Exception as e:
             print(f"{LOG} ⚠️ 发送前滑动窗口检查失败: {e}")
 
@@ -599,7 +615,9 @@ class ChatController(QObject):
         self._session_total_tokens += input_tokens + output_tokens
 
         max_ctx = self._get_max_context()
-        ctx_pct = (self._session_total_tokens / max_ctx) * 100
+        # context 占用用本轮 API 真实 prompt_tokens（= 当前实际发送给模型的消息 token），
+        # 与累计 token 一起刷新，避免进度条与 token 显示脱节或虚高超 100%
+        ctx_pct = (input_tokens / max_ctx) * 100 if max_ctx and input_tokens > 0 else 0
 
         # 累计费用由 3 类累计 token 按当前模型的配置单价推导，确保 UI 上费用与 token 同步刷新
         self._session_total_cost = self._calculate_session_cost(
@@ -762,7 +780,9 @@ class ChatController(QObject):
             self._session_hit_tokens = accum_hit
             self._session_miss_tokens = accum_miss
             max_ctx = self._get_max_context()
-            ctx_pct = (self._session_total_tokens / max_ctx) * 100
+            # context 占用用 API 本轮真实 prompt_tokens（与 token 累计同一次推送刷新）
+            prompt_tokens = int(data.get("prompt_tokens", 0))
+            ctx_pct = (prompt_tokens / max_ctx) * 100 if max_ctx and prompt_tokens > 0 else 0
             self._session_total_cost = self._calculate_session_cost(
                 self._session_hit_tokens, self._session_miss_tokens, self._session_output_tokens
             )
@@ -817,13 +837,26 @@ class ChatController(QObject):
     def push_token_stats(self, total_tokens: int, input_tokens: int, output_tokens: int,
                          context_percent: float, cost: float, max_context: int = 65536,
                          hit_tokens: int = 0, miss_tokens: int = 0):
+        """推送 token 统计到 UI
+
+        - totalTokens：保留传入的「累计口径」值（会话累计 token，随轮次增长）
+          由调用方传入 _session_total_tokens，前端 tokenCount 显示累计。
+        - contextPercent：用「当前发送给模型的实际消息占用」计算，
+          避免用历史累计口径使进度条虚高超 100%。
+        - hit/miss/output 与 cost 继续使用累计统计口径。
+        """
+        # 尊重调用方传入的 context_percent（各调用点已用 API 真实 prompt_tokens 计算），
+        # 使 context 占用与 token 显示在同一次推送中一起刷新。
+        ctx_pct = float(context_percent)
+        # 进度条百分比钳制到 0~100，避免虚高超界
+        ctx_pct = max(0.0, min(ctx_pct, 100.0))
         stats = {
             "totalTokens": total_tokens,
             "inputTokens": input_tokens,
             "outputTokens": output_tokens,
             "hitTokens": hit_tokens,
             "missTokens": miss_tokens,
-            "contextPercent": round(context_percent, 1),
+            "contextPercent": round(ctx_pct, 1),
             "cost": round(cost, 4),
             "maxContext": max_context
         }

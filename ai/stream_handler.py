@@ -174,6 +174,16 @@ class StreamHandler:
                 self._tool_name_map = merged
             tools = sanitized
         
+        # ====== 每条用户消息 = 全新 token 累计 ======
+        # _progress_acc_* 是实例级变量，若不清零会跨会话/跨消息永久累加，
+        # 导致 UI 顶部显示的 token 变成「程序启动以来所有会话的总和」。
+        # 这里在 stream_chat 入口归零，使本次消息内的多轮工具调用在内部正确累加，
+        # 而新消息/新会话从 0 开始。
+        self._progress_acc_input = 0
+        self._progress_acc_output = 0
+        self._progress_acc_hit = 0
+        self._progress_acc_miss = 0
+
         while round_count < max_rounds:
             round_count += 1
             
@@ -338,6 +348,7 @@ class StreamHandler:
                             "accum_output": self._progress_acc_output,
                             "accum_hit": self._progress_acc_hit,
                             "accum_miss": self._progress_acc_miss,
+                            "prompt_tokens": prompt_tokens,  # 最新一轮真实上下文占用（服务端计数）
                             "round_total": prompt_tokens + (usage_info.completion_tokens or 0),
                         }
                         self.on_progress_usage(json.dumps(progress_payload, ensure_ascii=False))
