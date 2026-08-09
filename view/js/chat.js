@@ -100,6 +100,10 @@ window.chatApp = {
             if (this._currentAssistantId) {
                 var oldEl = document.getElementById(this._currentAssistantId);
                 if (oldEl && !oldEl.getAttribute('data-interrupted')) {
+                    // 先清除「思考中」打字动画状态，避免残留
+                    oldEl.removeAttribute('data-thinking');
+                    var oldTyping = oldEl.querySelector('.typing-indicator');
+                    if (oldTyping) oldTyping.remove();
                     oldEl.setAttribute('data-interrupted', 'true');
                     if (oldEl.textContent.trim() !== '') {
                         oldEl.textContent = oldEl.textContent + '\n\n⏹️ 已中断';
@@ -292,6 +296,15 @@ window.chatApp = {
             }
         }
         if (id) {
+            var bodyEl = document.getElementById(id);
+            if (bodyEl) {
+                // 清除可能残留的「思考中」打字动画（如意外中断/错误场景）
+                if (bodyEl.getAttribute('data-thinking')) {
+                    bodyEl.removeAttribute('data-thinking');
+                }
+                var typing = bodyEl.querySelector('.typing-indicator');
+                if (typing) typing.remove();
+            }
             var contentDiv = document.getElementById(id)?.closest('.message')?.querySelector('.message-content');
             if (contentDiv && !contentDiv.querySelector('.message-actions')) {
                 var actions = document.createElement('div');
@@ -375,10 +388,26 @@ window.onStreamUpdate = function(content) {
     }
     if (id) {
         var el = document.getElementById(id);
-        if (el && typeof formatMessage === 'function') {
-            el.innerHTML = formatMessage(content);
-        } else if (el) {
-            el.textContent = content;
+        if (el) {
+            // "思考中"占位：仅显示打字动画，不渲染占位文字（收到应答后自动被真实内容替换）
+            if (content === '⏳ 思考中…') {
+                if (!el.getAttribute('data-thinking')) {
+                    el.setAttribute('data-thinking', 'true');
+                    el.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+                }
+            } else {
+                // 真实内容：清除思考状态与打字动画，正常渲染
+                if (el.getAttribute('data-thinking')) {
+                    el.removeAttribute('data-thinking');
+                }
+                var typing = el.querySelector('.typing-indicator');
+                if (typing) typing.remove();
+                if (typeof formatMessage === 'function') {
+                    el.innerHTML = formatMessage(content);
+                } else {
+                    el.textContent = content;
+                }
+            }
         }
         // 每次更新内容后自动向下滚动（使用 .chat-container 因为它是 overflow-y:auto 的容器）
         var scrollEl = document.querySelector('.chat-container');
@@ -402,6 +431,10 @@ window.onAIStopped = function() {
     if (window.chatApp._stopRequested && window.chatApp._currentAssistantId) {
         var el = document.getElementById(window.chatApp._currentAssistantId);
         if (el && !el.getAttribute('data-interrupted')) {
+            // 先清除可能的「思考中」打字动画，避免与中断标记共存
+            el.removeAttribute('data-thinking');
+            var typing = el.querySelector('.typing-indicator');
+            if (typing) typing.remove();
             el.setAttribute('data-interrupted', 'true');
             if (el.textContent.trim() !== '') {
                 el.textContent = el.textContent + '\n\n⏹️ 已中断';
@@ -416,7 +449,15 @@ window.onAIStopped = function() {
 window.onShowError = function(errorMsg) {
     if (window.chatApp._currentAssistantId) {
         var el = document.getElementById(window.chatApp._currentAssistantId);
-        if (el) el.textContent = '❌ ' + errorMsg;
+        if (el) {
+            // 先清除「思考中」打字动画，再显示错误信息
+            if (el.getAttribute('data-thinking')) {
+                el.removeAttribute('data-thinking');
+            }
+            var typing = el.querySelector('.typing-indicator');
+            if (typing) typing.remove();
+            el.textContent = '❌ ' + errorMsg;
+        }
     }
     window.chatApp.completeMessage();
 };

@@ -38,8 +38,8 @@
 .message:hover .message-actions{opacity:1;}
 .message-actions button{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px 8px;border-radius:var(--radius-sm);transition:var(--transition);font-size:13px;}
 .message-actions button:hover{background:var(--bg-hover);color:var(--text-primary);}
-.typing-indicator{display:flex;gap:4px;padding:8px 0;}
-.typing-indicator span{width:8px;height:8px;background:var(--text-muted);border-radius:50%;animation:typingBounce 1.4s infinite;}
+.typing-indicator{display:inline-flex;align-items:center;gap:4px;padding:4px 2px;min-height:16px;}
+.typing-indicator span{width:7px;height:7px;background:var(--text-muted);border-radius:50%;animation:typingBounce 1.4s infinite;display:inline-block;}
 .typing-indicator span:nth-child(2){animation-delay:.2s;}
 .typing-indicator span:nth-child(3){animation-delay:.4s;}
 @keyframes typingBounce{0%,60%,100%{transform:translateY(0);opacity:0.4;}30%{transform:translateY(-8px);opacity:1;}}

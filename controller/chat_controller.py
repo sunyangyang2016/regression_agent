@@ -316,10 +316,14 @@ class ChatController(QObject):
             elif role == "assistant":
                 self.ai_controller.messages.append({"role": "assistant", "content": content})
             elif role == "tool":
-                # 历史工具调用消息：按时间正序加载，自然落在对应 assistant 轮次之后，
-                # 保持 OpenAI 协议配对（assistant(tool_calls) → tool）。
-                # 完整内容加载，不截断（用户明确要求工具调用「放入历史」）。
-                self.ai_controller.messages.append({"role": "tool", "content": content})
+                # 历史工具调用消息：仅用于 UI 展示，不加载到 AI 上下文。
+                # 原因：OpenAI 协议要求 role="tool" 消息必须携带 tool_call_id，
+                # 且其对应的 assistant 消息必须携带 tool_calls（配对约束）。
+                # 数据库中仅保存了可读的展示文本（如 "🔧 工具调用: ..."），
+                # 缺少 tool_call_id / tool_calls / function 名称等协议字段，
+                # 直接发送给 API 会触发 400 错误：missing field 'tool_call_id'。
+                # 跳过 tool 历史不参与 AI 上下文，不影响 UI 展示（load_latest_messages 渲染）。
+                continue
 
         # 前端显示最新 100 条（不含 system prompt），更早的历史由滚动分页加载
         ui_msgs_json = json.dumps(ui_messages, ensure_ascii=False)
