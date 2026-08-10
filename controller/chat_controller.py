@@ -895,7 +895,7 @@ class ChatController(QObject):
                 break
         js = (
             f"currentChatId={json.dumps(cid)}; "
-            f"document.getElementById('chatTitle').textContent={json.dumps(title, ensure_ascii=False)}; "
+            f"if (typeof updateChatTabTitle === 'function') updateChatTabTitle({json.dumps(title, ensure_ascii=False)}); "
             f"renderChatList({json.dumps(data, ensure_ascii=False)});"
         )
         if self.bridge:

@@ -57,13 +57,12 @@ class AppController(QObject):
         # 运行时同步 AI 工具时，跟踪已注册的 MD 技能工具名（skill_<name>），用于增删/启停后清理
         self._md_skill_tool_names: set = set()
 
-
         self.bridge_objects = {}
         # 插件自带 bridge 对象强引用缓存：QWebChannel.registerObject() 不持有所有权，
         # 若此处不保存，Python GC 回收后 JS 端访问会触发 C 级段错误（进程无痕消失）
         self._plugin_bridge_objects: dict = {}
         self.webview = None
-        self.main_window = None 
+        self.main_window = None
         self.bridge_manager = None
         self.bridge_loader = None
         self._bridge = None  # ChatBridge 实例，用于信号连接
@@ -104,6 +103,7 @@ class AppController(QObject):
     def _register_bridge_objects(self):
         from bridge import ChatBridge, ModelBridge, ToolBridge, SkillBridge, MCPBridge, PluginBridge
         from bridge.agent_config_bridge import AgentConfigBridge
+        from bridge.voice_bridge import VoiceBridge
 
         main_bridge = ChatBridge(self)
         config_bridge = ModelBridge(self)
@@ -112,9 +112,11 @@ class AppController(QObject):
         mcp_bridge = MCPBridge(self)
         plugin_bridge = PluginBridge(self)
         agent_config_bridge = AgentConfigBridge(self)
+        voice_bridge = VoiceBridge(self)
 
         self._bridge = main_bridge  # 保存引用用于信号连接
         self.mcp_bridge = mcp_bridge  # 保存引用供 AI 调度器使用
+        self.voice_bridge = voice_bridge  # 保存引用供语音识别使用
 
         self.bridge_objects = {
             "py_bridge": main_bridge,
@@ -124,6 +126,7 @@ class AppController(QObject):
             "mcp_bridge": mcp_bridge,
             "plugin_bridge": plugin_bridge,
             "agent_config_bridge": agent_config_bridge,
+            "voice_bridge": voice_bridge,
         }
         return main_bridge
 
@@ -152,10 +155,10 @@ class AppController(QObject):
                 f"renderChatList({json.dumps(data, ensure_ascii=False)});"
             ))
         )
-        # 对话标题更新时同步到前端
+        # 对话标题更新时同步到前端（聊天 Tab 标题，UI 已重构为插件 Tab 栏）
         self.conversation_model.title_changed.connect(
             lambda cid, title: QTimer.singleShot(0, lambda: self._bridge.execute_js(
-                f"document.getElementById('chatTitle').textContent={json.dumps(title, ensure_ascii=False)};"
+                f"if (typeof updateChatTabTitle === 'function') updateChatTabTitle({json.dumps(title, ensure_ascii=False)});"
             ))
         )
 
@@ -168,7 +171,7 @@ class AppController(QObject):
 
             # 延迟初始化（让 UI 先渲染，避免卡住侧边栏显示）
             QTimer.singleShot(100, self._delayed_init)
-            
+
             self._initialized = True
             print(f"{LOG} ✅ 所有组件初始化完成")
         except Exception as e:
@@ -341,8 +344,8 @@ class AppController(QObject):
                 "    try {\n"
                 "        appState.skills = " + skills_data + ";\n"
                 "        if (typeof renderSkills === 'function') renderSkills();\n"
-                "        console.log('[Skills] \u76F4\u63A5\u6CE8\u5165 ' + appState.skills.length + ' \u4E2A\u6280\u80FD');\n"
-                "    } catch(e) { console.warn('[Skills] \u6CE8\u5165\u5931\u8D25:', e); }\n"
+                "        console.log('[Skills] \\u76F4\\u63A5\\u6CE8\\u5165 ' + appState.skills.length + ' \\u4E2A\\u6280\\u80FD');\n"
+                "    } catch(e) { console.warn('[Skills] \\u6CE8\\u5165\\u5931\\u8D25:', e); }\n"
                 "}"
             )
             if self._bridge:
@@ -353,11 +356,11 @@ class AppController(QObject):
             QTimer.singleShot(1500, lambda: self._execute_js_safe(
                 "if (typeof appState !== 'undefined' && typeof renderSkills === 'function') {"
                 "appState.skills = " + skills_json + "; renderSkills();"
-                "console.log('[Skills] \u5EF6\u8FDF\u6CE8\u5165 ' + appState.skills.length + ' \u4E2A\u6280\u80FD');"
+                "console.log('[Skills] \\u5EF6\\u8FDF\\u6CE8\\u5165 ' + appState.skills.length + ' \\u4E2A\\u6280\\u80FD');"
                 "}"
             ))
         except Exception as e:
-            print(f"[AppController] ⚠️ \u63A8\u9001\u6280\u80FD\u6570\u636E\u5931\u8D25: {e}")
+            print(f"[AppController] ⚠️ \\u63A8\\u9001\\u6280\\u80FD\\u6570\\u636E\\u5931\\u8D25: {e}")
 
     def _execute_js_safe(self, js_code: str):
         """安全执行 JS"""
@@ -578,6 +581,11 @@ class AppController(QObject):
         if self.bridge_manager:
             try:
                 self.bridge_manager.cleanup()
+            except Exception:
+                pass
+        if hasattr(self, 'voice_bridge') and self.voice_bridge:
+            try:
+                self.voice_bridge.cleanup()
             except Exception:
                 pass
         if self.ai_controller:

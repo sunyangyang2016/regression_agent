@@ -176,6 +176,7 @@
                 <div class="input-box">
                     <textarea id="messageInput" rows="1" placeholder="输入消息... (Shift+Enter 换行)" onkeydown="handleInputKeydown(event)" oninput="autoResize(this)"></textarea>
                     <div class="input-tools">
+                        <button id="voiceBtn" onclick="toggleVoiceInput()" title="语音输入（点击开始/停止）"><i class="fas fa-microphone"></i></button>
                         <button onclick="toggleAttachment()"><i class="fas fa-paperclip"></i></button>
                         <button onclick="toggleCodeBlock()"><i class="fas fa-code"></i></button>
                         <button onclick="showMCPStatus()"><i class="fas fa-plug"></i></button>
@@ -231,6 +232,7 @@
     <script src="js/ui.js?v=3"></script>
     <script src="js/chat_log.js"></script>
     <script src="js/chat.js"></script>
+    <script src="js/voice_input.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

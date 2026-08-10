@@ -2,3 +2,10 @@
 /* 停止按钮模式（AI 回复中） */
 .send-btn.stop-mode{background:var(--accent-danger);}
 .send-btn.stop-mode:hover{background:#e04545;transform:scale(1.02);}
+/* 语音输入 — 录音中状态 */
+#voiceBtn{transition:var(--transition);}
+#voiceBtn:hover{background:var(--bg-hover);color:var(--accent-primary);}
+#voiceBtn.listening{color:var(--accent-danger);background:rgba(255,77,79,0.12);animation:voice-pulse 1.2s ease-in-out infinite;}
+#voiceBtn.voice-chat{color:#fff;background:var(--accent-danger);border-radius:50%;animation:voice-chat-pulse 1.5s ease-in-out infinite;box-shadow:0 0 10px rgba(255,77,79,0.5);}
+@keyframes voice-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.15);}}
+@keyframes voice-chat-pulse{0%,100%{box-shadow:0 0 6px rgba(255,77,79,0.4);}50%{box-shadow:0 0 16px rgba(255,77,79,0.8);}}

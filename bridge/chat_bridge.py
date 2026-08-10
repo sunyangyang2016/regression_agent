@@ -3,6 +3,7 @@ ChatBridge - 聊天对话桥接
 处理对话消息、会话管理、流式更新等前后端交互
 """
 import json
+import re
 from PyQt5.QtCore import pyqtSlot, pyqtSignal
 
 from .base import BridgeBase
@@ -21,6 +22,13 @@ class ChatBridge(BridgeBase):
         # 可选回调钩子（MCP 安装捕获 AI 回复用；默认 None）
         self._on_content_chunk = None   # 收到 AI 流式片段时回调(chunk)
         self._on_stream_done = None     # AI 流式完成时回调()
+        # 语音交互模式：缓存最近一次 AI 流式回复（供 TTS 朗读）
+        self._last_ai_reply = ""
+        # 流式朗读：断句累积缓冲（AI 边输出边播放）
+        self._tts_buffer = ""
+        # 已送入 TTS 的字符数（AIController 推送的是累积全文，
+        # 用此记录提取增量，避免已播内容重复累积 / 重复播放）
+        self._tts_last_len = 0
 
     def set_content_sink(self, chunk_cb, done_cb):
         """注册内容回调（MCP 安装启动时由调用方注册；结束后 clear）"""
@@ -179,7 +187,7 @@ class ChatBridge(BridgeBase):
                 '<h1 class="welcome-title">AI 智能助手</h1>' \
                 '</div>'
             js = (
-                f"document.getElementById('chatTitle').textContent='新对话';"
+                f"if (typeof updateChatTabTitle === 'function') updateChatTabTitle('新对话');"
                 f"document.getElementById('chatMessages').innerHTML={json.dumps(welcome_html)};"
                 f"window.chatApp.messages=[];"
                 f"renderChatList({json.dumps(data, ensure_ascii=False)});"
@@ -218,14 +226,63 @@ class ChatBridge(BridgeBase):
     # ==========================================
 
     def on_stream_update(self, content: str):
-        """流式更新消息内容（基础转发；MCP 等注册的 chunk 回调会额外收到分片）"""
+        """流式更新消息内容（基础转发；MCP 等注册的 chunk 回调会额外收到分片）
+
+        注意：AIController 推送的 content 是「累积全文」（非增量），
+        UI 侧 onStreamUpdate 依赖全文全量渲染；而 TTS 只需增量，
+        这里用 _tts_last_len 提取「新增部分」再喂给 _feed_tts_stream，
+        避免已播过的内容被反复累积 → 重复播放。
+        """
         c = json.dumps(content)
         self.execute_js(f"window.onStreamUpdate({c});")
+        # 缓存 AI 回复内容（跳过"思考中…"占位），供语音交互模式 TTS 朗读使用
+        if content and content != '⏳ 思考中…':
+            self._last_ai_reply = content
+            # 只把「新增部分」送入流式朗读（累积全文 → 增量提取）
+            if len(content) > self._tts_last_len:
+                delta = content[self._tts_last_len:]
+                self._tts_last_len = len(content)
+                self._feed_tts_stream(delta)
         if self._on_content_chunk is not None:
             try:
                 self._on_content_chunk(content)
             except Exception as e:
                 print(f"[ChatBridge] ⚠️ chunk 回调失败: {e}")
+
+    def _feed_tts_stream(self, delta: str):
+        """累积流式内容，遇断句标点立即触发语音朗读（AI 边输出边播）"""
+        if not delta:
+            return
+        self._tts_buffer += delta
+        # 按断句符（。？！；换行）切出完整句子
+        sentences = re.split(r'(?<=[。？！；\n])', self._tts_buffer)
+        if len(sentences) > 1:
+            complete = ''.join(sentences[:-1]).strip()
+            if complete:
+                self._speak_sentence(complete)
+            self._tts_buffer = sentences[-1]
+
+    def _speak_sentence(self, sentence: str):
+        """调用 VoiceBridge 朗读单个完整句子（语音交互模式下才播放）"""
+        vb = getattr(self.app_controller, 'voice_bridge', None)
+        if vb and getattr(vb, '_voice_chat_active', False):
+            try:
+                vb.speak_stream(sentence)
+            except Exception as e:
+                print(f"[ChatBridge] ⚠️ 流式朗读失败: {e}")
+
+    def _flush_tts_stream(self):
+        """AI 回复完成：刷新缓冲中剩余的未播放内容（如无标点结尾的片段）"""
+        if not self._tts_buffer.strip():
+            self._tts_buffer = ""
+            return
+        vb = getattr(self.app_controller, 'voice_bridge', None)
+        if vb and getattr(vb, '_voice_chat_active', False):
+            try:
+                vb.speak_stream(self._tts_buffer.strip())
+            except Exception as e:
+                print(f"[ChatBridge] ⚠️ 流式朗读刷新失败: {e}")
+        self._tts_buffer = ""
 
     def on_stream_complete(self):
         """流式响应完成（基础转发；MCP 注册的完成回调会在此触发且仅触发一次）"""
@@ -237,6 +294,20 @@ class ChatBridge(BridgeBase):
             except Exception as e:
                 print(f"[ChatBridge] ⚠️ done 回调失败: {e}")
                 self._on_stream_done = None
+        # 语音交互模式：AI 回复完成 → 先刷新流式朗读缓冲（播放剩余内容），
+        # 再通知 VoiceBridge 标记回复完成；最后一句播完自动重新聆听。
+        try:
+            vb = getattr(self.app_controller, 'voice_bridge', None)
+            if vb:
+                self._flush_tts_stream()
+                reply_text = self._last_ai_reply   # 取缓存的真实 AI 回复
+                self._last_ai_reply = ""           # 用完清空
+                vb.on_ai_reply_complete(reply_text)
+        except Exception as e:
+            print(f"[ChatBridge] ⚠️ 语音交互联动失败: {e}")
+        finally:
+            # 本轮结束：重置增量游标，下一轮回复从头累积
+            self._tts_last_len = 0
 
     def on_set_processing(self, processing: bool):
         """设置处理状态"""

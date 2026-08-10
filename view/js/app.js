@@ -66,6 +66,7 @@ function connectBridge() {
             window.agent_config_bridge=ch.objects.agent_config_bridge;
             window.security_bridge=ch.objects.security_bridge||ch.objects.security_plugin_bridge;
             window.monitor_bridge=ch.objects.monitor_bridge||ch.objects.monitor_plugin_bridge;
+            window.voice_bridge=ch.objects.voice_bridge;
             window._bridgeReady=true;
             console.log('[Bridge] OK');
             if(window.py_bridge) showToast('后端已连接','success');
