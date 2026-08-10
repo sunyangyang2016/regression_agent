@@ -197,8 +197,9 @@ class AppController(QObject):
             # 连接 AI 控制器
             self.ai_controller.connect()
 
-            # 自动启动所有已安装的 MCP 服务器
-            self._start_mcp_servers()
+            # 自动启动所有已安装的 MCP 服务器（延迟到事件循环空闲时执行，
+            # 避免 MCP 工具注册抢占主线程 CPU/IO，影响语音模型后台预加载等初始化）
+            QTimer.singleShot(0, self._start_mcp_servers)
 
             for plugin in self._ui_plugins:
                 try:

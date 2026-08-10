@@ -45,7 +45,7 @@ class TTSEngine:
             return
         try:
             self._speaking = True
-            self._run_sapi(text)
+            self._run_sapi(text, gen=self._generation)
         finally:
             self._speaking = False
 
@@ -70,6 +70,9 @@ class TTSEngine:
 
         用于 AI 边输出边朗读：每个断句排队写入常驻进程，
         SAPI 同步 Speak 天然无缝衔接 → 真正流式连续播放，无每句冷启动停顿。
+
+        关键：不递增 _generation（同一轮次内多句共享同一 gen 排队连播）。
+        只有 stop() 递增 _generation 时，所有排队句子才会一起失效。
         """
         if not text:
             if on_done:
@@ -79,7 +82,7 @@ class TTSEngine:
                     pass
             return
         with self._lock:
-            self._generation += 1
+            # 流式排队：共享当前 generation，使 _run_sapi 的 gen 校验通过（不误跳过）
             gen = self._generation
             self._done_callback = on_done
             self._speaking = True
@@ -87,10 +90,12 @@ class TTSEngine:
 
     def stop(self) -> None:
         """立即停止当前朗读（终止常驻进程，清空未播队列）"""
-        self._kill_proc()
         with self._lock:
+            # 递增 generation：使所有排队中的旧朗读线程失效（取出锁后不再重启 SAPI 进程）
+            self._generation += 1
             self._speaking = False
             self._done_callback = None
+        self._kill_proc()
 
     @property
     def is_speaking(self) -> bool:
@@ -140,7 +145,7 @@ class TTSEngine:
 
     def _async_speak_worker(self, text: str, gen: int, interrupt: bool = False):
         try:
-            self._run_sapi(text, interrupt=interrupt)
+            self._run_sapi(text, gen=gen, interrupt=interrupt)
         except Exception as e:
             print(f"[TTS] ❌ 朗读失败: {e}")
         finally:
@@ -175,18 +180,25 @@ class TTSEngine:
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 
-    def _run_sapi(self, text: str, interrupt: bool = False):
+    def _run_sapi(self, text: str, gen: int, interrupt: bool = False):
         """向常驻 PowerShell SAPI 进程写入一行文本并等待播完
 
         - _write_lock 独占：保证多线程排队时 __DONE__ 回报顺序 = 写入顺序
         - interrupt=True（抢占式）：先终止旧进程清空未播队列，再启动新常驻进程
         - interrupt=False（流式入队）：复用现有常驻进程，SAPI 同步 Speak 天然排队连播
+        - gen 校验：拿到锁后若 gen != _generation，说明该朗读请求已被
+          stop()/新请求作废 → 直接跳过，不重启 SAPI 进程（防止旧朗读"复活"）
         """
         text = self._sanitize_text(text)
         if not text:
             print("[TTS] ⚠️ 清洗后无可朗读文本")
             return
         with self._write_lock:
+            # ====== 核心修复：拿到锁后检查朗读请求是否仍有效 ======
+            with self._lock:
+                if gen != self._generation:
+                    print("[TTS] ⏹ 跳过已失效的朗读请求（已被 stop/新请求作废）")
+                    return  # 不重启进程，旧朗读真正停止
             try:
                 if interrupt:
                     self._kill_proc()  # 抢占：清空旧队列

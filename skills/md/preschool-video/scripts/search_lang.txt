@@ -1,0 +1,4 @@
+[BiliSearch] 搜索失败: code=0 msg=OK
+⚠️ yt-dlp 搜索失败: ERROR: 幼儿园大班 语言 教学视频: Unable to download JSON metadata: HTTP Error 412: Precondition Failed (caused by <HTTPError 412: Precondition Failed>)
+
+❌ 未搜索到相关视频（关键词: 幼儿园大班 语言 教学视频）

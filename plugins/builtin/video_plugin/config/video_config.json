@@ -1,0 +1,7 @@
+{
+  "default_quality": "720p",
+  "download_dir": "user_config/media/videos",
+  "refresh_interval": 5,
+  "position_save_interval": 5,
+  "max_results": 50
+}

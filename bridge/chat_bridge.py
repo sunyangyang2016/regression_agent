@@ -242,6 +242,15 @@ class ChatBridge(BridgeBase):
         self.execute_js(f"window.onStreamUpdate({c});")
         # 缓存 AI 回复内容（跳过"思考中…"占位），供语音交互模式 TTS 朗读使用
         if content and content != '⏳ 思考中…':
+            # ====== 核心修复：新一轮回复的第一个真实内容块到达时，
+            # 先停止上一轮 AI 回复的所有语音朗读（避免新旧语音重叠）======
+            if self._tts_last_len == 0:
+                try:
+                    vb = getattr(self.app_controller, 'voice_bridge', None)
+                    if vb and hasattr(vb, 'stop_tts'):
+                        vb.stop_tts()
+                except Exception as e:
+                    print(f"[ChatBridge] ⚠️ 停止上一轮 TTS 失败: {e}")
             self._last_ai_reply = content
             # 只把「新增部分」送入流式朗读（累积全文 → 增量提取）
             if len(content) > self._tts_last_len:

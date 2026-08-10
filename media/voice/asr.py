@@ -20,6 +20,8 @@ class SpeechRecognizer:
         self._model_path = model_path
         self._model = None
         self._rec = None
+        # 模型加载线程锁：防止后台预加载与点击时加载并发重复加载
+        self._model_lock = threading.Lock()
 
         # 音频资源（延迟加载）
         self._audio = None
@@ -102,6 +104,22 @@ class SpeechRecognizer:
         """检查模型是否可用"""
         return os.path.isdir(self._model_path)
 
+    def prewarm(self) -> bool:
+        """后台预加载语音模型（不开启音频采集）
+
+        提前将 Vosk 模型加载到内存（完整版模型耗时数秒），
+        用户点击麦克风时 _load_model 已就绪 → 立即进入聆听状态。
+        幂等：模型已加载时直接返回 True。
+        """
+        try:
+            ok = self._load_model()
+            if ok:
+                print("[ASR] ✅ 语音模型已后台预加载")
+            return ok
+        except Exception as e:
+            print(f"[ASR] ⚠️ 语音模型后台预加载失败: {e}")
+            return False
+
     # ==========================================
     # 内部实现
     # ==========================================
@@ -133,19 +151,21 @@ class SpeechRecognizer:
                 pass
 
     def _load_model(self) -> bool:
-        try:
-            from vosk import Model, KaldiRecognizer
-            if not os.path.isdir(self._model_path):
+        # 线程锁：防止后台预加载（prewarm）与点击时加载并发重复加载 2.3GB 模型
+        with self._model_lock:
+            try:
+                from vosk import Model, KaldiRecognizer
+                if not os.path.isdir(self._model_path):
+                    return False
+                if self._model is None:
+                    self._emit_status("正在加载语音模型...")
+                    self._model = Model(self._model_path)
+                if self._rec is None:
+                    self._rec = KaldiRecognizer(self._model, 16000)
+                return True
+            except Exception as e:
+                print(f"[ASR] ❌ 加载模型失败: {e}")
                 return False
-            if self._model is None:
-                self._emit_status("正在加载语音模型...")
-                self._model = Model(self._model_path)
-            if self._rec is None:
-                self._rec = KaldiRecognizer(self._model, 16000)
-            return True
-        except Exception as e:
-            print(f"[ASR] ❌ 加载模型失败: {e}")
-            return False
 
     def _listen_loop(self):
         """后台线程：采集麦克风音频并通过 Vosk 实时识别"""

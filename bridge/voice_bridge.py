@@ -12,11 +12,13 @@ from .base import BridgeBase
 from media.voice.asr import SpeechRecognizer
 from media.voice.tts import TTSEngine, VOICE_PRESETS
 
-# 模型路径
-MODEL_PATH = os.path.join(
+# 模型目录（固定不变）
+MODELS_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "resources", "models", "vosk-model-small-cn-0.22"
+    "..", "resources", "models"
 )
+# 默认模型名称（可由 agent_config.json 中 asr_model 字段覆盖）
+DEFAULT_ASR_MODEL = "vosk-model-small-cn-0.22"
 
 
 class VoiceBridge(BridgeBase):
@@ -24,8 +26,10 @@ class VoiceBridge(BridgeBase):
 
     def __init__(self, app_controller):
         super().__init__(app_controller)
+        # 解析模型路径（支持 agent_config.json 配置 asr_model 覆盖）
+        self._model_path = self._resolve_model_path()
         # 独立引擎实例
-        self._asr = SpeechRecognizer(MODEL_PATH)
+        self._asr = SpeechRecognizer(self._model_path)
         self._tts = TTSEngine()
 
         # 语音交互模式状态
@@ -42,6 +46,10 @@ class VoiceBridge(BridgeBase):
         # 启动时从 agent_config.json 读取并应用音色配置
         self._apply_voice_from_config()
 
+        # 注意：不在启动时预加载语音模型！
+        # 完整版 vosk-model-cn-0.22 约 2.3GB，启动时加载会瞬间拉满内存导致进程 OOM 退出。
+        # 模型改为「点击麦克风时」由 _listen_loop 后台线程懒加载（不阻塞 UI）。
+
     # ==========================================
     # 前端 → 后端（通过 @pyqtSlot 暴露给 JS）
     # ==========================================
@@ -56,6 +64,8 @@ class VoiceBridge(BridgeBase):
     def stopListening(self):
         """停止语音识别并返回结果（前端再次点击麦克风按钮调用）"""
         print("[VoiceBridge] ⏹ 停止语音识别...")
+        # 用户手动停止语音输入：同时停止正在播放的 TTS 朗读
+        self._tts.stop()
         text = self._asr.stop()
         print(f"[VoiceBridge] ✅ 识别结果: {text}")
         self._emit_final(text)
@@ -75,6 +85,11 @@ class VoiceBridge(BridgeBase):
         if not text:
             return
         self._tts.speak_stream(text, on_done=self._on_stream_tts_done)
+
+    def stop_tts(self):
+        """停止当前所有 TTS 朗读（新一轮 AI 回复开始时停止上一轮语音播报）"""
+        self._tts.stop()
+        print("[VoiceBridge] ⏹ 已停止 TTS 朗读")
 
     @pyqtSlot(str, result=bool)
     def setVoice(self, voice_name):
@@ -119,7 +134,7 @@ class VoiceBridge(BridgeBase):
         """检查语音模型是否可用（前端初始化时调用）"""
         try:
             ok = self._asr.check_model()
-            return json.dumps({"ok": ok, "path": MODEL_PATH}, ensure_ascii=False)
+            return json.dumps({"ok": ok, "path": self._model_path}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
@@ -147,6 +162,10 @@ class VoiceBridge(BridgeBase):
             return
         if not text:
             return
+        # 注意：不要在此处停止 TTS！
+        # 正确时机是「下一轮 AI 回复的第一个数据块到达时」才停止上一轮朗读
+        # （见 chat_bridge.on_stream_update 中 _tts_last_len == 0 时的 stop_tts 调用），
+        # 避免 AI 还没回复就过早掐断上一轮语音。
         print(f"[VoiceBridge] 🗣️ VAD 自动发送: {text}")
         self._voice_chat_thinking = True
         self._ai_reply_done = False  # 新一轮回复开始
@@ -192,6 +211,22 @@ class VoiceBridge(BridgeBase):
     # ==========================================
     # 配置读取
     # ==========================================
+
+    def _resolve_model_path(self) -> str:
+        """解析 ASR 模型路径：优先读取 agent_config.json 的 asr_model 字段，
+        回退使用默认模型名称 DEFAULT_ASR_MODEL"""
+        try:
+            from config.user_config import resolve_config_path
+            path = resolve_config_path("agent_config.json")
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                model_name = cfg.get("asr_model", "")
+                if model_name:
+                    return os.path.join(MODELS_DIR, model_name)
+        except Exception as e:
+            print(f"[VoiceBridge] ⚠️ 读取 ASR 模型配置失败: {e}，使用默认模型")
+        return os.path.join(MODELS_DIR, DEFAULT_ASR_MODEL)
 
     def _apply_voice_from_config(self):
         """从 agent_config.json 读取音色配置并应用到 TTS（默认小男孩）"""

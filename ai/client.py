@@ -51,6 +51,8 @@ class AIClient:
 
         # 当前运行中的 AI 流式任务（用于中断）
         self._current_task: Optional[concurrent.futures.Future] = None
+        # 当前运行中的底层 asyncio Task（真正可取消的任务引用）
+        self._current_asyncio_task: Optional[asyncio.Task] = None
 
         # 工具名映射：{API 规范化名称: 原始工具名}
         # 由 _get_tools_for_api 在每次发送前重建，供模型回调时还原真实工具名执行
@@ -259,6 +261,8 @@ class AIClient:
         loop = self._get_or_create_loop()
         
         async def run_chat():
+            # 保存真正的底层 asyncio Task（供 cancel_current 真正取消）
+            self._current_asyncio_task = asyncio.current_task()
             try:
                 async for event in self.stream_handler.stream_chat(
                     messages=self.messages,
@@ -312,14 +316,23 @@ class AIClient:
 
     def cancel_current(self):
         """取消当前正在运行的 AI 流式任务（用户中断）"""
+        # 核心修复：asyncio.run_coroutine_threadsafe 返回的是 concurrent.futures.Future，
+        # 对已运行的 Future 调用 cancel() 返回 False（无效），必须取消底层的 asyncio Task。
+        task = getattr(self, "_current_asyncio_task", None)
+        loop = self._event_loop
+        if task is not None and loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+                print("[AI] ⏹ 已请求取消底层 AI 流式任务")
+            except Exception as e:
+                print(f"[AI] ⚠️ 取消底层 AI 任务失败: {e}")
         if self._current_task is not None:
             try:
                 self._current_task.cancel()
-                print("[AI] ⏹ 已请求取消当前 AI 流式任务")
-            except Exception as e:
-                print(f"[AI] ⚠️ 取消 AI 任务失败: {e}")
-            finally:
-                self._current_task = None
+            except Exception:
+                pass
+            self._current_task = None
+        self._current_asyncio_task = None
 
     # ==========================================
     # 工具工具注册（内建 + MCP）

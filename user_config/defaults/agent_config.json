@@ -1,5 +1,6 @@
 {
   "theme": "dark",
   "github_mirror": "",
-  "voice": "小男孩"
+  "voice": "小男孩",
+  "asr_model": "vosk-model-cn-0.22"
 }

@@ -18,12 +18,13 @@ class Database(BaseDatabase):
     _instance = None
     _db_filename = "agent.db"
 
-    # 4 张数据表名（供 ensure_tables / 状态检查使用）
+    # 5 张数据表名（供 ensure_tables / 状态检查使用）
     TABLES = [
         "history_sessions_index",
         "history_sessions_messages",
         "mcp_market_index",
         "mcp_server_logs",
+        "video_library",
     ]
 
     # 建表 SQL（幂等 CREATE TABLE IF NOT EXISTS + 索引）
@@ -93,6 +94,36 @@ class Database(BaseDatabase):
             updated_at  TEXT
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS video_library (
+            id            TEXT PRIMARY KEY,
+            title         TEXT NOT NULL,
+            subject       TEXT,
+            grade         TEXT,
+            source        TEXT,
+            description   TEXT,
+            page_url      TEXT,
+            play_url      TEXT,
+            local_path    TEXT,
+            thumbnail     TEXT,
+            duration      INTEGER,
+            resolution    TEXT,
+            width         INTEGER,
+            height        INTEGER,
+            quality       TEXT,
+            file_size     INTEGER,
+            file_format   TEXT,
+            fps           REAL,
+            status        TEXT DEFAULT 'online',
+            download_progress INTEGER DEFAULT 0,
+            play_count    INTEGER DEFAULT 0,
+            last_played_at TEXT,
+            is_favorite   INTEGER DEFAULT 0,
+            last_position INTEGER DEFAULT 0,
+            created_at    TEXT,
+            updated_at    TEXT
+        )
+        """,
     ]
 
     # 索引 SQL（幂等）
@@ -107,6 +138,11 @@ class Database(BaseDatabase):
         "CREATE INDEX IF NOT EXISTS idx_mslog_server ON mcp_server_logs (server_id)",
         "CREATE INDEX IF NOT EXISTS idx_mslog_action ON mcp_server_logs (action)",
         "CREATE INDEX IF NOT EXISTS idx_mslog_created ON mcp_server_logs (created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_vlib_subject ON video_library (subject)",
+        "CREATE INDEX IF NOT EXISTS idx_vlib_grade   ON video_library (grade)",
+        "CREATE INDEX IF NOT EXISTS idx_vlib_status  ON video_library (status)",
+        "CREATE INDEX IF NOT EXISTS idx_vlib_source  ON video_library (source)",
+        "CREATE INDEX IF NOT EXISTS idx_vlib_created ON video_library (created_at)",
     ]
 
     def __init__(self):

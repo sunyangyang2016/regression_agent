@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>视频中心 - 学前教学视频</title>
+</head>
+<body>
+<div class="video-center">
+    <!-- 顶部工具栏 -->
+    <div class="video-toolbar">
+        <input type="text" id="videoSearchInput" placeholder="输入关键词搜索..."
+               onkeydown="if(event.key==='Enter') window.videoApp.search()">
+        <button onclick="window.videoApp.search()" title="搜索"><i class="fas fa-search"></i> 搜索</button>
+        <select id="videoSubjectFilter" onchange="window.videoApp.refreshList()">
+            <option value="">全部科目</option>
+            <option value="数学">数学</option>
+            <option value="语文">语文</option>
+            <option value="英语">英语</option>
+            <option value="科学">科学</option>
+            <option value="艺术">艺术</option>
+            <option value="健康">健康</option>
+        </select>
+        <select id="videoGradeFilter" onchange="window.videoApp.refreshList()">
+            <option value="">全部年级</option>
+            <option value="学前班">学前班</option>
+            <option value="大班">大班</option>
+            <option value="中班">中班</option>
+            <option value="小班">小班</option>
+        </select>
+        <select id="videoSourceFilter" onchange="window.videoApp.refreshList()">
+            <option value="">全部来源</option>
+            <option value="智慧教育平台">智慧教育平台</option>
+            <option value="bilibili">B站</option>
+            <option value="优酷">优酷</option>
+        </select>
+        <button onclick="window.videoApp.refreshList()" title="刷新"><i class="fas fa-sync"></i> 刷新</button>
+        <button onclick="window.video_bridge.openVideoFolder()" title="打开本地视频目录"><i class="fas fa-folder-open"></i></button>
+    </div>
+
+    <!-- 双栏布局：播放器左 + 列表右 -->
+    <div class="video-layout">
+        <!-- 左侧播放器 -->
+        <div class="video-player-area">
+            <video id="videoPlayer" controls preload="metadata" playsinline></video>
+            <div class="video-now-playing">
+                <div class="video-now-title" id="videoNowTitle">请选择视频播放</div>
+                <div class="video-now-meta" id="videoNowMeta"></div>
+                <div class="video-now-progress" id="videoNowProgress">00:00 / 00:00</div>
+                <div class="video-now-actions">
+                    <a href="javascript:void(0)" id="videoSourceLink"
+                       onclick="window.videoApp.openSourceLink()" style="display:none;">
+                        <i class="fas fa-external-link-alt"></i> 打开源链接
+                    </a>
+                </div>
+            </div>
+            <div class="video-dir-hint">
+                <i class="fas fa-hdd"></i> 本地目录: <code>user_config/media/videos/</code>
+            </div>
+        </div>
+
+        <!-- 右侧播放列表 -->
+        <div class="video-list-area">
+            <div class="video-list-header">
+                <span><i class="fas fa-list"></i> 播放列表</span>
+                <span id="videoCount" class="video-count">0 个视频</span>
+            </div>
+            <div class="video-list" id="videoList">
+                <div class="video-empty">🎬 暂无视频<br>请让 AI 搜索教学视频</div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
