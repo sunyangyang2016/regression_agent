@@ -1,7 +1,6 @@
 """监控插件桥接层 - JS <-> Python 通信（只读远程监控快照）"""
 import json
 import os
-import time
 from datetime import datetime
 from PyQt5.QtCore import QObject, pyqtSlot, pyqtSignal
 
@@ -10,12 +9,8 @@ from PyQt5.QtCore import QObject, pyqtSlot, pyqtSignal
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
 ))))
-# 远程监控数据快照文件（AI 通过 collect_stats.py 写入，插件只读）
-SNAPSHOT_FILE = os.path.join(_PROJECT_ROOT, "storage", "remote_monitor_data.json")
 # 提醒队列文件（AI 通过 push_alert.py 写入，插件只读）
 ALERTS_FILE = os.path.join(_PROJECT_ROOT, "storage", "monitor_alerts.json")
-# 快照有效期（秒）：超过 3 秒未更新视为过期/不可用
-SNAPSHOT_TTL = 3.0
 
 
 def read_alerts(max_items: int = 50) -> list:
@@ -47,25 +42,6 @@ def save_alert(alert: dict) -> bool:
     except Exception as e:
         print(f"[MonitorBridge] ⚠️ 保存提醒失败: {e}")
         return False
-
-
-def read_remote_snapshot() -> dict:
-    """读取远程监控数据快照，判断有效性。"""
-    try:
-        if not os.path.exists(SNAPSHOT_FILE):
-            return {"data_source": "unavailable", "error": "远程监控数据快照不存在"}
-        mtime = os.path.getmtime(SNAPSHOT_FILE)
-        if time.time() - mtime > SNAPSHOT_TTL:
-            return {"data_source": "unavailable", "error": "远程监控数据快照已过期"}
-        with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return {"data_source": "unavailable", "error": "快照格式错误"}
-        data["data_source"] = "remote"
-        return data
-    except Exception as e:
-        print(f"[MonitorBridge] ⚠️ 读取远程快照失败: {e}")
-        return {"data_source": "error", "error": str(e)}
 
 
 _bridge_instance = None
@@ -102,7 +78,7 @@ class MonitorBridge(QObject):
     @pyqtSlot(result=str)
     def getStats(self):
         try:
-            return json.dumps(read_remote_snapshot(), ensure_ascii=False)
+            return json.dumps(self._get_snapshot(), ensure_ascii=False)
         except Exception as e:
             return '{"data_source":"error","error":"' + str(e) + '"}'
 
@@ -132,7 +108,7 @@ class MonitorBridge(QObject):
             return "[]"
 
     def _get_snapshot(self) -> dict:
-        """优先共享快照存储（observer 写入），回退自身内存/文件"""
+        """优先共享快照存储（observer 写入），回退自身内存"""
         try:
             from .model.monitor_observer import get_latest_snapshot_json
             snap = get_latest_snapshot_json()
@@ -140,9 +116,7 @@ class MonitorBridge(QObject):
                 return json.loads(snap)
         except Exception:
             pass
-        if self._latest_data is not None:
-            return self._latest_data
-        return read_remote_snapshot()
+        return self._latest_data or {"data_source": "unavailable", "error": "远程监控数据快照不存在"}
 
     @pyqtSlot(result=str)
     def getAll(self):

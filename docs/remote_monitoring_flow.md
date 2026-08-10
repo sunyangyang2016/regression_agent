@@ -77,7 +77,6 @@ AI 读取 SKILL.md 指令
 |------|--------|--------|
 | 内存快照 `_SNAPSHOT_STORE` | 插件 observer（MCP 完整快照） | MonitorBridge.getAll |
 | `storage/monitor_alerts.json` | 插件 observer（AI `{{ALERT:}}` 标记） | MonitorBridge.getAlerts |
-| `storage/remote_monitor_data.json` | 插件 observer（AI `{{CONCLUSION:}}` 结论落盘） | MonitorBridge（读取回退） |
 
 ## 五、远程 MCP 工具契约
 

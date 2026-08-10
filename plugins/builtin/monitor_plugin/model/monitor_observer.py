@@ -49,14 +49,6 @@ def _write_snapshot_ai_judgment(text: str):
         data_json = json.dumps(data, ensure_ascii=False)
         with _SNAPSHOT_LOCK:
             _SNAPSHOT_STORE["latest"] = data_json
-        # 同时落盘快照文件，保证重启后面板仍能读到结论
-        try:
-            os.makedirs(os.path.dirname(ALERTS_FILE), exist_ok=True)
-            snapshot_file = os.path.join(_PROJECT_ROOT, "storage", "remote_monitor_data.json")
-            with open(snapshot_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
         # 触发前端刷新：pushData 内部 emit dataPushed → 前端重新 getAll → 结论区立即更新
         try:
             from ..bridge.monitor_bridge import get_bridge_instance
