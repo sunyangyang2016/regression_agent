@@ -130,7 +130,12 @@ function deleteChat(event, el) {
                 var html = '<div class="welcome-screen" id="welcomeScreen">' +
                     '<div class="welcome-icon">🤖</div>' +
                     '<h1 class="welcome-title">AI 智能助手</h1>' +
-                    '<p class="welcome-subtitle">基于 <strong>'+(appState.currentModel?.name||'AI')+'</strong> 模型</p></div>';
+                    '<div class="quick-actions">' +
+                        '<div class="quick-action" onclick="quickAction(\'写一个 Python 函数\')"><i class="fas fa-code"></i><span class="label">写代码</span></div>' +
+                        '<div class="quick-action" onclick="quickAction(\'帮我解释这个概念\')"><i class="fas fa-lightbulb"></i><span class="label">解释概念</span></div>' +
+                        '<div class="quick-action" onclick="quickAction(\'分析这段数据\')"><i class="fas fa-chart-bar"></i><span class="label">分析数据</span></div>' +
+                        '<div class="quick-action" onclick="quickAction(\'翻译成中文\')"><i class="fas fa-language"></i><span class="label">翻译</span></div>' +
+                    '</div></div>';
                 document.getElementById('chatMessages').innerHTML = html;
                 window.chatApp.messages = [];
             }
@@ -147,7 +152,6 @@ function newChat() {
         '<div class="welcome-screen" id="welcomeScreen">' +
         '<div class="welcome-icon">🤖</div>' +
         '<h1 class="welcome-title">AI 智能助手</h1>' +
-        '<p class="welcome-subtitle">基于 <strong>'+(appState.currentModel?.name||'AI')+'</strong> 模型，支持 MCP 工具调用。</p>' +
         '<div class="quick-actions">' +
             '<div class="quick-action" onclick="quickAction(\'写一个 Python 函数\')"><i class="fas fa-code"></i><span class="label">写代码</span></div>' +
             '<div class="quick-action" onclick="quickAction(\'帮我解释这个概念\')"><i class="fas fa-lightbulb"></i><span class="label">解释概念</span></div>' +

@@ -10,7 +10,7 @@ function renderAbout() {
     // 先渲染占位内容，再异步从后端获取 agent_info
     aboutBody.innerHTML = '<div class="about-section">' +
         '<span class="about-logo">⚡</span>' +
-        '<div class="about-title" id="aboutName">Agent</div>' +
+        '<div class="about-title" id="aboutName">Regression Agent</div>' +
         '<div class="about-version" id="aboutVersion">版本 ...</div>' +
         '<div class="about-release" id="aboutRelease">加载中...</div>' +
         '<hr class="about-divider">' +
@@ -23,7 +23,7 @@ function renderAbout() {
             '<div class="about-info-item" id="aboutDocsRow"><div class="label">文档</div><div class="value" id="aboutDocs">...</div></div>' +
         '</div>' +
         '<hr class="about-divider">' +
-        '<div class="about-description" id="aboutDescription"><strong>📖 关于 Agent</strong><br><br>加载中...</div>' +
+        '<div class="about-description" id="aboutDescription"><strong>📖 关于 Regression Agent</strong><br><br>加载中...</div>' +
         '<hr class="about-divider">' +
         '<div class="about-credits" id="aboutCredits"><div style="font-weight:600;margin-bottom:8px;">👥 贡献者</div><div>加载中...</div></div>' +
         '<div class="about-tech-stack" id="aboutTechStack"><span class="tech-tag">加载中...</span></div>' +
@@ -62,7 +62,7 @@ function renderAbout() {
 
 function applyAgentInfo(info) {
     if (!info) return;
-    var name = info.name || 'Agent';
+    var name = info.name || 'Regression Agent';
     var version = info.version || '';
     var releaseDate = info.releaseDate || '';
     var author = info.author || '';

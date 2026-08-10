@@ -335,7 +335,6 @@ window.chatApp = {
         var html = '<div class="welcome-screen" id="welcomeScreen">' +
             '<div class="welcome-icon">🤖</div>' +
             '<h1 class="welcome-title">AI 智能助手</h1>' +
-            '<p class="welcome-subtitle">基于 <strong>'+(appState.currentModel?.name||'AI')+'</strong> 模型</p>' +
             '<div class="quick-actions">' +
             '<div class="quick-action" onclick="chatApp.quickAction(\'写一个 Python 函数\')"><i class="fas fa-code"></i><span class="label">写代码</span></div>' +
             '<div class="quick-action" onclick="chatApp.quickAction(\'帮我解释这个概念\')"><i class="fas fa-lightbulb"></i><span class="label">解释概念</span></div>' +

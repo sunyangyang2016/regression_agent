@@ -1,16 +1,17 @@
 {
-  "name": "Agent",
-  "version": "1.0.2alpha",
-  "releaseDate": "2026-08-01",
+  "name": "Regression Agent",
+  "version": "1.0.3alpha",
+  "releaseDate": "2026-08-10",
   "author": "孙洋洋",
   "license": "MIT License",
   "github": "https://github.com/sunyangyang2016/regression_agent",
   "docs": "docs.agent.ai",
-  "description": "Agent 是一个基于 PyQt5 + QWebEngine 的智能对话系统，集成了 AI 大语言模型、MCP 工具调用、插件扩展等能力。",
+  "description": "Regression Agent 是一个基于 PyQt5 + QWebEngine 的智能对话系统，集成了 AI 大语言模型、MCP 工具调用、Skill 技能、插件扩展等能力。",
   "features": [
     "🧠 多模型支持 - OpenAI、DeepSeek、Claude 等",
     "🔧 MCP 工具系统 - 内置工具 + MCP 协议工具",
     "💬 智能对话 - 流式响应、上下文管理",
+    "⭐ Skill 技能系统 - 内建 + 自定义技能，AI 按需调用",
     "🔌 插件机制 - 热插拔插件系统",
     "🎨 现代化 UI - 暗色/亮色主题"
   ],

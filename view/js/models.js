@@ -83,7 +83,6 @@ function updateModelUI(){
     el=document.getElementById('headerModelLabel');if(el)el.textContent=m.name;
     el=document.getElementById('headerProviderLabel');if(el)el.textContent='('+m.provider+')';
     el=document.getElementById('footerModel');if(el)el.textContent=m.name;
-    el=document.getElementById('welcomeModel');if(el)el.textContent=m.name;
     el=document.getElementById('statusDot');if(el)el.className='status-dot '+(m.online?'online':'offline');
     el=document.getElementById('activeModelName');if(el)el.textContent=m.name;
     el=document.getElementById('activeModelProvider');if(el)el.textContent='提供商: '+m.provider;

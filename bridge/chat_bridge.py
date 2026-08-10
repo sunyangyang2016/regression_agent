@@ -182,14 +182,19 @@ class ChatBridge(BridgeBase):
             # 统一重置会话状态（AI 消息 / token / 日志等全部重置，确保会话隔离）
             self._reset_chat_state(chat_controller)
             data = conv_model.get_sidebar_data()
-            welcome_html = '<div class="welcome-screen" id="welcomeScreen">' \
-                '<div class="welcome-icon">🤖</div>' \
-                '<h1 class="welcome-title">AI 智能助手</h1>' \
-                '</div>'
             js = (
                 f"if (typeof updateChatTabTitle === 'function') updateChatTabTitle('新对话');"
-                f"document.getElementById('chatMessages').innerHTML={json.dumps(welcome_html)};"
-                f"window.chatApp.messages=[];"
+                "document.getElementById('chatMessages').innerHTML = "
+                "'<div class=\"welcome-screen\" id=\"welcomeScreen\">' + "
+                "'<div class=\"welcome-icon\">🤖</div>' + "
+                "'<h1 class=\"welcome-title\">AI 智能助手</h1>' + "
+                "'<div class=\"quick-actions\">' + "
+                "'<div class=\"quick-action\" onclick=\"quickAction(\\'写一个 Python 函数\\')\"><i class=\"fas fa-code\"></i><span class=\"label\">写代码</span></div>' + "
+                "'<div class=\"quick-action\" onclick=\"quickAction(\\'帮我解释这个概念\\')\"><i class=\"fas fa-lightbulb\"></i><span class=\"label\">解释概念</span></div>' + "
+                "'<div class=\"quick-action\" onclick=\"quickAction(\\'分析这段数据\\')\"><i class=\"fas fa-chart-bar\"></i><span class=\"label\">分析数据</span></div>' + "
+                "'<div class=\"quick-action\" onclick=\"quickAction(\\'翻译成中文\\')\"><i class=\"fas fa-language\"></i><span class=\"label\">翻译</span></div>' + "
+                "'</div></div>';"
+                "window.chatApp.messages=[];"
                 f"renderChatList({json.dumps(data, ensure_ascii=False)});"
             )
             self.execute_js(js)

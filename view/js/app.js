@@ -1,7 +1,7 @@
 // ============================================
 // Agent - 应用初始化与全局状态
 // ============================================
-const APP_INFO = { name: 'Agent', version: '1.0.1alpha', releaseDate: '2026-07-19' };
+const APP_INFO = { name: 'Regression Agent', version: '1.0.1alpha', releaseDate: '2026-07-19' };
 var appState = {
     currentModel: null, models: [], mcpServers: [], mcpMarket: [],
     skills: [], conversations: [], currentTab: 'mcp', isProcessing: false,
