@@ -62,6 +62,16 @@ window.videoApp = {
         this.refreshList();
     },
 
+    // ===== 全屏展开列表（★ 2026-08-14 在普通列表基础上加全屏多列网格，缩略图原尺寸）=====
+    openFullscreen: function() {
+        var el = document.getElementById('videoListFullscreen');
+        if (el) el.style.display = 'flex';
+    },
+    closeFullscreen: function() {
+        var el = document.getElementById('videoListFullscreen');
+        if (el) el.style.display = 'none';
+    },
+
     // ===== 列表加载（异步 Promise）=====
     refreshList: function(payload) {
         var self = this;
@@ -100,16 +110,22 @@ window.videoApp = {
 
     _renderList: function() {
         var container = document.getElementById('videoList');
+        var fullscreenContainer = document.getElementById('fullscreenVideoList');
         var countEl = document.getElementById('videoCount');
+        var fullscreenCountEl = document.getElementById('fullscreenVideoCount');
         if (!container) return;
 
         var videos = this._allVideos || [];
+        var emptyHtml = '<div class="video-empty">🎬 暂无视频<br>请让 AI 搜索教学视频</div>';
         if (videos.length === 0) {
-            container.innerHTML = '<div class="video-empty">🎬 暂无视频<br>请让 AI 搜索教学视频</div>';
+            container.innerHTML = emptyHtml;
+            if (fullscreenContainer) fullscreenContainer.innerHTML = emptyHtml;
             if (countEl) countEl.textContent = '0 个视频';
+            if (fullscreenCountEl) fullscreenCountEl.textContent = '0 个视频';
             return;
         }
         if (countEl) countEl.textContent = videos.length + ' 个视频';
+        if (fullscreenCountEl) fullscreenCountEl.textContent = videos.length + ' 个视频';
 
         var esc = this._esc;
         var html = videos.map(function(v) {
@@ -167,6 +183,7 @@ window.videoApp = {
         }).join('');
 
         container.innerHTML = html;
+        if (fullscreenContainer) fullscreenContainer.innerHTML = html;
     },
 
     _thumbFallback: function() {
@@ -206,6 +223,8 @@ window.videoApp = {
     // ===== 播放（断点续播）=====
     play: function(video_id) {
         var self = this;
+        // ★ 2026-08-14 从全屏列表点视频 → 播放并收起全屏
+        this.closeFullscreen();
         var videos = this._allVideos || [];
         var video = null;
         for (var i = 0; i < videos.length; i++) {

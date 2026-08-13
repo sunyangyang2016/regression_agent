@@ -58,19 +58,35 @@
                     </a>
                 </div>
             </div>
-            <div class="video-dir-hint">
-                <i class="fas fa-hdd"></i> 本地目录: <code>user_config/media/videos/</code>
-            </div>
         </div>
 
-        <!-- 右侧播放列表 -->
+        <!-- 右侧播放列表（★ 2026-08-14 在普通列表基础上加全屏展开：头部「全屏」按钮 → 覆盖全窗口多列网格） -->
         <div class="video-list-area">
             <div class="video-list-header">
                 <span><i class="fas fa-list"></i> 播放列表</span>
-                <span id="videoCount" class="video-count">0 个视频</span>
+                <span class="video-list-header-right">
+                    <span id="videoCount" class="video-count">0 个视频</span>
+                    <button class="video-list-toggle" title="全屏展开列表" onclick="window.videoApp.openFullscreen()">
+                        <i class="fas fa-expand"></i>
+                    </button>
+                </span>
             </div>
             <div class="video-list" id="videoList">
                 <div class="video-empty">🎬 暂无视频<br>请让 AI 搜索教学视频</div>
+            </div>
+        </div>
+
+        <!-- ★ 2026-08-14 全屏展开列表（absolute 铺满 .video-layout：只盖住播放区+列表区，不占顶部工具栏；多列网格，缩略图原尺寸不变） -->
+        <div class="video-list-fullscreen" id="videoListFullscreen" style="display:none;">
+            <div class="video-list-fullscreen-header">
+                <span><i class="fas fa-list"></i> 播放列表</span>
+                <span id="fullscreenVideoCount" class="video-count">0 个视频</span>
+                <button class="video-list-toggle" title="收起全屏列表" onclick="window.videoApp.closeFullscreen()">
+                    <i class="fas fa-compress"></i>
+                </button>
+            </div>
+            <div class="video-list-fullscreen-body">
+                <div class="video-grid" id="fullscreenVideoList"></div>
             </div>
         </div>
     </div>
