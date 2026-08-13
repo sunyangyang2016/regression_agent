@@ -92,6 +92,15 @@ class AppController(QObject):
         s.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, False)
         s.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
         s.setAttribute(QWebEngineSettings.HyperlinkAuditingEnabled, False)
+        # ★ 视频中心需要：允许 file:// 页面加载远程 https 媒体流（B 站/抖音 CDN）
+        s.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+        s.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
+        s.setAttribute(QWebEngineSettings.AllowRunningInsecureContent, True)
+        # ★★★ 修复视频播放无声音 ★★★
+        # PlaybackRequiresUserGesture 默认 True → 隐藏 <audio> DASH 分离流的 play() 被静默阻止
+        s.setAttribute(QWebEngineSettings.PlaybackRequiresUserGesture, False)
+        # 支持 HTML5 视频全屏播放
+        s.setAttribute(QWebEngineSettings.FullScreenSupportEnabled, True)
 
         window.setStyleSheet("""
             QMainWindow { background: #0a0d12; }

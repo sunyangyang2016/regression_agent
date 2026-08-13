@@ -17,6 +17,18 @@ class VideoRepository:
 
     def __init__(self):
         self.db = Database()  # 直接持有数据库（连接池）
+        self._ensure_audio_path_column()
+
+    def _ensure_audio_path_column(self):
+        """确保 video_library 有 audio_path 列（旧库自动 ALTER 补列）"""
+        try:
+            cols = self.db.query("PRAGMA table_info(video_library)")
+            exists = any(c.get("name") == "audio_path" for c in cols)
+            if not exists:
+                self.db.execute("ALTER TABLE video_library ADD COLUMN audio_path TEXT")
+                print("[VideoRepository] 已补充 video_library.audio_path 列")
+        except Exception as e:
+            print(f"[VideoRepository] 检查/补充 audio_path 列失败: {e}")
 
     # ==========================================
     # 查询
@@ -159,15 +171,19 @@ class VideoRepository:
         self.update(video_id, {"download_progress": progress})
 
     def mark_downloaded(self, video_id: str, local_path: str,
-                        file_size: int, file_format: str = None):
-        """标记视频已下载"""
-        self.update(video_id, {
+                        file_size: int, file_format: str = None,
+                        audio_path: str = None):
+        """标记视频已下载（audio_path 为分离的音频文件路径，可选）"""
+        fields = {
             "status": "downloaded",
             "local_path": local_path,
             "file_size": file_size,
             "file_format": file_format,
             "download_progress": 100,
-        })
+        }
+        if audio_path:
+            fields["audio_path"] = audio_path
+        self.update(video_id, fields)
 
     def increment_play_count(self, video_id: str):
         """播放次数 +1，更新最近播放时间"""
@@ -238,6 +254,7 @@ class VideoRepository:
             "pageUrl": "page_url",
             "playUrl": "play_url",
             "localPath": "local_path",
+            "audioPath": "audio_path",
             "fileSize": "file_size",
             "fileFormat": "file_format",
             "downloadProgress": "download_progress",
@@ -250,8 +267,8 @@ class VideoRepository:
         }
         table_fields = {
             "id", "title", "subject", "grade", "source", "description",
-            "page_url", "play_url", "local_path", "thumbnail", "duration",
-            "resolution", "width", "height", "quality", "file_size",
+            "page_url", "play_url", "local_path", "audio_path", "thumbnail",
+            "duration", "resolution", "width", "height", "quality", "file_size",
             "file_format", "fps", "status", "download_progress", "play_count",
             "last_played_at", "is_favorite", "last_position",
             "created_at", "updated_at",
@@ -275,6 +292,7 @@ class VideoRepository:
             "pageUrl": row.get("page_url"),
             "playUrl": row.get("play_url"),
             "localPath": row.get("local_path"),
+            "audioPath": row.get("audio_path"),
             "thumbnail": row.get("thumbnail"),
             "duration": row.get("duration"),
             "resolution": row.get("resolution"),

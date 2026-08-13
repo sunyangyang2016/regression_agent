@@ -53,21 +53,19 @@ python scripts/video_control.py --action play --video-id <ID>
 
 ## 下载视频
 
-用户说"下载xxx" → **使用 video-catcher 下载**（同级 `skills/md/video-catcher/`，支持 B站/YouTube/抖音等，自动嗅探/断点续传）：
+用户说"下载xxx" → **使用 video-catcher skill**（负责所有下载任务，支持 B站/YouTube/抖音等，自动嗅探/断点续传）：
 
 ```bash
-# 1. 从视频库取到视频 URL（搜索脚本输出包含 page_url）
-python scripts/video_search.py --keyword "关键词" --limit 10
-
-# 2. 用 video-catcher 下载（URL 来自搜索结果中的 page_url）
+# 使用 video-catcher 下载（URL 来自搜索结果）
 python ../video-catcher/scripts/video_catcher.py download "<视频URL>"
 
-# 3. 用户想先看清晰度 → formats 命令列出可下载画质
+# 查看可下载清晰度
 python ../video-catcher/scripts/video_catcher.py formats "<视频URL>"
 
-# 4. 精确下载指定画质（如 720p）
+# 指定画质下载
 python ../video-catcher/scripts/video_catcher.py download "<视频URL>" --quality 720p --quality-mode exact
 ```
+
 
 ## 视频 ID 查找
 

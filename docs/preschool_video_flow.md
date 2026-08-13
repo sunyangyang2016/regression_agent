@@ -202,7 +202,18 @@ INDEX_DDL += [
 
 ## 4. Python Skill 类设计
 
-创建 `skills/builtin/video_skill.py`，实现 3 个 Python 内建 Skill 类，注册到 SkillDispatcher 后 AI 可通过 `skill_video_search` / `skill_video_download` / `skill_video_control` 调用。
+> **架构说明**：Skill 脚本位于 `skills/md/preschool-video/scripts/`，为自包含的独立脚本集。
+> 搜索/解析逻辑（搜狗搜索/yt-dlp）位于本目录内，**下载职责完全由 video-catcher skill 承担**。
+>
+> 脚本清单：
+> | 脚本 | 作用 |
+> |------|------|
+> | `video_catcher_runner.py` | 搜索/解析执行器（搜狗搜索/yt-dlp 解析）+ video-catcher 下载 subprocess 隔离封装 |
+> | `video_search.py` | 搜索学前教学视频并写入 video_library 表 |
+> | `video_control.py` | 控制播放器（播放/暂停/快进/音量等） |
+>
+> 下载操作请使用 `skills/md/video-catcher/SKILL.md`（支持 B站/YouTube/抖音等，自动嗅探/断点续传）。
+>
 
 ### 4.1 VideoSearchSkill（`skill_video_search`）
 

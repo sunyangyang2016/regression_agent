@@ -36,8 +36,18 @@ from PyQt5 import QtWebEngineWidgets  # noqa: F401
 import faulthandler
 faulthandler.enable()
 
-# 启用 Chromium 渲染进程日志
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--enable-logging --v=0"
+# 启用 Chromium 渲染进程日志 + 允许自动播放/远程媒体访问（视频中心需要）
+# ★ 2026-08 实测：PyQt5 5.15.2 官方 wheel 的 QtWebEngine 因专利授权编译期禁用
+#   H.264/AAC/HEVC 解码器（canPlayType 全部为空），Chromium flags 无法开启。
+#   PlatformHEVCDecoderSupport* 仅对"已内置 HEVC 解码器"的构建有效，保留备用。
+#   实际播放由 video_plugin/player.py 智能处理：原生支持(VP8/VP9/Opus)直接播，
+#   H.264/AAC/HEVC 自动 ffmpeg 实时转码为 VP8/Opus WebM。
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--enable-logging --v=0 "
+    "--autoplay-policy=no-user-gesture-required "
+    "--allow-running-insecure-content "
+    "--enable-features=ProprietaryCodecs,PlatformHEVCDecoderSupport,PlatformHEVCDecoderSupport2"
+)
 
 
 def _global_excepthook(exc_type, exc_value, exc_tb):

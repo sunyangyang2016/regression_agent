@@ -57,6 +57,20 @@
         "ernie-speed-128k": { "hit": 1.6, "miss": 1.6, "output": 1.6 }
       }
     },
+    "NVIDIA": {
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "max_context": 128000,
+      "models": {
+        "deepseek-ai/deepseek-v4-pro": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "z-ai/glm-5.2": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "thinkingmachines/inkling": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "nvidia/nemotron-3-ultra-550b-a55b": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "openai/gpt-oss-120b": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "minimaxai/minimax-m3": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "google/gemma-4-31b-it": { "hit": 0.0, "miss": 0.0, "output": 0.0 },
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": { "hit": 0.0, "miss": 0.0, "output": 0.0 }
+      }
+    },
     "自定义": { "base_url": "", "models": {} }
   }
 }

@@ -20,14 +20,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-# 引入 wbi 搜索模块（B站风控破解，必须在设置 ROOT 之后导入）
-try:
-    from tools.video_search_wbi import bili_search as _wbi_search
-    WBI_AVAILABLE = True
-except Exception as e:
-    print(f"⚠️ wbi 搜索模块不可用: {e}")
-    WBI_AVAILABLE = False
-
 # 命令文件路径（video_plugin 监听）
 COMMANDS_FILE = os.path.join(ROOT, "storage", "video_commands.json")
 
@@ -88,66 +80,18 @@ def _apply_guess(video: dict, keyword: str, source: str) -> dict:
     return video
 
 
-def search_ytdlp(keyword: str, source: str, limit: int) -> list:
-    """使用 yt-dlp 搜索视频（兜底），返回视频信息列表"""
-    videos = []
-    try:
-        cmd = [
-            "yt-dlp",
-            f"bilisearch{limit}:{keyword}",
-            "--flat-playlist",
-            "--dump-json",
-            "--no-warnings",
-            "--no-playlist",
-        ]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
-            encoding="utf-8", errors="replace"
-        )
-        if result.returncode != 0:
-            print(f"⚠️ yt-dlp 搜索失败: {result.stderr[:200]}")
-            return []
-
-        for line in result.stdout.strip().splitlines():
-            try:
-                info = json.loads(line)
-                width = info.get("width")
-                height = info.get("height")
-                videos.append(_apply_guess({
-                    "title": info.get("title", ""),
-                    "page_url": info.get("webpage_url", ""),
-                    "play_url": info.get("url", ""),
-                    "thumbnail": info.get("thumbnail", ""),
-                    "duration": info.get("duration") or 0,
-                    "width": width,
-                    "height": height,
-                    "resolution": f"{width}x{height}" if width and height else None,
-                    "fps": info.get("fps"),
-                    "description": (info.get("description") or "")[:500],
-                }, keyword, source))
-            except (ValueError, KeyError):
-                continue
-    except subprocess.TimeoutExpired:
-        print("⏱️ yt-dlp 搜索超时（60 秒）")
-    except Exception as e:
-        print(f"❌ 搜索异常: {e}")
-    return videos[:limit]
-
-
 def search_combined(keyword: str, source: str, limit: int) -> list:
-    """优先 wbi 搜索（破解 B站风控），失败兜底 yt-dlp"""
-    if WBI_AVAILABLE:
-        try:
-            wbi_videos = _wbi_search(keyword, limit=limit)
-            if wbi_videos:
-                # 补全科目/年级/来源
-                for v in wbi_videos:
-                    _apply_guess(v, keyword, source if source != "自动" else "bilibili")
-                print(f"✅ wbi 搜索成功，返回 {len(wbi_videos)} 个视频")
-                return wbi_videos
-        except Exception as e:
-            print(f"⚠️ wbi 搜索失败: {e}，尝试 yt-dlp 兜底")
-    return search_ytdlp(keyword, source, limit)
+    """综合搜索：使用 yt-dlp bilisearch 搜索 B站视频"""
+    try:
+        from video_catcher_runner import search_videos
+        videos = search_videos(keyword, limit=limit)
+    except Exception as e:
+        print(f"⚠️ 综合搜索异常: {e}")
+        videos = []
+    # 补全科目/年级/来源
+    for v in videos:
+        _apply_guess(v, keyword, source)
+    return videos[:limit]
 
 
 def notify_frontend(payload: dict):
