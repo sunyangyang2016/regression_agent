@@ -3,6 +3,7 @@ Video Repository — 经典 Repository 模式
 持有 db（Database 连接池），使用原生 SQL 访问 video_library 表
 供 Python Skill（主进程）与 video_plugin（主进程）共同访问
 """
+import sqlite3
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,7 @@ class VideoRepository:
     def __init__(self):
         self.db = Database()  # 直接持有数据库（连接池）
         self._ensure_audio_path_column()
+        self._ensure_new_columns()
 
     def _ensure_audio_path_column(self):
         """确保 video_library 有 audio_path 列（旧库自动 ALTER 补列）"""
@@ -29,6 +31,24 @@ class VideoRepository:
                 print("[VideoRepository] 已补充 video_library.audio_path 列")
         except Exception as e:
             print(f"[VideoRepository] 检查/补充 audio_path 列失败: {e}")
+
+    def _ensure_new_columns(self):
+        """确保 video_library 有整套搜索相关列 + video_id 唯一索引（旧库自动 ALTER 补列）"""
+        try:
+            cols = self.db.query("PRAGMA table_info(video_library)")
+            names = {c.get("name") for c in cols}
+            for col, ddl in (("video_id", "TEXT"), ("episode_index", "INTEGER"),
+                             ("series_id", "TEXT"), ("series_title", "TEXT")):
+                if col not in names:
+                    self.db.execute(f"ALTER TABLE video_library ADD COLUMN {col} {ddl}")
+                    print(f"[VideoRepository] 已补充 video_library.{col} 列")
+            # 入库判重兜底：B站 BV号 唯一（老行 video_id 为 NULL，SQLite UNIQUE 允许多个 NULL）
+            self.db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_vlib_video_id "
+                "ON video_library (video_id)"
+            )
+        except Exception as e:
+            print(f"[VideoRepository] 检查/补充整套搜索列失败: {e}")
 
     # ==========================================
     # 查询
@@ -95,47 +115,104 @@ class VideoRepository:
     # ==========================================
 
     def add(self, video: dict) -> str:
-        """新增视频，返回生成的 ID"""
+        """新增视频，返回生成的 ID。
+
+        ★ 2026-08 幂等去重：若 video_id（平台ID，如 B站 BV号）已存在则直接返回已有行 ID，
+        不重复插入。video_id/series_id 归一化为 None（不存空串，否则 UNIQUE 索引把 '' 当真值冲突）。
+        """
         video_id = video.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
-        self.db.execute(
-            f"INSERT INTO {self.TABLE} (id, title, subject, grade, source, "
-            f"description, page_url, play_url, local_path, thumbnail, "
-            f"duration, resolution, width, height, quality, file_size, "
-            f"file_format, fps, status, download_progress, play_count, "
-            f"last_played_at, is_favorite, last_position, created_at, updated_at) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            f"?, ?, ?, ?, ?, ?, ?, ?)",
-            (video_id, video.get("title"), video.get("subject"),
-             video.get("grade"), video.get("source"), video.get("description"),
-             video.get("page_url"), video.get("play_url"), video.get("local_path"),
-             video.get("thumbnail"), video.get("duration"),
-             video.get("resolution"), video.get("width"), video.get("height"),
-             video.get("quality"), video.get("file_size"),
-             video.get("file_format"), video.get("fps"),
-             video.get("status") or "online", video.get("download_progress") or 0,
-             video.get("play_count") or 0, video.get("last_played_at"),
-             video.get("is_favorite") or 0, video.get("last_position") or 0,
-             now, now),
-        )
+        bvid = (video.get("video_id") or "").strip() or None
+        if bvid:
+            existing = self.db.query_one(
+                f"SELECT id FROM {self.TABLE} WHERE video_id = ?", (bvid,)
+            )
+            if existing:
+                return existing["id"]
+        try:
+            self.db.execute(
+                f"INSERT INTO {self.TABLE} (id, title, subject, grade, source, "
+                f"description, page_url, play_url, local_path, thumbnail, "
+                f"duration, resolution, width, height, quality, file_size, "
+                f"file_format, fps, status, download_progress, play_count, "
+                f"last_played_at, is_favorite, last_position, video_id, "
+                f"episode_index, series_id, series_title, created_at, updated_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                f"?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (video_id, video.get("title"), video.get("subject"),
+                 video.get("grade"), video.get("source"), video.get("description"),
+                 video.get("page_url"), video.get("play_url"), video.get("local_path"),
+                 video.get("thumbnail"), video.get("duration"),
+                 video.get("resolution"), video.get("width"), video.get("height"),
+                 video.get("quality"), video.get("file_size"),
+                 video.get("file_format"), video.get("fps"),
+                 video.get("status") or "online", video.get("download_progress") or 0,
+                 video.get("play_count") or 0, video.get("last_played_at"),
+                 video.get("is_favorite") or 0, video.get("last_position") or 0,
+                 bvid, video.get("episode_index"),
+                 (video.get("series_id") or "").strip() or None,
+                 video.get("series_title"),
+                 now, now),
+            )
+        except sqlite3.IntegrityError:
+            # 并发/批量内重复 video_id 触发唯一索引 → 回查返回已有 ID，幂等不抛
+            if bvid:
+                existing = self.db.query_one(
+                    f"SELECT id FROM {self.TABLE} WHERE video_id = ?", (bvid,)
+                )
+                if existing:
+                    return existing["id"]
+            raise
         return video_id
 
-    def add_many(self, videos: list) -> int:
-        """批量新增视频（同 title + source 去重），返回新增数量"""
+    def add_many(self, videos: list) -> dict:
+        """批量新增视频（★ 2026-08 判重优先级：video_id → page_url → title+source）
+
+        返回 {"added": 新增条数, "skipped": 已存在被跳过的条数}。
+        ★ 采纳旧行：命中重复但旧行 video_id 为空（迁移前遗留行）时，
+          用新数据补全 video_id/episode_index/series_id/series_title ——
+          重搜即自动修复，无需回填迁移。
+        """
         added = 0
+        skipped = 0
         for v in videos:
             if not v.get("title"):
                 continue
-            # 去重检查
-            existing = self.db.query_one(
-                f"SELECT id FROM {self.TABLE} WHERE title = ? AND source = ?",
-                (v.get("title"), v.get("source")),
-            )
+            bvid = (v.get("video_id") or "").strip()
+            purl = (v.get("page_url") or "").strip()
+            title = (v.get("title") or "").strip()
+            src = (v.get("source") or "").strip()
+            existing = None
+            if bvid:
+                existing = self.db.query_one(
+                    f"SELECT id, video_id FROM {self.TABLE} WHERE video_id = ?", (bvid,))
+            if not existing and purl:
+                existing = self.db.query_one(
+                    f"SELECT id, video_id FROM {self.TABLE} WHERE page_url = ?", (purl,))
+            if not existing and title and src:
+                existing = self.db.query_one(
+                    f"SELECT id, video_id FROM {self.TABLE} WHERE title = ? AND source = ?",
+                    (title, src))
             if existing:
+                # 采纳旧行：旧行无 video_id → 用新数据补全系列元数据
+                if not existing.get("video_id"):
+                    enrich = {}
+                    if bvid:
+                        enrich["video_id"] = bvid
+                    if v.get("episode_index") is not None:
+                        enrich["episode_index"] = v.get("episode_index")
+                    sid = (v.get("series_id") or "").strip() or None
+                    if sid:
+                        enrich["series_id"] = sid
+                    if v.get("series_title"):
+                        enrich["series_title"] = v.get("series_title")
+                    if enrich:
+                        self.update(existing["id"], enrich)
+                skipped += 1
                 continue
             self.add(v)
             added += 1
-        return added
+        return {"added": added, "skipped": skipped}
 
     def update(self, video_id: str, fields: dict):
         """更新视频字段（只更新传入的字段）"""
@@ -262,6 +339,10 @@ class VideoRepository:
             "lastPlayedAt": "last_played_at",
             "isFavorite": "is_favorite",
             "lastPosition": "last_position",
+            "videoId": "video_id",
+            "episodeIndex": "episode_index",
+            "seriesId": "series_id",
+            "seriesTitle": "series_title",
             "createdAt": "created_at",
             "updatedAt": "updated_at",
         }
@@ -271,6 +352,7 @@ class VideoRepository:
             "duration", "resolution", "width", "height", "quality", "file_size",
             "file_format", "fps", "status", "download_progress", "play_count",
             "last_played_at", "is_favorite", "last_position",
+            "video_id", "episode_index", "series_id", "series_title",
             "created_at", "updated_at",
         }
         data = {}
@@ -308,6 +390,10 @@ class VideoRepository:
             "lastPlayedAt": row.get("last_played_at"),
             "isFavorite": bool(row.get("is_favorite")),
             "lastPosition": row.get("last_position") or 0,
+            "videoId": row.get("video_id"),
+            "episodeIndex": row.get("episode_index"),
+            "seriesId": row.get("series_id"),
+            "seriesTitle": row.get("series_title"),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
         }

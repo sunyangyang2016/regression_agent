@@ -222,12 +222,16 @@ window.videoApp = {
             ' onclick="window.videoApp.play(\'' + id + '\')">' +
             thumb +
             '<div class="video-item-info">' +
+                (v.seriesTitle
+                    ? '<div class="video-series-tag" title="所属系列">📚 ' + esc(v.seriesTitle) + '</div>'
+                    : '') +
                 '<div class="video-item-title" title="' + esc(v.title) + '">' + esc(v.title) + '</div>' +
                 '<div class="video-item-meta">' +
                     '<i class="fas fa-book"></i> ' + esc(v.subject || '未知') +
                     ' · ' + esc(v.grade || '未知') +
                     ' · ' + esc(v.source || '未知') +
                     '<span style="margin-left:6px;">⏱ ' + this._formatTime(v.duration || 0) + '</span>' +
+                    (v.episodeIndex ? ' · 第' + esc(v.episodeIndex) + '集' : '') +
                     (v.quality ? ' · ' + esc(v.quality) : '') +
                 '</div>' +
                 resume +
@@ -1865,7 +1869,9 @@ window.videoApp = {
                         }
                         if (typeof showToast === 'function') {
                             if (data && data.ok) {
-                                showToast('✅ 搜索到 ' + data.total + ' 个视频，新增 ' + data.added + ' 个', 'success');
+                                var _skipped = data.skipped || 0;
+                                showToast('✅ 搜索到 ' + data.total + ' 个视频，新增 ' + data.added + ' 个'
+                                    + (_skipped ? '（重复 ' + _skipped + ' 个已跳过）' : ''), 'success');
                             } else {
                                 showToast('❌ ' + ((data && data.message) || '搜索失败'), 'error');
                             }
@@ -1887,7 +1893,9 @@ window.videoApp = {
         try {
             if (typeof showToast === 'function') {
                 if (data && data.ok) {
-                    showToast('✅ 搜索到 ' + data.total + ' 个视频，新增 ' + data.added + ' 个', 'success');
+                    var _skipped = data.skipped || 0;
+                    showToast('✅ 搜索到 ' + data.total + ' 个视频，新增 ' + data.added + ' 个'
+                        + (_skipped ? '（重复 ' + _skipped + ' 个已跳过）' : ''), 'success');
                 } else {
                     showToast('❌ ' + ((data && data.message) || '搜索失败'), 'error');
                 }

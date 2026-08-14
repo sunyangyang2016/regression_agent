@@ -152,9 +152,17 @@ class VideoBridge(QObject):
                         })
                         return
 
-                    added = self._repo.add_many(videos)
-                    self.refresh_frontend({"added": added, "total": len(videos), "keyword": keyword})
-                    self._notify_search_done({"ok": True, "added": added, "total": len(videos)})
+                    result = self._repo.add_many(videos)
+                    added = result.get("added", 0)
+                    skipped = result.get("skipped", 0)
+                    self.refresh_frontend({
+                        "added": added, "skipped": skipped,
+                        "total": len(videos), "keyword": keyword,
+                    })
+                    self._notify_search_done({
+                        "ok": True, "added": added, "skipped": skipped,
+                        "total": len(videos),
+                    })
                 except Exception as e:
                     self._notify_search_done({"ok": False, "message": str(e)[:200]})
 

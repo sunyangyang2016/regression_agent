@@ -410,6 +410,14 @@
   flex: 1;
   min-width: 0;
 }
+.video-series-tag {
+  font-size: 10px;
+  color: var(--accent-primary);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .video-item-title {
   font-size: 13px;
   font-weight: 500;

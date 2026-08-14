@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from urllib.parse import urlparse
 
 # 项目根目录 / 命令文件统一从 common 取（★ 2026-08-14 修复 off-by-one：
@@ -196,12 +197,139 @@ def _fetch_meta(page_url, timeout=40):
         return None
 
 
-def ytdlp_search(keyword, limit=10, timeout=120):
-    """使用 yt-dlp 搜索 B站视频并补全元数据。
+# ==========================================
+# ★ 2026-08 多P整套搜索：单次 yt-dlp 调用取回多P视频全部集元数据
+# ==========================================
 
-    流程：bilisearch(flat) 获取候选 URL → 逐个解析完整信息。
+# 搜索一次最多入库的视频总数上限（对应 plugins/builtin/video_plugin/config/video_config.json 的 max_results）
+MAX_SEARCH_TOTAL = 50
+# 单个系列（多P视频）最多展开的集数上限（防御异常大系列）
+_MAX_SERIES_ENTRIES = 200
+
+
+def _entry_to_video(entry, series_id=None, series_title=None,
+                    default_uploader="", default_view_count=0, default_description=""):
+    """将 yt-dlp 单条 entry（多P的一集）或顶层 info（单集视频）规范化为视频 dict。
+
+    新增字段（入库去重用）：
+      video_id      平台唯一ID（多P某集 = BVxxx_pN；单集 = BV id）
+      episode_index 集序号（playlist_index；单集为 None）
+      series_id    系列顶层 BV id（单集为 None）
+      series_title  系列顶层标题（单集为 None）
+    source 固定 'bilibili'，修复此前 B站 结果被标成"未知"的问题。
+    缺 webpage_url / 空标题 的条目返回 None。
+    """
+    page_url = entry.get("webpage_url") or entry.get("url") or ""
+    if not page_url:
+        return None
+    title = (entry.get("title") or "").strip()
+    episode_index = entry.get("playlist_index")
+    if not title and series_title and episode_index:
+        title = f"{series_title} 第{episode_index}集"
+    if not title:
+        return None
+    width = entry.get("width")
+    height = entry.get("height")
+    return {
+        "title": title,
+        "page_url": page_url,
+        "play_url": entry.get("url") or page_url,
+        "thumbnail": entry.get("thumbnail") or "",
+        "duration": entry.get("duration") or 0,
+        "width": width,
+        "height": height,
+        "resolution": f"{width}x{height}" if width and height else None,
+        "fps": entry.get("fps"),
+        "uploader": entry.get("uploader") or default_uploader,
+        "view_count": entry.get("view_count") or default_view_count,
+        "description": (entry.get("description") or default_description or "")[:500],
+        "source": "bilibili",
+        "video_id": entry.get("id"),
+        "episode_index": episode_index,
+        "series_id": series_id,
+        "series_title": series_title,
+    }
+
+
+def fetch_series_and_meta(page_url, timeout=60):
+    """解析单个 B站视频并判断是否多P：返回 (is_series, episode_count, videos)。
+
+    与 _fetch_meta 的关键区别：不带 --no-playlist，多P视频一次取回全部集的完整元数据。
+      - 多P:  (True,  N, [每集 dict ...])
+      - 单集: (False, 1, [单个 dict])
+      - 失败: (False, 0, [])
+    """
+    try:
+        cmd = [
+            "yt-dlp", page_url,
+            "--dump-single-json", "--skip-download",
+            "--no-warnings",
+        ]
+        # 自动携带该网站已保存的认证信息（与 _fetch_meta 一致，插在 yt-dlp 与 page_url 之间）
+        auth = get_auth_for_url(page_url)
+        if auth:
+            cmd = cmd[:2] + build_auth_args(auth) + cmd[2:]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace"
+        )
+        if result.returncode != 0:
+            print(f"[fetch_series_and_meta] ⚠️ 解析失败: {result.stderr[:200]}")
+            return False, 0, []
+        info = json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as e:
+        print(f"[fetch_series_and_meta] ⚠️ 解析异常: {e}")
+        return False, 0, []
+
+    return _expand_series(info)
+
+
+def _expand_series(info):
+    """从 yt-dlp --dump-single-json 的 info dict 展开视频列表（纯逻辑，无子进程，可单测）。
+
+    返回 (is_series, episode_count, videos)：
+      - 多P:  (True,  N, [每集 dict ...])
+      - 单集: (False, 1, [单个 dict])
+      - 无效: (False, 0, [])
+    """
+    series_id = info.get("id")             # 顶层 BV id
+    series_title = (info.get("title") or "").strip()
+    entries = info.get("entries")
+    if entries:
+        videos = []
+        for idx, e in enumerate(entries):
+            if idx >= _MAX_SERIES_ENTRIES:
+                print(f"[fetch_series_and_meta] ⚠️ 系列超过 {_MAX_SERIES_ENTRIES} 集，截断")
+                break
+            v = _entry_to_video(
+                e,
+                series_id=series_id,
+                series_title=series_title,
+                default_uploader=info.get("uploader", ""),
+                default_view_count=info.get("view_count") or 0,
+                default_description=info.get("description", ""),
+            )
+            if v:
+                videos.append(v)
+        if videos:
+            return True, len(entries), videos
+        return False, 0, []
+
+    # 单集视频：顶层 info 即为该视频元数据
+    v = _entry_to_video(info)
+    if not v:
+        return False, 0, []
+    return False, 1, [v]
+
+
+def ytdlp_search(keyword, limit=10, timeout=120, max_total=None):
+    """使用 yt-dlp 搜索 B站视频并补全元数据（★ 多P整套：自动展开为全部集）。
+
+    流程：bilisearch(flat) 获取候选 URL → 逐个 fetch_series_and_meta
+         （多P视频一次取回全部集，返回列表为整套展开后的全部视频）。
     返回 [{"title", "page_url", "play_url", "thumbnail", "duration", ...}]
-    失败/无结果返回 []。
+    失败/无结果返回 []。总数受 max_total 上限约束（默认 MAX_SEARCH_TOTAL=50，
+    达到上限时保留当前完整系列，不截半），并带墙钟截止时间防后台卡死。
     """
     try:
         cmd = [
@@ -231,16 +359,26 @@ def ytdlp_search(keyword, limit=10, timeout=120):
         if not candidates:
             return []
 
-        # 2) 逐个解析完整元数据
+        # 2) 逐个解析（多P自动展开整套），带墙钟截止时间防卡死
+        max_total = int(max_total or MAX_SEARCH_TOTAL)
         videos = []
+        deadline = time.monotonic() + max(60, timeout)
         for url in candidates:
-            meta = _fetch_meta(url)
-            if meta and meta.get("title"):
-                videos.append(meta)
-            elif meta:
-                # 至少保留 URL 占位
-                videos.append(meta)
-        return videos[:int(limit)]
+            if time.monotonic() > deadline:
+                print("[ytdlp_search] ⏱️ 达到搜索时限，提前收尾")
+                break
+            try:
+                _is_series, _count, metas = fetch_series_and_meta(url, timeout=45)
+            except Exception as e:
+                print(f"[ytdlp_search] ⚠️ 解析 {url[:60]} 失败: {e}")
+                continue
+            for m in metas:
+                if m.get("title"):
+                    videos.append(m)
+            if len(videos) >= max_total:
+                print(f"[ytdlp_search] 已达结果上限 {max_total}，停止展开")
+                break
+        return videos
     except subprocess.TimeoutExpired:
         print("⏱️ yt-dlp 搜索超时")
         return []

@@ -120,6 +120,10 @@ class Database(BaseDatabase):
             last_played_at TEXT,
             is_favorite   INTEGER DEFAULT 0,
             last_position INTEGER DEFAULT 0,
+            video_id      TEXT,
+            episode_index INTEGER,
+            series_id     TEXT,
+            series_title  TEXT,
             created_at    TEXT,
             updated_at    TEXT
         )
@@ -143,6 +147,8 @@ class Database(BaseDatabase):
         "CREATE INDEX IF NOT EXISTS idx_vlib_status  ON video_library (status)",
         "CREATE INDEX IF NOT EXISTS idx_vlib_source  ON video_library (source)",
         "CREATE INDEX IF NOT EXISTS idx_vlib_created ON video_library (created_at)",
+        # 入库判重兜底：B站 BV号 唯一（老行 video_id 为 NULL，SQLite UNIQUE 允许多个 NULL）
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vlib_video_id ON video_library (video_id)",
     ]
 
     def __init__(self):

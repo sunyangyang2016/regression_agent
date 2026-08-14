@@ -21,11 +21,15 @@ from video_catcher_runner import search_videos, guess_metadata
 
 
 def search_combined(keyword: str, source: str, limit: int) -> list:
-    """多源搜索：目标源失败由 search_videos 自动回退 B站"""
+    """多源搜索：目标源失败由 search_videos 自动回退 B站
+
+    ★ 2026-08 多P整套：search_videos 已自动展开多P视频为全部集，
+    limit 为候选数，返回结果为整套展开后的完整列表（不再截断）。
+    """
     videos = search_videos(keyword, limit=limit, source=source)
     for v in videos:
         guess_metadata(v, keyword, source)
-    return videos[:limit]
+    return videos
 
 
 def main():
@@ -33,7 +37,8 @@ def main():
     parser.add_argument("--keyword", required=True, help="搜索关键词")
     parser.add_argument("--source", default="自动",
                         help="内容来源（自动/bilibili/智慧教育平台/优酷，目标源失败自动回退 B站）")
-    parser.add_argument("--limit", type=int, default=10, help="返回数量（默认 10）")
+    parser.add_argument("--limit", type=int, default=10,
+                        help="搜索候选数量（多P视频自动展开整套入库，总数受上限约束，默认 10）")
     args = parser.parse_args()
 
     if not args.keyword:
@@ -49,18 +54,22 @@ def main():
     # 写入数据库
     from storage.repositories.video_repo import VideoRepository
     repo = VideoRepository()
-    added = repo.add_many(videos)
+    result = repo.add_many(videos)
+    added = result.get("added", 0)
+    skipped = result.get("skipped", 0)
 
     # 通知前端刷新（HTTP → PluginBus 事件）
     send_command({
         "type": "video_updated",
         "added": added,
+        "skipped": skipped,
         "total": len(videos),
         "keyword": args.keyword,
     })
 
     # 输出摘要
-    print(f"✅ 搜索到 {len(videos)} 个视频，新增 {added} 个到视频库")
+    skip_txt = f"（重复 {skipped} 个已跳过）" if skipped else ""
+    print(f"✅ 搜索到 {len(videos)} 个视频，新增 {added} 个到视频库{skip_txt}")
     for i, v in enumerate(videos[:5]):
         print(f"  {i+1}. {v['title']}")
         if v.get("id"):

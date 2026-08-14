@@ -46,7 +46,8 @@ storage/
     ├── conversation_repo.py      # 会话仓库
     ├── message_repo.py           # 消息仓库
     ├── mcp_market_repo.py        # MCP 市场仓库
-    └── mcp_server_logs_repo.py   # MCP 服务器日志仓库
+    ├── mcp_server_logs_repo.py   # MCP 服务器日志仓库
+    └── video_repo.py             # 视频库仓库（video_library）
 ```
 
 ### 1.3 表总览（4 张表）
@@ -57,6 +58,7 @@ storage/
 | `history_sessions_messages` | 📄 内容 | 历史会话消息明细 |
 | `mcp_market_index` | 🛒 目录 | MCP 市场安装目录 |
 | `mcp_server_logs` | 📝 日志 | MCP 服务器操作日志 |
+| `video_library` | 🎬 视频 | 视频中心视频库（学前教学视频） |
 
 ---
 
@@ -259,6 +261,63 @@ CREATE TABLE IF NOT EXISTS mcp_server_logs (
 
 ---
 
+### 2.6 `video_library` — 视频中心视频库表
+
+> 存储视频中心的学前教学视频，由视频插件（主进程）与 preschool-video Skill（子进程）共同写入/读取。
+
+**建表 SQL：**
+```sql
+CREATE TABLE IF NOT EXISTS video_library (
+    id            TEXT PRIMARY KEY,             -- 记录 ID（UUID）
+    title         TEXT NOT NULL,                -- 视频标题
+    subject       TEXT,                         -- 科目（数学/语文/英语/科学/艺术/健康）
+    grade         TEXT,                         -- 年级（学前班/大班/中班/小班）
+    source        TEXT,                         -- 来源（bilibili/智慧教育平台/优酷）
+    description   TEXT,                         -- 描述
+    page_url      TEXT,                         -- 详情页 URL（B站单集为 ?p=N 形式）
+    play_url      TEXT,                         -- 可播放地址
+    local_path    TEXT,                         -- 本地下载文件路径
+    thumbnail     TEXT,                         -- 封面图 URL
+    duration      INTEGER,                      -- 时长（秒）
+    resolution    TEXT,                         -- 分辨率（如 1920x1080）
+    width         INTEGER,                      -- 宽度
+    height        INTEGER,                      -- 高度
+    quality       TEXT,                         -- 画质（如 720p）
+    file_size     INTEGER,                      -- 文件大小
+    file_format   TEXT,                         -- 文件格式（mp4/mkv...）
+    fps           REAL,                         -- 帧率
+    status        TEXT DEFAULT 'online',        -- online/downloading/downloaded/failed
+    download_progress INTEGER DEFAULT 0,        -- 下载进度 0-100
+    play_count    INTEGER DEFAULT 0,            -- 播放次数
+    last_played_at TEXT,                        -- 最近播放时间
+    is_favorite   INTEGER DEFAULT 0,            -- 是否收藏 0/1
+    last_position INTEGER DEFAULT 0,            -- 断点续播位置（秒）
+    video_id      TEXT,                         -- 平台唯一 ID（B站 BV号；多P某集为 BVxxx_pN）
+    episode_index INTEGER,                      -- 集序号（playlist_index；单集为 NULL）
+    series_id     TEXT,                         -- 所属系列顶层 ID（B站顶层 BV id；单集为 NULL）
+    series_title  TEXT,                         -- 所属系列标题（单集为 NULL）
+    created_at    TEXT,                         -- 创建时间（ISO 8601）
+    updated_at    TEXT                          -- 更新时间（ISO 8601）
+);
+```
+
+**字段说明（★ 2026-08 新增整套搜索相关列）：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `video_id` | TEXT | 平台唯一 ID（B站 BV号，多P某集为 `BVxxx_pN`），**入库判重键**，建 `UNIQUE` 索引 `idx_vlib_video_id`（老行全为 NULL，SQLite UNIQUE 允许多个 NULL） |
+| `episode_index` | INTEGER | 集序号（`playlist_index`），单集视频为 NULL；前端据此显示"第N集" |
+| `series_id` | TEXT | 所属系列顶层 ID（多P视频顶层 BV id），同一系列所有集共享 |
+| `series_title` | TEXT | 所属系列标题，前端据此显示系列标签 |
+
+**索引：** `subject`/`grade`/`status`/`source`/`created_at`（筛选排序）、`idx_vlib_video_id`（UNIQUE，判重兜底）
+
+**入库判重逻辑（`VideoRepository.add_many`，2026-08）：** 按 `video_id → page_url → title+source` 优先级判断视频是否已存在，返回 `{"added": n, "skipped": m}`；`add()` 对 `video_id` 幂等（重复返回已有行 ID 不插入）。
+
+**采纳旧行：** 命中重复但旧行 `video_id` 为 NULL（迁移前遗留行）时，用新数据补全 `video_id`/`episode_index`/`series_id`/`series_title`——重搜即自动修复，无需回填迁移。但历史行 `video_id` 为 NULL 且旧 part-1 的 `page_url` 无 `?p=1`，重搜老系列可能残留一条 part-1 重复（仅影响迁移前旧行，不做回填迁移）。
+
+---
+
 ## 三、表之间的关系
 
 ### 3.1 关系图示
@@ -435,6 +494,7 @@ class ConversationRepository:
 | `mcp_market_repo.py` | `mcp_market_index` | dict（前端格式） |
 | `mcp_server_logs_repo.py` | `mcp_server_logs` | `MCPServerLog` |
 | `ai_round_logs_repo.py` | `ai_round_logs` | `AIRoundLog` |
+| `video_repo.py` | `video_library` | dict（前端格式） |
 
 ### 5.5 初始化与数据迁移
 
