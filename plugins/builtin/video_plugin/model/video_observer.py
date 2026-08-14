@@ -1,45 +1,80 @@
-"""视频插件观察者 - 监听命令文件 + 订阅 PluginBus 事件"""
+"""视频插件观察者 - 监听 HTTP 命令 + 订阅 PluginBus 事件"""
 import json
 import os
-import threading
-import time
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from core.plugin_bus import PluginBus
+
+# Windows 控制台默认 GBK，emoji/中文打印会触发 UnicodeEncodeError，
+# 独立导入本模块时兜底切到 UTF-8（主进程 main.py 已配置时无副作用）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if _stream and _stream.encoding and _stream.encoding.lower() not in ("utf-8", "utf8"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # 项目根目录
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
 ))))
-# 命令文件路径（Skill 的 scripts 独立进程写入）
-COMMANDS_FILE = os.path.join(_PROJECT_ROOT, "storage", "video_commands.json")
+# 端口发现文件（脚本进程读取此文件定位命令端点）
+PORT_FILE = os.path.join(_PROJECT_ROOT, "storage", "video_plugin.json")
+
+
+class _VideoCommandHandler(BaseHTTPRequestHandler):
+    """HTTP 命令端点：CLI 脚本（独立进程）POST /video_command → PluginBus.publish"""
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length > 0 else b"{}"
+            payload = json.loads(body.decode("utf-8"))
+            if isinstance(payload, dict) and payload.get("type") in ("video_control", "video_updated"):
+                PluginBus.publish(payload["type"], payload)
+                self._respond(200, {"ok": True})
+            else:
+                self._respond(400, {"ok": False, "error": "unknown payload type"})
+        except Exception as e:
+            print(f"[VideoObserver] ⚠️ 命令处理失败: {e}")
+            self._respond(500, {"ok": False, "error": str(e)})
+
+    def _respond(self, code: int, data: dict):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        """静默默认请求日志"""
+        pass
 
 
 class VideoObserver:
     """视频观察者
 
     两个通道：
-    1. 文件通道：Skill 的 scripts（独立进程）写入 video_commands.json → 本类读取执行
+    1. HTTP 命令通道：Skill 的 scripts（独立进程）POST /video_command
+       → 本类服务器 PluginBus.publish("video_control"/"video_updated") → 本类直接订阅
     2. 事件通道：主进程内 PluginBus.publish("video_control") → 本类直接订阅
     """
-
-    # 已处理命令的时间戳集合（避免重复处理同一时间戳）
-    _processed_ids = set()
-    _max_processed = 100
 
     def __init__(self, bridge=None):
         self.bridge = bridge
         self._running = True
-        self._last_mtime = 0.0
+        self._http_server = None
 
-        # ★ 订阅 PluginBus 事件（主进程内直接通信）
+        # ★ 订阅 PluginBus 事件（命令最终都汇入事件总线）
         PluginBus.subscribe("video_control", self.on_control)
         PluginBus.subscribe("video_updated", self.on_updated)
 
-        # 启动文件监听线程（独立进程 scripts 通道）
-        self._file_thread = threading.Thread(target=self._file_loop, daemon=True)
-        self._file_thread.start()
+        # 启动 HTTP 命令服务器（独立进程 scripts 通道）
+        self._start_command_server()
 
-        print("[VideoObserver] ✅ 已启动（文件监听 + PluginBus 订阅）")
+        print("[VideoObserver] ✅ 已启动（HTTP 命令服务器 + PluginBus 订阅）")
 
     # ==========================================
     # PluginBus 事件（主进程内直接通信）
@@ -54,46 +89,28 @@ class VideoObserver:
         self._refresh_frontend(payload)
 
     # ==========================================
-    # 命令文件监听（独立进程 scripts 通道）
+    # HTTP 命令服务器（独立进程 scripts 通道）
     # ==========================================
 
-    def _file_loop(self):
-        """后台线程：每 0.5 秒检查命令文件是否有新命令"""
-        while self._running:
-            try:
-                if os.path.exists(COMMANDS_FILE):
-                    mtime = os.path.getmtime(COMMANDS_FILE)
-                    if mtime != self._last_mtime:
-                        self._last_mtime = mtime
-                        self._process_commands()
-            except Exception as e:
-                print(f"[VideoObserver] ⚠️ 文件监听异常: {e}")
-            time.sleep(0.5)
-
-    def _process_commands(self):
-        """读取并执行命令文件中的所有命令，然后清空"""
+    def _start_command_server(self):
+        """启动 127.0.0.1 随机端口 HTTP 服务器，端口写入 storage/video_plugin.json"""
         try:
-            with open(COMMANDS_FILE, "r", encoding="utf-8") as f:
-                commands = json.load(f)
-            if not isinstance(commands, list):
-                return
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _VideoCommandHandler)
+            self._http_server = server
+            import threading
+            threading.Thread(target=server.serve_forever, daemon=True).start()
 
-            for cmd in commands:
-                if not isinstance(cmd, dict):
-                    continue
-                cmd_type = cmd.get("type", "")
-                if cmd_type == "video_control":
-                    self._execute_control(cmd)
-                elif cmd_type == "video_updated":
-                    self._refresh_frontend(cmd)
+            # 写端口发现文件（脚本进程读取）
+            try:
+                os.makedirs(os.path.dirname(PORT_FILE), exist_ok=True)
+                with open(PORT_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"port": server.server_address[1]}, f)
+            except Exception as e:
+                print(f"[VideoObserver] ⚠️ 写端口文件失败: {e}")
 
-            # 清空已处理的命令
-            with open(COMMANDS_FILE, "w", encoding="utf-8") as f:
-                json.dump([], f)
-        except (ValueError, OSError):
-            pass
+            print(f"[VideoObserver] 🖥 HTTP 命令端点: http://127.0.0.1:{server.server_address[1]}/video_command")
         except Exception as e:
-            print(f"[VideoObserver] ⚠️ 处理命令失败: {e}")
+            print(f"[VideoObserver] ⚠️ HTTP 命令服务器启动失败: {e}")
 
     # ==========================================
     # 执行控制 / 刷新
@@ -128,6 +145,13 @@ class VideoObserver:
     def stop(self):
         """停止监听"""
         self._running = False
+        try:
+            if self._http_server:
+                self._http_server.shutdown()
+                self._http_server.server_close()
+                self._http_server = None
+        except Exception:
+            pass
         try:
             PluginBus.unsubscribe("video_control", self.on_control)
             PluginBus.unsubscribe("video_updated", self.on_updated)

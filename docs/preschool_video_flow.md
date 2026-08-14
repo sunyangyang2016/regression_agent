@@ -1,5 +1,14 @@
 # 学前班教学视频 — 详细设计文档
 
+> ⚠️ **与当前实现不符（2026-08-14）**：本文档为早期设计稿，文中描述的部分架构（第 4 节
+> Python Skill 类 `skill_video_search/download/control`、`skills/builtin/video_skill.py`）**从未实现**。
+> 实际实现为：MD Skill（`skills/md/preschool-video/SKILL.md` 提示词）+ 独立 CLI 脚本
+> （`scripts/video_search.py` / `video_control.py` / `video_catcher_runner.py`）。
+> 命令传送走**事件通道**：脚本进程 HTTP POST `/video_command`（127.0.0.1 端口发现于
+> `storage/video_plugin.json`）→ 主进程 `PluginBus.publish("video_control"/"video_updated")`
+> → video_plugin observer 订阅执行。
+> 数据库设计、VideoRepository、video_plugin、断点续播等章节仍与实际一致，可作参考。
+
 > 本文档基于项目现有架构（PluginBus 事件总线、Python Skill 类、video_plugin 插件、VideoRepository 数据层）的完整设计，覆盖**视频搜索、播放控制、断点续播、视频下载、AI 对话驱动**等核心业务流程。
 
 ---
@@ -377,20 +386,29 @@ class VideoPlugin(BasePlugin):
             self._observer.stop()
 ```
 
-### 5.3 `video_observer.py`（★ 核心：事件直接订阅）
+### 5.3 `video_observer.py`（★ 核心：HTTP 命令服务器 + 事件订阅）
+
+> 实际实现（2026-08-14）：CLI 脚本为独立进程，无法直接调用进程内 PluginBus，
+> 故由 observer 起一个 127.0.0.1 随机端口 HTTP 命令服务器承接脚本命令，
+> 再以 PluginBus **事件**分发（命令传送统一走事件通道，无命令文件）。
 
 ```python
 class VideoObserver:
-    """插件主进程内直接订阅 PluginBus 事件（与系统监控同模式）"""
+    """HTTP 命令服务器 + PluginBus 事件订阅（与系统监控同模式）"""
 
     def __init__(self, bridge):
         self.bridge = bridge
-        # ★ 直接订阅事件（同进程内，零文件）
+        # ★ 订阅事件（命令最终都汇入事件总线）
         PluginBus.subscribe("video_control", self.on_control)
         PluginBus.subscribe("video_updated", self.on_updated)
+        # ★ 启动 HTTP 命令服务器（独立进程脚本通道）
+        #  ThreadingHTTPServer(("127.0.0.1", 0)) → POST /video_command
+        #  收到 payload → PluginBus.publish(payload["type"], payload)
+        #  端口写入 storage/video_plugin.json 供脚本发现
+        self._start_command_server()
 
     def on_control(self, payload):
-        """AI 播放控制事件 → 直接控制前端播放器"""
+        """播放控制事件 → 直接控制前端播放器"""
         self.bridge.execute_control(payload)  # execute_js
 
     def on_updated(self, payload):
@@ -398,6 +416,7 @@ class VideoObserver:
         self.bridge.execute_js("window.videoApp.refreshList()")
 
     def stop(self):
+        # 关闭 HTTP 服务器 + 取消事件订阅
         PluginBus.unsubscribe("video_control", self.on_control)
         PluginBus.unsubscribe("video_updated", self.on_updated)
 ```
@@ -559,16 +578,17 @@ description: 学前班教学视频 - AI 负责搜索教学视频、控制播放�
 AI 读取 SKILL → 提取意图
     │
     ▼
-AI 调用 skill_video_search {"keyword":"幼儿园大班 数学"}
+AI 运行 python scripts/video_search.py --keyword "幼儿园大班 数学"
     │
     ▼
-VideoSearchSkill.execute()（主进程内）
-    │
-    ├─ yt-dlp 搜索 → 提取视频信息
+脚本进程（独立进程）：yt-dlp 多源搜索 → 提取视频信息
     │
     ├─ VideoRepository.add_many() → 批量写入 video_library 表
     │
-    └─ ★ PluginBus.publish("video_updated", {added, total})
+    └─ ★ HTTP POST /video_command {"type":"video_updated", added, total}
+         │
+         ▼
+主进程 video_plugin 命令服务器 → PluginBus.publish("video_updated", {...})
          │
          ▼
     VideoObserver.on_updated()
@@ -586,14 +606,19 @@ VideoSearchSkill.execute()（主进程内）
 用户："播放第一个"
     │
     ▼
-AI 调用 skill_video_control {"action":"play","video_id":"xxx"}
+AI 读取 SKILL → 提取意图
     │
     ▼
-VideoControlSkill.execute()（主进程内）
+AI 运行 python scripts/video_control.py --action play --video-id "xxx"
     │
+    ▼
+脚本进程（独立进程）
     ├─ VideoRepository.get_by_id() → 获取 url + lastPosition
     │
-    └─ ★ PluginBus.publish("video_control", {...})
+    └─ ★ HTTP POST /video_command {"type":"video_control", action:"play", ...}
+         │
+         ▼
+主进程 video_plugin 命令服务器 → PluginBus.publish("video_control", {...})
          │
          ▼
     VideoObserver.on_control()
@@ -617,10 +642,10 @@ VideoControlSkill.execute()（主进程内）
 用户："快进 30 秒"
     │
     ▼
-AI 调用 skill_video_control {"action":"seek","seconds":30}
+AI 运行 python scripts/video_control.py --action seek --seconds 30
     │
     ▼
-VideoControlSkill → PluginBus.publish("video_control", {...})
+脚本 HTTP POST /video_command → 主进程 PluginBus.publish("video_control", {...})
     │
     ▼
 VideoObserver.on_control → VideoBridge.execute_control()
@@ -635,13 +660,13 @@ execute_js → 前端 player.currentTime += 30 ✅
 用户："播放到哪了"
     │
     ▼
-AI 调用 skill_video_control {"action":"get_state","video_id":"xxx"}
+AI 运行 python scripts/video_control.py --action get_state --video-id "xxx"
     │
     ▼
-VideoControlSkill.execute() → VideoRepository.get_playback_state()
+脚本进程（独立进程）→ VideoRepository.get_playback_state()（直接查库，不依赖前端/事件）
     │
     ▼
-返回 {title, position:125, duration:930, play_count:3}
+脚本打印 {title, position:125, duration:930, play_count:3}
     │
     ▼
 AI 回答："《幼儿园大班数学①》已播放到 2 分 05 秒" ✅

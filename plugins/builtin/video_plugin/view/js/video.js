@@ -372,6 +372,10 @@ window.videoApp = {
                 if (data.audio_url) video.audioPath = data.audio_url;
                 self._playLocalExternal(video);
             } else {
+                // ★ 2026-08-14：后端解析补出的时长（DB 缺失时）透传给 video → _currentDuration 正确
+                if (data.duration && data.duration > 0 && !(video.duration > 0)) {
+                    video.duration = data.duration;
+                }
                 // ★ 2026-08-13 异步化：playOnlineVideo 后台线程启动转码流 → playReady 回调
                 self._startOnlineStream(data.url, video, data.audio_url);
             }
@@ -394,7 +398,9 @@ window.videoApp = {
         // ★ 2026-08-13 防御性修复：发起异步调用【前】同步置待续项，
         //   避免后端 playReady 先于 Promise 回调到达 → playReady 视作过期回调丢弃 → spinner 卡死。
         self._pendingPlay = { video: video };
-        var p2 = window.video_bridge.playOnlineVideo(url, video.id, 0, audioUrl || '');
+        // ★ 2026-08-14 续播显式化：把上次位置传给后端（后端 start_pos==0 时仍会读库兜底）
+        var lastPos = (video.lastPosition && video.lastPosition > 0) ? video.lastPosition : 0;
+        var p2 = window.video_bridge.playOnlineVideo(url, video.id, lastPos, audioUrl || '');
         if (p2 && typeof p2.then === 'function') {
             p2.then(function(res) {
                 var r = (typeof res === 'string') ? JSON.parse(res) : res;
@@ -904,6 +910,11 @@ window.videoApp = {
         if (!player || !url) return;
         var video_id = video.id || '';
         this._currentVideo = video;
+        // ★ 2026-08-14 在线完整流：复位待续 seek / 等待提示 / 稳定播放位置
+        this._deferredSeek = null;
+        if (this._deferredSeekTimer) { clearTimeout(this._deferredSeekTimer); this._deferredSeekTimer = null; }
+        this._streamWaitBase = undefined;
+        this._stablePos = 0;
         // ★ 2026-08 修复：从流 URL 解析后端实际起始位置（start/seek 参数）
         //   后端转码/直通流 URL 已携带 start=<秒>（回退 0 后为 0）
         //   前端基于它计算绝对播放位置 → 彻底解决位置累加
@@ -928,6 +939,10 @@ window.videoApp = {
             // file:// 原生直通 / 普通 URL → 可正常 seek 到上次位置
             this._currentDuration = fullDur;
         }
+        // ★ 2026-08-14 在线完整流标记（src=native = 从 0 转码、缓冲只增不减）
+        this._onlineFullActive = !!isNative;
+        // 播放区下方文字指示器「当前 / 总时长」（自绘条移除后此指示器无人更新，恢复绑定）
+        this._bindNowProgressUpdate();
         this._bindPlayerError(player, url);
         if (!isLiveStream) {
             var pp = window.video_bridge.getLastPosition(video_id);
@@ -965,22 +980,6 @@ window.videoApp = {
         this._stopAudioSync();
         player.src = url;
         player.load();
-        // ★ 2026-08-13 修复：原生直通/缓存 webm 流（src=native）后端整文件提供、不裁剪；
-        //   续播位置改由前端在 currentTime 上设置（Chromium 原生 webm 按 Cues 精确 seek）。
-        //   （此前后端按字节 skip 到续播点 → 输出无 EBML 头的残缺 webm → SRC_NOT_SUPPORTED）
-        if (isNative && resumePos > 0) {
-            var _nativeSeek = function() {
-                try { if (player.currentTime !== resumePos) player.currentTime = resumePos; } catch(e) {}
-            };
-            if (player.readyState >= 1) { _nativeSeek(); }
-            else {
-                player.addEventListener('loadedmetadata', function onM() {
-                    _nativeSeek();
-                    player.removeEventListener('loadedmetadata', onM);
-                });
-            }
-        }
-        this._awaitPlaySafe(player);
         var nowTitle = document.getElementById('videoNowTitle');
         if (nowTitle) nowTitle.textContent = video.title || '';
         document.getElementById('videoNowMeta').textContent =
@@ -988,8 +987,165 @@ window.videoApp = {
         var link = document.getElementById('videoSourceLink');
         if (link) { link.style.display = video.pageUrl ? '' : 'none'; link.setAttribute('data-url', video.pageUrl || ''); }
         try { window.video_bridge.incrementPlayCount(video_id); } catch(e) {}
+        // ★ 2026-08-14 修复：在线完整流（src=native）续播/前拖。
+        //   Chromium 媒体管道 seek 有 ~15s 超时：直接 currentTime=续播位置而转码未到
+        //   → Range 请求挂起 → seek 超时 → 播放失败。故改为【轮询转码进度 → 数据就绪后
+        //   才 seek】（Range 秒回，seek 瞬间完成），等待期标题提示「正在准备续播 XX:XX」。
+        if (isNative) {
+            if (resumePos > 0) {
+                // ★ 2026-08-14 修复：续播等待期【保持旋转等待动画】不提前收起——
+                //   转码从 0 需先追到续播点，spinner 持续旋转直到真正跳到续播位置
+                //   开始播放（playing 事件自动收起，见 _player playing 监听）。
+                //   若用户手动播放则 abortIfUserPlayed 放弃自动续播，改为从头看。
+                this._deferSeek(player, resumePos, {
+                    msg: '正在准备续播 ' + this._formatTime(resumePos),
+                    abortIfUserPlayed: true
+                });
+            } else {
+                this._awaitPlaySafe(player);
+            }
+            // 前拖守卫：用户拖进度条到未转码处 → 取消 + 排队等待（同样防 seek 超时）
+            this._bindSeekGuard();
+        } else {
+            this._awaitPlaySafe(player);
+        }
         this.startPositionSave(video_id);
         this.refreshList();
+    },
+
+    // ===== ★ 2026-08-14 在线完整流：转码进度等待 + 安全 seek =====
+    // 背景：在线完整流（src=native）从 0 实时转码、缓冲只增不减；但 Chromium 媒体管道
+    //   seek 有 ~15s 超时 → 直接 seek 到「未转码位置」会挂起超时报错。
+    //   方案：先轮询桥 getStreamProgress（转码已推进的虚拟秒数），数据就绪后才 seek。
+    _queryProgress: function(video_id, cb) {
+        try {
+            if (!window.video_bridge || typeof window.video_bridge.getStreamProgress !== 'function') {
+                cb(0); return;
+            }
+            var p = window.video_bridge.getStreamProgress(video_id || '');
+            var _apply = function(res) {
+                var r = (typeof res === 'string') ? JSON.parse(res) : res;
+                cb((r && typeof r.t === 'number') ? r.t : 0);
+            };
+            if (p && typeof p.then === 'function') p.then(_apply);
+            else _apply(p);
+        } catch(e) { cb(0); }
+    },
+
+    // 标题尾部等待提示（还原时恢复原标题）
+    _showStreamWait: function(msg) {
+        var el = document.getElementById('videoNowTitle');
+        if (!el) return;
+        if (this._streamWaitBase === undefined) this._streamWaitBase = el.textContent;
+        el.textContent = this._streamWaitBase + ' ⏳ ' + msg + '…';
+    },
+    _clearStreamWait: function() {
+        var el = document.getElementById('videoNowTitle');
+        if (el && this._streamWaitBase !== undefined) el.textContent = this._streamWaitBase;
+        this._streamWaitBase = undefined;
+    },
+
+    // ★ 续播/前拖统一处理：排队等待转码追到目标位置 → seek + 播放
+    _deferSeek: function(player, target, opts) {
+        var self = this;
+        if (!player || !target || target <= 0) { this._awaitPlaySafe(player); return; }
+        if (this._deferredSeek !== null && this._deferredSeek !== undefined) return;  // 已在排队
+        opts = opts || {};
+        var abortIfUserPlayed = !!opts.abortIfUserPlayed;
+        this._deferredSeek = target;
+        if (opts.msg) this._showStreamWait(opts.msg);
+        else this._showStreamWait('正在转码到 ' + this._formatTime(target));
+        // 取消当前 seek → 回到稳定位置（解除 Chromium seek 挂起，避免 ~15s 超时）
+        try { player.currentTime = this._stablePos || 0; } catch(e) {}
+        try { player.pause(); } catch(e) {}
+        var startTs = Date.now();
+        var _poll = function() {
+            var cur = self._deferredSeek;
+            if (cur === null || cur === undefined) { self._deferredSeekTimer = null; return; }
+            // 用户已手动从头播放 → 放弃自动跳
+            if (abortIfUserPlayed) {
+                try {
+                    if (player.currentTime > 0.5 && !player.paused) {
+                        self._deferredSeek = null; self._deferredSeekTimer = null;
+                        self._clearStreamWait(); return;
+                    }
+                } catch(e) {}
+            }
+            // 超时兜底（10 分钟，与后端 do_GET 预算一致）
+            if (Date.now() - startTs > 600000) {
+                self._deferredSeek = null; self._deferredSeekTimer = null;
+                self._clearStreamWait();
+                try { player.currentTime = cur; } catch(e) {}
+                self._awaitPlaySafe(player);
+                return;
+            }
+            // 元数据未就绪时先等（避免 readyState==0 时 seek 无效）
+            try { if (player.readyState < 1) { self._deferredSeekTimer = setTimeout(_poll, 500); return; } } catch(e) {}
+            self._queryProgress((self._currentVideo && self._currentVideo.id) || '', function(t) {
+                var cur2 = self._deferredSeek;
+                if (cur2 === null || cur2 === undefined) { self._deferredSeekTimer = null; return; }
+                if (abortIfUserPlayed) {
+                    try {
+                        if (player.currentTime > 0.5 && !player.paused) {
+                            self._deferredSeek = null; self._deferredSeekTimer = null;
+                            self._clearStreamWait(); return;
+                        }
+                    } catch(e) {}
+                }
+                if (t >= cur2 + 2) {   // +2s 覆盖关键帧间隔与解析余量 → seek 秒回
+                    self._deferredSeek = null; self._deferredSeekTimer = null;
+                    self._clearStreamWait();
+                    try { player.currentTime = cur2; } catch(e) {}
+                    self._awaitPlaySafe(player);
+                } else {
+                    self._deferredSeekTimer = setTimeout(_poll, 1000);
+                }
+            });
+        };
+        this._deferredSeekTimer = setTimeout(_poll, 1000);
+    },
+
+    // 前拖守卫：拖动到未转码处 → 取消该 seek + 排队等待（就绪后自动 seek）
+    _bindSeekGuard: function() {
+        var self = this;
+        if (this._seekGuardBound) return;
+        this._seekGuardBound = true;
+        var p = document.getElementById('videoPlayer');
+        if (!p) return;
+        p.addEventListener('timeupdate', function() {
+            if (!self._onlineFullActive) return;
+            try { self._stablePos = p.currentTime || 0; } catch(e) {}
+        });
+        p.addEventListener('seeking', function() {
+            if (!self._onlineFullActive) return;
+            if (self._deferredSeek !== null && self._deferredSeek !== undefined) return;  // 已在排队
+            var target;
+            try { target = p.currentTime || 0; } catch(e) { return; }
+            self._queryProgress((self._currentVideo && self._currentVideo.id) || '', function(t) {
+                if (!self._onlineFullActive) return;
+                if (self._deferredSeek !== null && self._deferredSeek !== undefined) return;
+                if (target > t + 2) self._deferSeek(p, target);
+            });
+        });
+    },
+
+    // 播放区下方文字指示器：「当前 / 总时长」（原生条外的独立文字，显示播放到哪里了）
+    _bindNowProgressUpdate: function() {
+        var self = this;
+        if (this._nowProgressBound) return;
+        this._nowProgressBound = true;
+        var p = document.getElementById('videoPlayer');
+        var el = document.getElementById('videoNowProgress');
+        if (!p || !el) return;
+        var _update = function() {
+            var t = (p.currentTime || 0) + (self._streamStartPos || 0);
+            var dur = self._currentDuration || (p.duration || 0);
+            el.textContent = self._formatTime(t) + ' / ' + self._formatTime(dur);
+        };
+        p.addEventListener('timeupdate', _update);
+        p.addEventListener('durationchange', _update);
+        p.addEventListener('seeked', _update);
+        _update();
     },
 
     // ===== ★ 自绘控制条（功能完整、外观贴近原生 Web 播放器）=====
@@ -1532,8 +1688,11 @@ window.videoApp = {
     search: function() {
         var self = this;
         var kw = (document.getElementById('videoSearchInput').value || '').trim();
+        // ★ 2026-08-14 多源搜索：把来源下拉当前值传给后端（''=全部/B站/智慧教育平台/优酷）
+        var srcSel = document.getElementById('videoSourceFilter');
+        var source = srcSel ? srcSel.value : '';
         if (kw && window.video_bridge && typeof window.video_bridge.searchOnline === 'function') {
-            var p = window.video_bridge.searchOnline(kw);
+            var p = window.video_bridge.searchOnline(kw, source);
             if (p && typeof p.then === 'function') {
                 p.then(function(result) {
                     try {
@@ -1553,10 +1712,10 @@ window.videoApp = {
                             }
                         }
                     } catch(e) {}
-                    self.refreshList();
+                    self._resetSourceFilterAndRefresh();
                 }).catch(function(e) {
                     console.warn('[videoApp] 网络搜索失败:', e);
-                    self.refreshList();
+                    self._resetSourceFilterAndRefresh();
                 });
                 return;
             }
@@ -1575,6 +1734,13 @@ window.videoApp = {
                 }
             }
         } catch(e) {}
+        this._resetSourceFilterAndRefresh();
+    },
+
+    // ★ 2026-08-14 搜索后把来源筛选重置为"全部"，避免结果被自身来源筛选过滤掉
+    _resetSourceFilterAndRefresh: function() {
+        var sel = document.getElementById('videoSourceFilter');
+        if (sel) sel.value = '';
         this.refreshList();
     },
 

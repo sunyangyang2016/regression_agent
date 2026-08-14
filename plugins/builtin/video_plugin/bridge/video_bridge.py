@@ -20,7 +20,7 @@ VIDEO_DIR = os.path.join(_PROJECT_ROOT, "user_config", "media", "videos")
 _SCRIPTS_DIR = os.path.join(_PROJECT_ROOT, "skills", "md", "preschool-video", "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
-from video_catcher_runner import search_videos, ytdlp_get_url, run_video_catcher, save_auth
+from video_catcher_runner import search_videos, ytdlp_get_url, run_video_catcher, save_auth, guess_metadata, _fetch_meta
 
 _bridge_instance = None
 
@@ -128,11 +128,12 @@ class VideoBridge(QObject):
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
-    @pyqtSlot(str, result=str)
-    def searchOnline(self, keyword):
-        """★ 前端搜索按钮 → yt-dlp 搜索 B站 → 写入视频库 → 返回结果
+    @pyqtSlot(str, str, result=str)
+    def searchOnline(self, keyword, source=""):
+        """★ 前端搜索按钮 → 多源搜索（B站/智慧教育平台/优酷，失败回退 B站）→ 写入视频库 → 返回结果
         ★ 2026-08-13 异步化：搜索（bilisearch + 逐个解析元数据）耗时可能数十秒，
           改后台线程执行，完成后 JS 回调 window.videoApp.searchDone()，不再阻塞 GUI 线程。
+        ★ 2026-08-14 多源：source 来自前端来源下拉（''=全部/B站/智慧教育平台/优酷）。
         """
         try:
             keyword = (keyword or "").strip()
@@ -141,13 +142,9 @@ class VideoBridge(QObject):
 
             def _worker():
                 try:
-                    videos = search_videos(keyword, limit=10)
+                    videos = search_videos(keyword, limit=10, source=source)
                     for v in videos:
-                        if not v.get("subject"):
-                            v["subject"] = self._guess_subject(keyword)
-                        if not v.get("grade"):
-                            v["grade"] = self._guess_grade(keyword)
-                        v["source"] = v.get("source") or "bilibili"
+                        guess_metadata(v, keyword, source)
 
                     if not videos:
                         self._notify_search_done({
@@ -178,33 +175,6 @@ class VideoBridge(QObject):
             )
         except Exception:
             pass
-
-    @staticmethod
-    def _guess_subject(keyword: str) -> str:
-        subjects = {
-            "数学": "数学", "算术": "数学", "数字": "数学", "计算": "数学",
-            "语文": "语文", "拼音": "语文", "识字": "语文", "汉字": "语文",
-            "英语": "英语", "字母": "英语", "abc": "英语",
-            "科学": "科学", "实验": "科学", "自然": "科学",
-            "艺术": "艺术", "画画": "艺术", "美术": "艺术", "音乐": "艺术",
-            "健康": "健康", "体育": "健康", "安全": "健康",
-        }
-        kw = keyword.lower()
-        for k, v in subjects.items():
-            if k in kw:
-                return v
-        return None
-
-    @staticmethod
-    def _guess_grade(keyword: str) -> str:
-        grades = {
-            "学前班": "学前班", "幼小衔接": "学前班", "幼儿园": "学前班",
-            "大班": "大班", "中班": "中班", "小班": "小班",
-        }
-        for k, v in grades.items():
-            if k in keyword:
-                return v
-        return None
 
     @pyqtSlot(str, result=int)
     def getLastPosition(self, video_id):
@@ -287,11 +257,31 @@ class VideoBridge(QObject):
                 return
 
             print(f"[VideoBridge] ✅ yt-dlp 返回 {len(real_urls)} 个地址")
+
+            # ★ 2026-08-14 时长兜底：DB 缺时长（搜索时未取到/多源回退源无时长）时用 yt-dlp 元数据补，
+            #   保证前端 _currentDuration / 拖拽 / 续播 clamp 不退化；补到就写库并透传 payload。
+            dur = 0
+            try:
+                vid_row = self._repo.get_by_id(video_id) or {}
+                dur = float(vid_row.get("duration") or 0)
+            except Exception:
+                dur = 0
+            if not (dur > 0):
+                try:
+                    meta = _fetch_meta(page_url, timeout=40)
+                    if meta and (meta.get("duration") or 0) > 0:
+                        dur = float(meta["duration"])
+                        self._repo.update(video_id, {"duration": int(dur)})
+                        print(f"[VideoBridge] ⏱ 在线补时长(yt-dlp) = {int(dur)}s")
+                except Exception as e:
+                    print(f"[VideoBridge] ⚠️ 在线补时长失败: {e}")
+
             if len(real_urls) == 1:
                 real_url = real_urls[0]
                 self._repo.update(video_id, {"play_url": real_url})
                 self._notify_play_url_ready(video_id,
-                                            {"ok": True, "url": real_url, "local": False})
+                                            {"ok": True, "url": real_url, "local": False,
+                                             "duration": int(dur)})
                 return
 
             video_url = real_urls[0]
@@ -299,7 +289,7 @@ class VideoBridge(QObject):
             self._repo.update(video_id, {"play_url": video_url})
             self._notify_play_url_ready(video_id, {
                 "ok": True, "url": video_url,
-                "audio_url": audio_url, "local": False
+                "audio_url": audio_url, "local": False, "duration": int(dur)
             })
         except Exception as e:
             print(f"[VideoBridge] ❌ 在线解析失败: {e}")
@@ -768,6 +758,45 @@ class VideoBridge(QObject):
         except Exception as e:
             print(f"[VideoBridge] 在线播放失败: {e}")
             return json.dumps({"ok": False, "message": str(e)[:120]}, ensure_ascii=False)
+
+    @pyqtSlot(str, result=str)
+    def getStreamProgress(self, video_id=""):
+        """★ 2026-08-14 在线完整模式：返回转码已推进到的【虚拟秒数】。
+           口径与 do_GET 的 virtual_total 完全一致（GPU 1.7Mbps / CPU 0.8Mbps），
+           因此「progress_sec >= 目标秒数」即代表 Chromium 请求目标位置字节时会秒回。
+           用途：续播/前拖到未转码处时，前端先轮询此进度、数据就绪后才 seek，
+           避免 Chromium ~15s seek 超时 → 播放失败。"""
+        try:
+            with self._player_lock:
+                dec = self._external_player
+                with dec._buf_lock:
+                    buf_size = dec._buf_size
+                    duration = float(getattr(dec, "_duration", 0) or 0)
+                    base_pos = float(getattr(dec, "_base_pos", 0) or 0)
+                    venc = getattr(dec, "_current_venc", "") or ""
+            remain = max(0, duration - base_pos)
+            if remain <= 0 or duration <= 0:
+                # ★ 2026-08-14 修复：在线时长未知（DB 缺失 / 探测失败）时按已转码字节估算进度
+                #   t = buf_size * 8 / bitrate（GPU 1.7Mbps / CPU 0.8Mbps，与 do_GET
+                #   virtual_total 口径一致，纯字节推算不依赖总时长）
+                #   → 前端 _deferSeek 的 t>=目标+2 仍能达标 → 在线续播自动向后切（与本地一致）
+                if buf_size > 0:
+                    if venc in ("vp9_qsv", "vp9_nvenc", "vp9_amf"):
+                        _t = buf_size * 8 / 1_700_000
+                    else:
+                        _t = buf_size * 8 / 800_000
+                    return json.dumps({"ok": True, "t": round(_t, 2), "duration": duration}, ensure_ascii=False)
+                return json.dumps({"ok": True, "t": 0.0, "duration": duration}, ensure_ascii=False)
+            if venc in ("vp9_qsv", "vp9_nvenc", "vp9_amf"):
+                virtual_total = int(remain * 1_700_000 / 8)
+            else:
+                virtual_total = int(remain * 800_000 / 8)
+            if virtual_total <= 0:
+                return json.dumps({"ok": True, "t": 0.0, "duration": duration}, ensure_ascii=False)
+            t = buf_size * remain / virtual_total
+            return json.dumps({"ok": True, "t": round(t, 2), "duration": round(duration, 2)}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "t": 0.0, "message": str(e)[:100]}, ensure_ascii=False)
 
     @pyqtSlot(str, str, int, str, result=str)
     def playLocalVideoNative(self, file_path, video_id, start_pos, audio_path=""):

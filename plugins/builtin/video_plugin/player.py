@@ -176,7 +176,38 @@ class FFmpegDecoder:
                                 print(f"[FFmpegDecoder] 🌐 在线时长(数据库) = {self._duration:.1f}s")
                     except Exception:
                         pass
-                print(f"[FFmpegDecoder] 🌐 在线播放（_duration={self._duration:.0f}s，转码不加 -t）")
+                # ★ 2026-08-14 修复：在线时长缺失（DB 为 0 / _resolve_online_url 的 yt-dlp
+                #   补查失败，常见于智慧教育平台/优酷等非 B 站来源）时，用 ffmpeg 探测
+                #   已解析 CDN URL 的真实时长（复用与 _start_stream 一致的 Referer/UA 头）。
+                #   → _duration > 0 → _start_stream 加 -t 总时长 → WebM 头预写总时长
+                #     （原生条显示「当前/总时长」，不再 Infinity）+ getStreamProgress 可估进度
+                #     → 在线视频也能自动向后切续播，与本地一致。
+                if not self._duration:
+                    try:
+                        import re as _re
+                        probe_cmd = [FFMPEG, "-hide_banner", "-i", src]
+                        try:
+                            _ref = self._referer_for(src)
+                            if _ref:
+                                self._insert_headers(probe_cmd, self._http_headers(_ref), which=1)
+                        except Exception:
+                            pass
+                        r2 = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=25)
+                        _m = _re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+                                        (r2.stderr or "") + (r2.stdout or ""))
+                        if _m:
+                            _fmt = int(_m.group(1)) * 3600 + int(_m.group(2)) * 60 + float(_m.group(3))
+                            if _fmt > 0:
+                                self._duration = _fmt
+                                print(f"[FFmpegDecoder] 🌐 在线时长(ffmpeg探测) = {_fmt:.1f}s")
+                                if video_id:
+                                    try:
+                                        self._repo.update(video_id, {"duration": int(_fmt)})
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+                print(f"[FFmpegDecoder] 🌐 在线播放（_duration={self._duration:.0f}s，完整时间线：从0转码并加 -t 总时长）")
             else:
                 # 仅本地文件可 ffprobe 探测（在线 URL 由 ffmpeg 自行下载解析）
                 info = self._probe(src)
@@ -696,6 +727,19 @@ class FFmpegDecoder:
             self._cleanup_server()
             return ""
 
+        # ★★ 2026-08-14 完整时间线模式（内存版）：【所有转码源】统一处理。
+        #   原生控制条要显示「真实总时长 + 前后拖拽 + 续播」，流必须是完整时间线 0..TOTAL
+        #   且全段可寻址（缓冲永不弹出，见 _read_chunks/_start_buf_writer）。
+        #   故转码源强制从 0 转码、-t 用总时长（WebM 头 Duration=总时长 → 原生条显示真实总时长）。
+        #   ★ 2026-08-14 修复：此前本地转码用 -ss N -t 剩余 → WebM 头 Duration=剩余时长
+        #     → 原生条显示「剩余时长」而非「总时长」（用户反馈"第一条没实现"）。
+        #   续播位置改由前端在 URL ?src=native&start=<秒> 上原生 seek（poll-then-seek 等转码追上）。
+        #   代价：续播/拖到未转码处需等转码追上（GPU 快、CPU 慢）——用户已确认接受。
+        resume_sec = float(start_pos or 0)   # 真实续播秒数 → 进 URL（src=native 路径 seek）
+        start_pos = 0.0                       # ffmpeg 从 0 转码（完整时间线）
+        self._base_pos = 0.0                  # 数学用全时长（remain = duration - 0）
+        self._pos = 0.0
+
         # ffmpeg 实时转 VP8+Opus WebM（QWebEngine 可解码；WebM 天然流式友好）
         self._start_pos = float(start_pos or 0)
         cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
@@ -786,6 +830,13 @@ class FFmpegDecoder:
 
         # ★ 后台读线程：ffmpeg stdout → deque 环形缓冲（无磁盘文件，超限丢最老）
         self._reset_buffer()
+        # ★ 2026-08-14 完整时间线模式：_reset_buffer 已复位 _full_timeline，这里重新置位
+        #   （转码源一律完整时间线 → 本地转码同样显示总时长），并计算全量背压上限
+        #   （数据永不弹出 → 上限必须放大到视频转码后大小，否则写满 64MB 后 ffmpeg 阻塞）。
+        self._full_timeline = True
+        self._full_timeline_cap = max(
+            int(float(getattr(self, "_duration", 0) or 0) * 1_700_000 / 8 * 1.5),
+            256 * 1024 * 1024)
 
         self._start_buf_writer()
 
@@ -836,8 +887,8 @@ class FFmpegDecoder:
                 except Exception:
                     pass
             out_args0 = []
-            # ★ 2026-08-13 修复：在线模式回退同样不加 -t
-            if not getattr(self, "_online_mode", False):
+            # ★ 2026-08-14 完整时间线模式回退仍加 -t 总时长（保持 WebM 头真实总时长）
+            if (not getattr(self, "_online_mode", False)) or getattr(self, "_full_timeline", False):
                 # ★ 2026-08 修复：回退 0s 时剩余时长 = 总时长（_base_pos 已重置为 0）
                 remain_dur0 = max(0, float(getattr(self, "_duration", 0) or 0) - float(getattr(self, "_base_pos", 0) or 0))
                 if remain_dur0 > 0:
@@ -911,7 +962,10 @@ class FFmpegDecoder:
         # ★ 2026-08 修复：URL 携带实际起始位置 start=<秒>
         #   使用 self._base_pos（回退 0s 后已重置为 0）而非 start_pos 参数，
         #   确保 URL 反映后端实际播放起点 → 前端正确计算绝对播放位置
-        url = f"http://127.0.0.1:{port}/stream?src=transcode&start={int(float(self._base_pos or 0))}"
+        # ★ 2026-08-14 完整时间线模式：转码从 0 开始（_base_pos=0），完整时间线可整段寻址，
+        #   URL 统一 src=native → 前端走 isNative 路径（绝对时间线 + _deferSeek 续播），
+        #   start=<resume_sec> 即真实续播秒数。
+        url = f"http://127.0.0.1:{port}/stream?src=native&start={int(float(resume_sec or 0))}&v={video_id or ''}"
         print(f"[FFmpegDecoder] ▶ 原生<video> 流(转码): {url}")
         return url
 
@@ -1068,7 +1122,7 @@ class FFmpegDecoder:
                     #   ★ 2026-08-13 修复：原生文件流【不弹出】——整文件一次性缓冲、
                     #     数据有界（=文件大小），保留全部偏移 → Chromium 任意位置 seek
                     #     （含往回拖进度条）都能命中；转码流仍滑动裁剪防内存无限增长。
-                    if out and not getattr(dec, "_native_mode", False):
+                    if out and not getattr(dec, "_native_mode", False) and not getattr(dec, "_full_timeline", False):
                         end_read = pos + len(out)
                         while dec._chunks and (dec._buf_start + dec._chunk_sizes[0]) <= end_read:
                             sz = dec._chunk_sizes.popleft()
@@ -1205,7 +1259,9 @@ class FFmpegDecoder:
                     #   范围不可满足 → 播放失败（「视频一直播放」）。原生文件整文件缓冲
                     #   后 reader 会追到 seek 偏移（本地磁盘读取快，一般 <1s）。
                     waited = 0
-                    while waited < 60000:
+                    # ★ 2026-08-14 在线完整模式：续播/拖到未转码处需等转码追上，预算放大到 10 分钟
+                    _wait_budget = 600000 if getattr(dec, "_full_timeline", False) else 60000
+                    while waited < _wait_budget:
                         time.sleep(0.05)
                         waited += 50
                         with dec._buf_lock:
@@ -1499,6 +1555,7 @@ class FFmpegDecoder:
             self._gen_head = b""  # 新代际 → 头部副本重新开始
         self._native_mode = False
         self._src_fsize = 0
+        self._full_timeline = False
 
     def _start_buf_writer(self):
         """ffmpeg stdout → deque 背压缓冲（缓冲满时暂停读取 → ffmpeg 写 pipe 阻塞自然限速）
@@ -1513,7 +1570,9 @@ class FFmpegDecoder:
                 while proc and proc.poll() is None:
                     # ★ 背压：缓冲满时暂停读取（锁外 sleep，避免阻塞 HTTP 读取线程）
                     with self._buf_lock:
-                        buf_full = self._buf_size >= self._MAX_BUF
+                        # ★ 2026-08-14 在线完整模式：数据永不弹出 → 上限放大到视频转码后大小
+                        cap = getattr(self, "_full_timeline_cap", 0) if getattr(self, "_full_timeline", False) else self._MAX_BUF
+                        buf_full = self._buf_size >= cap
                     if buf_full:
                         time.sleep(0.05)
                         continue
@@ -1757,12 +1816,11 @@ class FFmpegDecoder:
             except Exception:
                 pass
         out_args = []
-        # ★ 2026-08-13 修复：在线模式 seek 也不加 -t
-        if not getattr(self, "_online_mode", False):
-            # ★ 2026-08 修复：seek 后 -t 也必须用剩余时长（duration - target）
-            remain_dur2 = max(0, float(getattr(self, "_duration", 0) or 0) - float(target or 0))
-            if remain_dur2 > 0:
-                out_args += ["-t", str(remain_dur2)]
+        # ★ 2026-08-14 修复：在线模式 seek 也加 -t（与 _start_stream 对在线一致）
+        #   → WebM 头预写剩余时长，避免 Chromium 时长未知（Infinity）
+        remain_dur2 = max(0, float(getattr(self, "_duration", 0) or 0) - float(target or 0))
+        if remain_dur2 > 0:
+            out_args += ["-t", str(remain_dur2)]
         out_args += self._build_video_out_args(venc, aenc)
         if getattr(self, "_has_separate_audio", False):
             out_args = ["-map", "0:v:0", "-map", "1:a:0"] + out_args
@@ -1810,6 +1868,7 @@ class FFmpegDecoder:
             self._buf_closed = True
         self._native_mode = False
         self._src_fsize = 0
+        self._full_timeline = False
         try:
             import sounddevice
             sounddevice.stop()

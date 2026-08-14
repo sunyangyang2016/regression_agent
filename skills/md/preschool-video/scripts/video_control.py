@@ -1,8 +1,8 @@
 """
 video_control.py — 控制视频播放器（独立进程）
 
-通过命令文件（storage/video_commands.json）与 video_plugin 通信，
-video_plugin 监听命令文件后控制前端 HTML5 播放器。
+通过 HTTP POST 命令到 video_plugin（主进程内 PluginBus 事件通道），
+video_plugin 控制前端 HTML5 播放器。
 
 用法：
     python video_control.py --action play --video-id <ID>
@@ -15,37 +15,14 @@ video_plugin 监听命令文件后控制前端 HTML5 播放器。
     python video_control.py --action get_state --video-id <ID>
 """
 import argparse
-import json
-import os
 import sys
 
-# 确保项目根目录可导入（scripts → preschool-video → md → skills → 根目录，共 5 级）
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-))))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+from common import project_root, send_command
 
-# 命令文件路径（video_plugin 监听）
-COMMANDS_FILE = os.path.join(ROOT, "storage", "video_commands.json")
-
-
-def notify_frontend(payload: dict):
-    """写入命令文件通知 video_plugin 控制前端播放器"""
-    try:
-        os.makedirs(os.path.dirname(COMMANDS_FILE), exist_ok=True)
-        commands = []
-        if os.path.exists(COMMANDS_FILE):
-            try:
-                with open(COMMANDS_FILE, "r", encoding="utf-8") as f:
-                    commands = json.load(f)
-            except (ValueError, OSError):
-                commands = []
-        commands.append(payload)
-        with open(COMMANDS_FILE, "w", encoding="utf-8") as f:
-            json.dump(commands, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"⚠️ 通知前端失败: {e}")
+# 确保项目根目录可导入（storage.repositories 等）
+_ROOT = project_root()
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 
 def main():
@@ -131,9 +108,12 @@ def main():
     else:
         print(f"✅ 已发送指令: {args.action}")
 
-    # 写入命令文件
-    notify_frontend(payload)
-    print("📨 指令已发送到视频播放器")
+    # 发送命令到 video_plugin（HTTP → PluginBus 事件）
+    if send_command(payload):
+        print("📨 指令已发送到视频播放器")
+    else:
+        print("❌ 指令未送达（请确认应用已启动、video_plugin 已加载）")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

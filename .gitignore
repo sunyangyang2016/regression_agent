@@ -28,3 +28,7 @@ user_config/user/*
 user_config/database/*.db
 user_config/database/*.db-shm
 user_config/database/*.db-wal
+
+# Runtime IPC artifacts（video_plugin 与 skill 脚本间的运行时产物，不入版本库）
+storage/video_commands.json
+storage/video_plugin.json

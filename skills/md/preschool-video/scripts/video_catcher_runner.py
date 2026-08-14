@@ -14,6 +14,13 @@ import sys
 import threading
 from urllib.parse import urlparse
 
+# 项目根目录 / 命令文件统一从 common 取（★ 2026-08-14 修复 off-by-one：
+#   此前本模块自己用 4 层 dirname 解析，_PROJECT_ROOT 落在 <root>/skills/，
+#   导致认证文件 video_auth.json 被写到 skills/user_config/user/ 而非
+#   user_config/user/video_auth.json）
+from common import project_root
+_PROJECT_ROOT = project_root()
+
 # ==========================================
 # 网站认证信息管理
 # ==========================================
@@ -22,9 +29,6 @@ _AUTH_LOCK = threading.Lock()
 _AUTH_LOADED = False
 
 # 认证文件路径：user_config/user/video_auth.json
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)
-))))
 _AUTH_FILE = os.path.join(_PROJECT_ROOT, "user_config", "user", "video_auth.json")
 
 
@@ -330,9 +334,232 @@ def ytdlp_get_url(url, timeout=60):
     return []
 
 
-def search_videos(keyword, limit=10):
-    """搜索入口：直接使用 yt-dlp bilisearch 搜索 B站视频并补全元数据。
+def search_videos(keyword, limit=10, source=None):
+    """搜索入口：多源搜索，目标源取不到数据时自动回退 B站（绝不无结果/崩）。
 
+    source: None/'自动' → B站（默认稳定源）；
+            'bilibili'/'B站' → B站；'智慧教育平台'/'smartedu' → 智慧教育平台；
+            '优酷'/'youku' → 优酷。
     返回与 ytdlp_search 一致结构的视频列表。
     """
-    return ytdlp_search((keyword or "").strip(), limit=int(limit or 10))
+    keyword = (keyword or "").strip()
+    limit = int(limit or 10)
+    src_key = _SOURCE_MAP.get((source or "").strip().lower())
+    if src_key == "smartedu":
+        videos = _search_smartedu(keyword, limit)
+        if videos:
+            return videos
+        print("⚠️ 智慧教育平台搜索未取到结果，自动回退 B站")
+    elif src_key == "youku":
+        videos = _search_youku(keyword, limit)
+        if videos:
+            return videos
+        print("⚠️ 优酷搜索未取到结果，自动回退 B站")
+    # 默认 / 回退 → B站
+    return ytdlp_search(keyword, limit)
+
+
+# ==========================================
+# 多源搜索：智慧教育平台 / 优酷（尽力而为）
+# ★ 2026-08-14 实测：两源搜索接口均靠 JS 渲染 / 需签名，简单 GET 常拿不到数据，
+#   因此实现为 best-effort —— 抓得到则返回结果，抓不到返回 [] 由 search_videos 回退 B站。
+# ==========================================
+
+_SOURCE_MAP = {
+    "bilibili": "bilibili", "b站": "bilibili",
+    "智慧教育平台": "smartedu", "smartedu": "smartedu", "智慧": "smartedu",
+    "优酷": "youku", "youku": "youku",
+}
+# 视频条目里常见的 URL 字段名（泛化识别用）
+_URL_KEYS = ("url", "pageUrl", "page_url", "playUrl", "videoUrl", "href", "resourceUrl")
+# 常见缩略图字段名
+_THUMB_KEYS = ("thumbnail", "coverUrl", "cover_url", "imageUrl", "pic", "thumbUrl")
+
+
+def _http_get(url, timeout=15, referer=None):
+    """通用 GET 请求（带 UA/Referer），返回解码文本或 None"""
+    import urllib.request
+    headers = {
+        "User-Agent": _YTDLP_UA,
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    if referer:
+        headers["Referer"] = referer
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"[search] ⚠️ 请求失败: {url[:70]}… ({type(e).__name__})")
+        return None
+
+
+def _extract_embedded_json(html, patterns):
+    """从 HTML 中提取内嵌 JSON（如 window.__INITIAL_DATA__ = {...}），失败返回 None"""
+    import re
+    for pat in patterns:
+        m = re.search(pat, html, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except (ValueError, json.JSONDecodeError):
+                continue
+    return None
+
+
+def _collect_video_items(data):
+    """递归收集疑似视频条目：dict 同时含标题字段与 URL 字段才视为一条"""
+    items = []
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            has_title = isinstance(obj.get("title"), str) or isinstance(obj.get("name"), str)
+            has_url = any(k in obj for k in _URL_KEYS)
+            if has_title and has_url:
+                items.append(obj)
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(data)
+    # 按 title+url 去重
+    seen = set()
+    uniq = []
+    for it in items:
+        key = (str(it.get("title") or it.get("name") or ""), str(it.get("pageUrl") or it.get("url") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(it)
+    return uniq
+
+
+def _normalize_search_items(items, source):
+    """把泛化收集的条目规范化为视频 dict（多源共用）"""
+    out = []
+    for it in items:
+        title = str(it.get("title") or it.get("name") or "").strip()
+        if not title:
+            continue
+        url = next((str(it[k]) for k in _URL_KEYS if it.get(k)), "")
+        if not url:
+            continue
+        if url.startswith("//"):
+            url = "https:" + url
+        dur = it.get("duration") or it.get("timeLength") or it.get("totalTime") or 0
+        try:
+            dur = int(float(dur))
+        except (TypeError, ValueError):
+            dur = 0
+        out.append({
+            "title": title,
+            "page_url": url,
+            "play_url": url,
+            "thumbnail": next((str(it[k]) for k in _THUMB_KEYS if it.get(k)), ""),
+            "duration": dur,
+            "source": source,
+        })
+    return out
+
+
+def _search_smartedu(keyword, limit=10):
+    """智慧教育平台搜索（尽力而为）：GET so.smartedu.cn/sousou/searchList"""
+    import urllib.parse
+    kw = urllib.parse.quote(keyword)
+    candidates = [
+        f"https://so.smartedu.cn/sousou/searchList?keyword={kw}&type=video&pageNo=1&pageSize={limit}",
+        f"https://so.smartedu.cn/sousou/searchList?keyword={kw}&type=video",
+    ]
+    for url in candidates:
+        text = _http_get(url, referer="https://basic.smartedu.cn/")
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        items = _collect_video_items(data)
+        if items:
+            return _normalize_search_items(items, "智慧教育平台")[:limit]
+    return []
+
+
+def _search_youku(keyword, limit=10):
+    """优酷搜索（尽力而为）：抓 so.youku.com/search/q_ 页解析内嵌 JSON"""
+    import urllib.parse
+    kw = urllib.parse.quote(keyword)
+    url = f"https://so.youku.com/search/q_{kw}"
+    html = _http_get(url, referer="https://www.youku.com/")
+    if not html:
+        return []
+    patterns = [
+        r"window\.__INITIAL_DATA__\s*=\s*(\{.*?\})\s*;",
+        r"window\.__PRELOADED_STATE__\s*=\s*(\{.*?\})\s*;",
+        r"window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*;",
+    ]
+    data = _extract_embedded_json(html, patterns)
+    if not data:
+        return []
+    items = _collect_video_items(data)
+    return _normalize_search_items(items, "优酷")[:limit]
+
+
+# ==========================================
+# 科目/年级/来源推断（video_search.py 与 video_bridge.py 共用，消除双份实现）
+# ==========================================
+
+def classify_source(source):
+    """来源规范化（兼容各来源文案）"""
+    if not source:
+        return "未知"
+    s = str(source)
+    if "智慧" in s:
+        return "智慧教育平台"
+    if "bili" in s.lower() or "b站" in s:
+        return "bilibili"
+    if "优酷" in s or "youku" in s.lower():
+        return "优酷"
+    return s
+
+
+def guess_subject(keyword):
+    """从关键词猜测科目"""
+    subjects = {
+        "数学": "数学", "算术": "数学", "数字": "数学", "计算": "数学",
+        "语文": "语文", "拼音": "语文", "识字": "语文", "汉字": "语文",
+        "英语": "英语", "字母": "英语", "abc": "英语",
+        "科学": "科学", "实验": "科学", "自然": "科学",
+        "艺术": "艺术", "画画": "艺术", "美术": "艺术", "音乐": "艺术",
+        "健康": "健康", "体育": "健康", "安全": "健康",
+    }
+    kw = (keyword or "").lower()
+    for k, v in subjects.items():
+        if k in kw:
+            return v
+    return None
+
+
+def guess_grade(keyword):
+    """从关键词猜测年级"""
+    grades = {
+        "学前班": "学前班", "幼小衔接": "学前班", "幼儿园": "学前班",
+        "大班": "大班", "中班": "中班", "小班": "小班",
+    }
+    for k, v in grades.items():
+        if k in (keyword or ""):
+            return v
+    return None
+
+
+def guess_metadata(video, keyword, source=None):
+    """为视频补全 subject/grade/source 推断（各源 searcher 已填 source 则不覆盖）"""
+    if not video.get("subject"):
+        video["subject"] = guess_subject(keyword)
+    if not video.get("grade"):
+        video["grade"] = guess_grade(keyword)
+    if not video.get("source"):
+        video["source"] = classify_source(source)
+    return video
