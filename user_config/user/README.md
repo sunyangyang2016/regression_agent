@@ -26,5 +26,6 @@ user_config/user/mcp_servers.json
 | `models.json` | `defaults/models.json` | 模型列表 |
 | `mcp_servers.json` | `defaults/mcp_servers.json` | MCP 服务器配置 |
 | `builtin_tools_config.json` | `defaults/builtin_tools_config.json` | 内置工具开关 |
+| `ui_state.json` | `defaults/ui_state.json` | UI 界面状态（面板/侧边栏/插件 Tab） |
 | 其他 JSON | `defaults/` 下对应文件 | 其他配置 |
 </｜｜DSML｜｜_notes>

@@ -186,12 +186,10 @@ class FFmpegDecoder:
                     try:
                         import re as _re
                         probe_cmd = [FFMPEG, "-hide_banner", "-i", src]
-                        try:
-                            _ref = self._referer_for(src)
-                            if _ref:
-                                self._insert_headers(probe_cmd, self._http_headers(_ref), which=1)
-                        except Exception:
-                            pass
+                        # ★ 2026-08-14 在线探测同样加【轻量】reconnect：CDN 抖动时探测不再立刻失败；
+                        #   用小重连预算，避免拉长下方 25s 的 subprocess timeout
+                        self._insert_input_opts(probe_cmd, src, which=1,
+                                                max_retries=2, delay_max=2, delay_total_max=8)
                         r2 = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=25)
                         _m = _re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
                                         (r2.stderr or "") + (r2.stdout or ""))
@@ -555,6 +553,48 @@ class FFmpegDecoder:
             idx = cmd.index("-i", idx + 1)
         cmd[idx:idx] = ["-headers", headers]
 
+    @staticmethod
+    def _http_input_opts(url, max_retries=5, delay_max=5, delay_total_max=30):
+        """HTTP(S) 输入协议层重连选项：CDN 连接被重置（WSAECONNRESET / -10054 /
+        'Error in the pull function'）时 ffmpeg 自动重连续传，转码进程不退出。
+        ★ 2026-08-14 修复：ffmpeg 从 CDN 拉流中途连接被重置 → 输入被截断（partial file）
+          → AV1 解码/demux 报错 → 转码退出 → 播放中断。加重连后透明续传。
+        返回 ['-reconnect', '1', ...]；本地文件（非 http/https）返回 []。
+        """
+        if not str(url).startswith(("http://", "https://")):
+            return []
+        return [
+            "-reconnect", "1",
+            "-reconnect_on_network_error", "1",
+            "-reconnect_streamed", "1",
+            "-reconnect_max_retries", str(max_retries),
+            "-reconnect_delay_max", str(delay_max),
+            "-reconnect_delay_total_max", str(delay_total_max),
+        ]
+
+    def _insert_input_opts(self, cmd, src, which=1, **kwargs):
+        """在 cmd 第 which 个 '-i' 之前插入在线 HTTP(S) 输入的重连选项 + Referer/UA 头。
+        ★ 2026-08-14 修复：ffmpeg 从 CDN 拉流中途连接被重置（Error in the pull function /
+           Error number -10054 / partial file）→ 输入被截断 → 转码退出 → 播放中断。
+           现让 ffmpeg 自动重连续传；仅对 http(s) 源生效（本地文件不插入，避免无谓开销）。
+           kwargs 可覆盖重连预算（如探测命令用小预算，避免拉长 subprocess timeout）。
+        """
+        if not str(src).startswith(("http://", "https://")):
+            return
+        opts = list(self._http_input_opts(src, **kwargs))
+        referer = self._referer_for(src)
+        if referer:
+            opts += ["-headers", self._http_headers(referer)]
+        else:
+            print(f"[FFmpegDecoder] ⚠️ 无法确定在线 URL 的 Referer（{str(src)[:60]}）")
+        try:
+            idx = -1
+            for _ in range(which):
+                idx = cmd.index("-i", idx + 1)
+            cmd[idx:idx] = opts
+        except ValueError:
+            pass
+
     # ============================================
     # ★ 转码 HTTP 流：ffmpeg 转 VP8/Opus → 127.0.0.1 流 → 原生 <video>
     #   QWebEngine 只支持 VP8/VP9/Opus/FLAC（见支持探测），不支持 H.264/AAC/HEVC，
@@ -753,34 +793,19 @@ class FFmpegDecoder:
         if audio_src and (os.path.exists(audio_src) or audio_is_online):
             print(f"[FFmpegDecoder] 🔊 使用分离音频: {audio_src[:80]}")
             cmd += ["-ss", str(self._start_pos), "-i", audio_src]
-            # 在线音频 URL 也携带 Referer/UA 头
-            if audio_is_online:
-                try:
-                    audio_referer = self._referer_for(audio_src)
-                    if audio_referer:
-                        self._insert_headers(cmd, self._http_headers(audio_referer), which=2)
-                except Exception:
-                    pass
+            # 在线音频 URL 也携带 Referer/UA 头 + reconnect 重连（which=2 = 音频输入）
+            self._insert_input_opts(cmd, audio_src, which=2)
             # 标记后续需要 -map（双输入合并）
             self._has_separate_audio = True
         else:
             self._has_separate_audio = False
-        # ★ 在线 URL：携带 Referer/UA 头（防 B站等 CDN 403）
+        # ★ 在线 URL：携带 Referer/UA 头（防 B站等 CDN 403）+ reconnect 重连（which=1 = 视频输入）
         #   ★★ 2026-08-13 修复：B 站 CDN（upos-sz-*.bilivideo.com）校验的 Referer
         #     必须是 https://www.bilibili.com，而不是 CDN 域名本身！
         #     （此前用 CDN 域名做 Referer → 403 Forbidden → ffmpeg 启动即退出
         #       → 缓冲为空 → Chromium Format error）
         #   注意：-headers 必须插在 -i <src> 之前，且不能破坏 -loglevel error
-        if str(src).startswith(("http://", "https://")):
-            referer = self._referer_for(src)
-            if referer:
-                # ★ 在 -i 前插入（确保插在 -loglevel error 之后）
-                try:
-                    self._insert_headers(cmd, self._http_headers(referer), which=1)
-                except ValueError:
-                    pass
-            else:
-                print(f"[FFmpegDecoder] ⚠️ 无法确定在线 URL 的 Referer（{str(src)[:60]}）")
+        self._insert_input_opts(cmd, src, which=1)
         # ★ VP8/Opus WebM：-deadline realtime 实时编码、-cpu-used 5 加速；
         #   -g 25 每 1 秒关键帧；WebM 无需 fragment，流式天然可解析
         #   ★★ 2026-08 实测：加 -t <剩余时长> 让 muxer 在起始头预写 Duration
@@ -869,23 +894,13 @@ class FFmpegDecoder:
             audio0_is_online = bool(audio_src0 and str(audio_src0).startswith(("http://", "https://")))
             if audio_src0 and (os.path.exists(audio_src0) or audio0_is_online):
                 cmd0 += ["-ss", "0", "-i", audio_src0]
-                if audio0_is_online:
-                    try:
-                        audio_ref0 = self._referer_for(audio_src0)
-                        if audio_ref0:
-                            self._insert_headers(cmd0, self._http_headers(audio_ref0), which=2)
-                    except Exception:
-                        pass
+                # 在线音频输入：reconnect + Referer/UA 头（which=2）
+                self._insert_input_opts(cmd0, audio_src0, which=2)
                 self._has_separate_audio = True
             else:
                 self._has_separate_audio = False
-            if str(src).startswith(("http://", "https://")):
-                try:
-                    referer0 = self._referer_for(src)
-                    if referer0:
-                        self._insert_headers(cmd0, self._http_headers(referer0), which=1)
-                except Exception:
-                    pass
+            # 在线视频输入：reconnect + Referer/UA 头（which=1）
+            self._insert_input_opts(cmd0, src, which=1)
             out_args0 = []
             # ★ 2026-08-14 完整时间线模式回退仍加 -t 总时长（保持 WebM 头真实总时长）
             if (not getattr(self, "_online_mode", False)) or getattr(self, "_full_timeline", False):
@@ -1797,24 +1812,13 @@ class FFmpegDecoder:
         audio_is_online = bool(audio_src and str(audio_src).startswith(("http://", "https://")))
         if audio_src and (os.path.exists(audio_src) or audio_is_online):
             cmd += ["-ss", str(target), "-i", audio_src]
-            if audio_is_online:
-                try:
-                    audio_ref = self._referer_for(audio_src)
-                    if audio_ref:
-                        self._insert_headers(cmd, self._http_headers(audio_ref), which=2)
-                except Exception:
-                    pass
+            # 在线音频输入：reconnect + Referer/UA 头（which=2）
+            self._insert_input_opts(cmd, audio_src, which=2)
             self._has_separate_audio = True
         else:
             self._has_separate_audio = False
-        # 在线 URL 加 headers
-        if str(src).startswith(("http://", "https://")):
-            try:
-                referer = self._referer_for(src)
-                if referer:
-                    self._insert_headers(cmd, self._http_headers(referer), which=1)
-            except Exception:
-                pass
+        # 在线视频输入：reconnect + Referer/UA 头（which=1）
+        self._insert_input_opts(cmd, src, which=1)
         out_args = []
         # ★ 2026-08-14 修复：在线模式 seek 也加 -t（与 _start_stream 对在线一致）
         #   → WebM 头预写剩余时长，避免 Chromium 时长未知（Infinity）

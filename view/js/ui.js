@@ -5,6 +5,108 @@
 var tabTitles={mcp:'<i class="fas fa-plug"></i> MCP 配置',models:'<i class="fas fa-brain"></i> 模型',tools:'<i class="fas fa-tools"></i> 工具',skills:'<i class="fas fa-star"></i> 技能',plugins:'<i class="fas fa-puzzle-piece"></i> 插件',settings:'<i class="fas fa-sliders-h"></i> 设置',about:'<i class="fas fa-info-circle"></i> 关于'};
 var tabList=['mcp','models','tools','skills','plugins','settings','about'];
 
+// ============================================
+// UI 状态持久化：面板/侧边栏/插件 Tab 状态保存到 user_config/user/ui_state.json
+// ============================================
+
+// 采集当前 UI 状态（打开/隐藏状态：右侧面板、工具栏 Tab、侧边栏、插件 Tab）
+function collectUIState() {
+    var sidebar = document.getElementById('sidebar');
+    var panel = document.getElementById('rightPanel');
+    var state = {
+        sidebarCollapsed: !!(sidebar && sidebar.classList.contains('collapsed')),
+        panelOpen: !!(panel && panel.classList.contains('open')),
+        currentTab: (appState && appState.currentTab) || 'mcp',
+        mcpSubTab: 'market',
+        openPlugins: [],
+        activePluginTab: 'chat'
+    };
+    // MCP 子 Tab
+    var mcpTab = document.querySelector('.mcp-sub-tab.active');
+    if (mcpTab) state.mcpSubTab = mcpTab.getAttribute('data-subtab') || 'market';
+    // 插件 Tab 栏中已打开的插件（排除固定「聊天」Tab）
+    var bar = document.getElementById('pluginTabBar');
+    if (bar) {
+        bar.querySelectorAll('.plugin-tab[data-plugin]').forEach(function(t) {
+            var name = t.getAttribute('data-plugin');
+            if (name && name !== 'chat') state.openPlugins.push(name);
+        });
+    }
+    // 当前激活的插件 Tab
+    if (typeof _activePluginTab !== 'undefined' && _activePluginTab) {
+        state.activePluginTab = _activePluginTab;
+    }
+    return state;
+}
+
+// 保存 UI 状态到后端（user_config/user/ui_state.json）
+function saveUIState() {
+    if (!window.ui_state_bridge || typeof window.ui_state_bridge.saveState !== 'function') return;
+    try {
+        window.ui_state_bridge.saveState(JSON.stringify(collectUIState()));
+    } catch(e) { console.warn('[UI] 保存界面状态失败:', e); }
+}
+
+// 启动时读取已保存的 UI 状态并恢复
+function restoreUIState() {
+    if (!window.ui_state_bridge || typeof window.ui_state_bridge.getState !== 'function') return;
+    try {
+        var p = window.ui_state_bridge.getState();
+        if (p && typeof p.then === 'function') {
+            p.then(function(raw) {
+                if (raw && typeof raw === 'string') {
+                    var state = JSON.parse(raw);
+                    applyUIState(state);
+                }
+            }).catch(function(e) { console.warn('[UI] 读取界面状态失败:', e); });
+        }
+    } catch(e) { console.warn('[UI] 恢复界面状态失败:', e); }
+}
+
+// 按保存的状态恢复 UI
+function applyUIState(state) {
+    if (!state) return;
+    // 1. 侧边栏折叠
+    if (state.sidebarCollapsed) {
+        var sidebar = document.getElementById('sidebar');
+        if (sidebar) sidebar.classList.add('collapsed');
+        var headerMenuBtn = document.querySelector('.header-menu-btn');
+        if (headerMenuBtn) headerMenuBtn.style.display = 'block';
+    }
+    // 2. 右侧面板 + 当前工具栏 Tab
+    if (state.panelOpen && state.currentTab) {
+        var validTabs = ['mcp','models','tools','skills','plugins','settings','about'];
+        if (validTabs.indexOf(state.currentTab) !== -1) {
+            switchPanelTab(state.currentTab);
+            if (state.currentTab === 'mcp' && state.mcpSubTab) {
+                setTimeout(function() { switchMCPSubTab(state.mcpSubTab); }, 120);
+            }
+        }
+    }
+    // 3. 插件 Tab 恢复（showPlugin 依赖 appState.plugins 异步加载，轮询等待）
+    var pluginsToOpen = (state.openPlugins && state.openPlugins.length > 0) ? state.openPlugins : [];
+    if (pluginsToOpen.length > 0) {
+        var tries = 0;
+        (function tryOpenPlugins() {
+            if (!(appState && appState.plugins && appState.plugins.length > 0)) {
+                tries++;
+                if (tries < 12) { setTimeout(tryOpenPlugins, 500); return; }
+                return;
+            }
+            pluginsToOpen.forEach(function(name) {
+                try {
+                    if (typeof showPlugin === 'function') showPlugin(name);
+                } catch(e) { console.warn('[UI] 恢复插件 Tab 失败:', name, e); }
+            });
+            var active = state.activePluginTab || 'chat';
+            if (active !== 'chat' && pluginsToOpen.indexOf(active) === -1) active = 'chat';
+            setTimeout(function() {
+                if (typeof activatePluginTab === 'function') activatePluginTab(active);
+            }, 100);
+        })();
+    }
+}
+
 function switchPanelTab(tab) {
     document.getElementById('rightPanel').classList.add('open');
     document.querySelectorAll('.panel-tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===tab);});
@@ -69,8 +171,9 @@ function switchPanelTab(tab) {
             try { renderPlugins(); } catch(e) { console.warn('[UI] renderPlugins error:', e); }
             try { updateMCPBadge(); } catch(e) { console.warn('[UI] updateMCPBadge error:', e); }
     }
+    saveUIState();
 }
-function closePanel(){document.getElementById('rightPanel').classList.remove('open');document.querySelectorAll('.header-btn').forEach(b=>b.classList.remove('active'));}
+function closePanel(){document.getElementById('rightPanel').classList.remove('open');document.querySelectorAll('.header-btn').forEach(b=>b.classList.remove('active'));saveUIState();}
 function toggleSidebar(){
     var sidebar = document.getElementById('sidebar');
     var overlay = document.getElementById('sidebarOverlay');
@@ -83,6 +186,7 @@ function toggleSidebar(){
         var headerMenuBtn = document.querySelector('.header-menu-btn');
         if (headerMenuBtn) headerMenuBtn.style.display = isCollapsed ? 'block' : 'none';
     }
+    saveUIState();
 }
 function switchMCPSubTab(tab){
     console.log('[UI] switchMCPSubTab:', tab);
@@ -112,6 +216,7 @@ function switchMCPSubTab(tab){
     if(tab==='config'&&typeof loadMCPConfigToEditor==='function'){
         loadMCPConfigToEditor();
     }
+    saveUIState();
 }
 
 function updateModelCount(){var e=document.getElementById('modelCount');if(e)e.textContent=appState.models.length;}

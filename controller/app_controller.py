@@ -113,6 +113,7 @@ class AppController(QObject):
         from bridge import ChatBridge, ModelBridge, ToolBridge, SkillBridge, MCPBridge, PluginBridge
         from bridge.agent_config_bridge import AgentConfigBridge
         from bridge.voice_bridge import VoiceBridge
+        from bridge.ui_state_bridge import UIStateBridge
 
         main_bridge = ChatBridge(self)
         config_bridge = ModelBridge(self)
@@ -122,6 +123,7 @@ class AppController(QObject):
         plugin_bridge = PluginBridge(self)
         agent_config_bridge = AgentConfigBridge(self)
         voice_bridge = VoiceBridge(self)
+        ui_state_bridge = UIStateBridge(self)
 
         self._bridge = main_bridge  # 保存引用用于信号连接
         self.mcp_bridge = mcp_bridge  # 保存引用供 AI 调度器使用
@@ -136,6 +138,7 @@ class AppController(QObject):
             "plugin_bridge": plugin_bridge,
             "agent_config_bridge": agent_config_bridge,
             "voice_bridge": voice_bridge,
+            "ui_state_bridge": ui_state_bridge,
         }
         return main_bridge
 

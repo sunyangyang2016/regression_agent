@@ -238,6 +238,7 @@ function showPlugin(name) {
             console.warn('[Plugins] 执行插件 js 失败:', name, e);
         }
     }
+    saveUIState();
 }
 
 // 激活指定 Tab：'chat' 显示聊天区，插件名显示对应插件面板
@@ -275,6 +276,7 @@ function activatePluginTab(name) {
             });
         }
     }
+    saveUIState();
 }
 
 // 关闭插件 Tab（聊天 Tab 不可关闭）
@@ -289,6 +291,7 @@ function closePlugin(name) {
     if (_activePluginTab === name) {
         activatePluginTab('chat');
     }
+    saveUIState();
 }
 
 // 关闭所有插件 Tab，切回聊天
@@ -300,6 +303,7 @@ function closeAllPlugins() {
     }
     if (content) content.innerHTML = '';
     activatePluginTab('chat');
+    saveUIState();
 }
 
 // 新对话 / 需要聚焦聊天时调用：切换到聊天 Tab

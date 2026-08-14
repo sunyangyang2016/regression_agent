@@ -54,6 +54,7 @@ window.plugin_bridge = null;
 window.security_bridge = null;
 window.monitor_bridge = null;
 window.video_bridge = null;
+window.ui_state_bridge = null;
 function connectBridge() {
     if(typeof QWebChannel==='undefined'||typeof qt==='undefined'||!qt.webChannelTransport){setTimeout(connectBridge,200);return;}
     try{
@@ -69,11 +70,17 @@ function connectBridge() {
             window.monitor_bridge=ch.objects.monitor_bridge||ch.objects.monitor_plugin_bridge;
             window.video_bridge=ch.objects.video_bridge;
             window.voice_bridge=ch.objects.voice_bridge;
+            window.ui_state_bridge=ch.objects.ui_state_bridge;
             window._bridgeReady=true;
             console.log('[Bridge] OK');
             if(window.py_bridge) showToast('后端已连接','success');
             if (typeof startMCPStatusPolling === 'function') startMCPStatusPolling();
-            setTimeout(function(){loadAllData(); if(typeof loadAgentConfigTheme==='function')loadAgentConfigTheme();}, 200);
+            setTimeout(function(){
+                loadAllData();
+                if(typeof loadAgentConfigTheme==='function')loadAgentConfigTheme();
+                // 后端数据就绪后恢复上次的 UI 状态（面板/侧边栏/插件 Tab）
+                if (typeof restoreUIState === 'function') restoreUIState();
+            }, 200);
         });
     }catch(e){console.error('[Bridge]',e);setTimeout(connectBridge,500);}
 }
