@@ -11,6 +11,48 @@ from typing import Any, Dict, List, Optional
 from storage.database import Database
 
 
+# ★ 2026-08-15 年级规范化（与 skills/md/preschool-video/scripts/video_catcher_runner.normalize_grade 同口径）：
+#   用户需求：幼儿/幼小（含幼小衔接）归属 小班；「幼儿园」泛称 → 学前班
+_GRADE_ALIASES = {
+    "幼儿": "小班", "幼小": "小班", "幼小衔接": "小班",
+    "幼儿园": "学前班",
+}
+
+
+def _canonical_grade(grade):
+    """规范化年级：None/空 → None，别名 → 规范值，其余原样"""
+    if not grade:
+        return None
+    g = str(grade).strip()
+    if not g:
+        return None
+    return _GRADE_ALIASES.get(g, g)
+
+
+# ★ 2026-08-15 科目规范化（与 skills/md/preschool-video/scripts/video_catcher_runner.normalize_subject 同口径）：
+#   用户需求：拼音/识字/古诗 归属 语文；儿歌 归属 艺术
+_SUBJECT_ALIASES = {
+    "拼音": "语文", "识字": "语文", "汉字": "语文", "古诗": "语文", "诗词": "语文",
+    "儿歌": "艺术",
+}
+
+
+def _canonical_subject(subject):
+    """规范化科目：拼音/识字/汉字/古诗/诗词 → 语文，儿歌 → 艺术；其余原样返回。
+
+    用「包含」匹配（科目标签可能是『古诗词』『拼音识字』等复合词），None/空 → None。
+    """
+    if not subject:
+        return None
+    s = str(subject).strip()
+    if not s:
+        return None
+    for k, v in _SUBJECT_ALIASES.items():
+        if k in s:
+            return v
+    return s
+
+
 class VideoRepository:
     """视频数据仓库（持有 db + 原生 SQL）"""
 
@@ -20,6 +62,54 @@ class VideoRepository:
         self.db = Database()  # 直接持有数据库（连接池）
         self._ensure_audio_path_column()
         self._ensure_new_columns()
+        self._normalize_legacy_grades()
+        self._normalize_legacy_subjects()
+
+    def _normalize_legacy_grades(self):
+        """★ 2026-08-15 一次性规范化历史年级：幼儿/幼小/幼小衔接 → 小班，幼儿园 → 学前班
+
+        幂等：规范值已入库后 WHERE 命中为 0，不再执行；不影响其他年级。
+        """
+        try:
+            n = self.db.query_value(
+                "SELECT COUNT(*) FROM video_library "
+                "WHERE grade IN ('幼儿','幼小','幼小衔接','幼儿园')"
+            ) or 0
+            if n:
+                self.db.execute(
+                    "UPDATE video_library SET grade = CASE "
+                    "WHEN grade IN ('幼儿','幼小','幼小衔接') THEN '小班' "
+                    "WHEN grade = '幼儿园' THEN '学前班' "
+                    "ELSE grade END"
+                )
+                print(f"[VideoRepository] 已规范化 {n} 条历史年级（幼儿/幼小 → 小班）")
+        except Exception as e:
+            print(f"[VideoRepository] 规范化历史年级失败: {e}")
+
+    def _normalize_legacy_subjects(self):
+        """★ 2026-08-15 一次性规范化历史科目：拼音/识字/汉字/古诗/诗词 → 语文，儿歌 → 艺术
+
+        幂等：规范值已入库后 WHERE 命中为 0，不再执行；不影响其他科目。
+        """
+        try:
+            n = self.db.query_value(
+                "SELECT COUNT(*) FROM video_library "
+                "WHERE subject LIKE '%拼音%' OR subject LIKE '%识字%' "
+                "OR subject LIKE '%汉字%' OR subject LIKE '%古诗%' "
+                "OR subject LIKE '%诗词%' OR subject LIKE '%儿歌%'"
+            ) or 0
+            if n:
+                self.db.execute(
+                    "UPDATE video_library SET subject = CASE "
+                    "WHEN subject LIKE '%拼音%' OR subject LIKE '%识字%' "
+                    "     OR subject LIKE '%汉字%' OR subject LIKE '%古诗%' "
+                    "     OR subject LIKE '%诗词%' THEN '语文' "
+                    "WHEN subject LIKE '%儿歌%' THEN '艺术' "
+                    "ELSE subject END"
+                )
+                print(f"[VideoRepository] 已规范化 {n} 条历史科目（拼音/识字/古诗 → 语文，儿歌 → 艺术）")
+        except Exception as e:
+            print(f"[VideoRepository] 规范化历史科目失败: {e}")
 
     def _ensure_audio_path_column(self):
         """确保 video_library 有 audio_path 列（旧库自动 ALTER 补列）"""
@@ -143,8 +233,10 @@ class VideoRepository:
                 f"episode_index, series_id, series_title, created_at, updated_at) "
                 f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                 f"?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (video_id, video.get("title"), video.get("subject"),
-                 video.get("grade"), video.get("source"), video.get("description"),
+                (video_id, video.get("title"),
+                 _canonical_subject(video.get("subject")),
+                 _canonical_grade(video.get("grade")), video.get("source"),
+                 video.get("description"),
                  video.get("page_url"), video.get("play_url"), video.get("local_path"),
                  video.get("thumbnail"), video.get("duration"),
                  video.get("resolution"), video.get("width"), video.get("height"),
@@ -222,6 +314,12 @@ class VideoRepository:
         """更新视频字段（只更新传入的字段）"""
         if not fields:
             return
+        fields = dict(fields)
+        # ★ 2026-08-15 科目/年级入库前统一规范化（拼音/识字/古诗 → 语文，儿歌 → 艺术；幼儿/幼小 → 小班）
+        if "subject" in fields:
+            fields["subject"] = _canonical_subject(fields["subject"])
+        if "grade" in fields:
+            fields["grade"] = _canonical_grade(fields["grade"])
         fields["updated_at"] = datetime.now().isoformat()
         set_clause = ", ".join([f"{k} = ?" for k in fields.keys()])
         params = list(fields.values()) + [video_id]

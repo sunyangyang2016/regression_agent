@@ -683,13 +683,15 @@ def classify_source(source):
 
 
 def guess_subject(keyword):
-    """从关键词猜测科目"""
+    """从关键词猜测科目
+    ★ 2026-08-15 古诗 → 语文；儿歌 → 艺术。
+    """
     subjects = {
         "数学": "数学", "算术": "数学", "数字": "数学", "计算": "数学",
-        "语文": "语文", "拼音": "语文", "识字": "语文", "汉字": "语文",
+        "语文": "语文", "拼音": "语文", "识字": "语文", "汉字": "语文", "古诗": "语文",
         "英语": "英语", "字母": "英语", "abc": "英语",
         "科学": "科学", "实验": "科学", "自然": "科学",
-        "艺术": "艺术", "画画": "艺术", "美术": "艺术", "音乐": "艺术",
+        "艺术": "艺术", "画画": "艺术", "美术": "艺术", "音乐": "艺术", "儿歌": "艺术",
         "健康": "健康", "体育": "健康", "安全": "健康",
     }
     kw = (keyword or "").lower()
@@ -699,18 +701,65 @@ def guess_subject(keyword):
     return None
 
 
+# 科目别名 → 规范值（★ 2026-08-15 用户需求：拼音/识字/古诗 归属 语文；儿歌 归属 艺术）
+_SUBJECT_ALIASES = {
+    "拼音": "语文", "识字": "语文", "汉字": "语文", "古诗": "语文", "诗词": "语文",
+    "儿歌": "艺术",
+}
+
+
+def normalize_subject(subject):
+    """规范化科目：拼音/识字/汉字/古诗/诗词 → 语文，儿歌 → 艺术；其余原样返回。
+
+    用「包含」匹配（科目标签可能是『古诗词』『拼音识字』等复合词），非空值兜底原样返回。
+    """
+    if not subject:
+        return None
+    s = str(subject).strip()
+    if not s:
+        return None
+    for k, v in _SUBJECT_ALIASES.items():
+        if k in s:
+            return v
+    return s
+
+
+# 年级别名 → 规范值（★ 2026-08-15 用户需求：幼儿/幼小 归属 小班；幼儿园泛称 → 学前班）
+_GRADE_ALIASES = {
+    "幼儿": "小班", "幼小": "小班", "幼小衔接": "小班",
+    "幼儿园": "学前班",
+}
+
+
+def normalize_grade(grade):
+    """规范化年级：幼儿/幼小/幼小衔接 → 小班，幼儿园 → 学前班；其余原样返回"""
+    if not grade:
+        return None
+    g = str(grade).strip()
+    if not g:
+        return None
+    return _GRADE_ALIASES.get(g, g)
+
+
 def guess_grade(keyword):
     """从关键词猜测年级
     ★ 2026-08-14 大班/中班/小班优先于「幼儿园」泛称（dict 顺序即优先级），
       避免「幼儿园大班 数学」被误判为学前班；仅含「幼儿园」时默认学前班。
+    ★ 2026-08-15 新增「一年级」；幼儿/幼小（含幼小衔接）归属 小班。
     """
     grades = {
+        "二年级": "二年级",
+        "一年级": "一年级",
         "大班": "大班", "中班": "中班", "小班": "小班",
-        "学前班": "学前班", "幼小衔接": "学前班", "幼儿园": "学前班",
+        "学前班": "学前班",
+        # 注意顺序：幼小衔接 / 幼儿园 需先于 幼小 / 幼儿 命中（后者是前者子串），
+        #   统一经 normalize_grade 收敛到规范值。
+        "幼小衔接": "幼小", "幼儿园": "幼儿园",
+        "幼小": "幼小", "幼儿": "幼儿",
     }
     for k, v in grades.items():
         if k in (keyword or ""):
-            return v
+            return normalize_grade(v)
     return None
 
 
@@ -722,4 +771,8 @@ def guess_metadata(video, keyword, source=None):
         video["grade"] = guess_grade(keyword)
     if not video.get("source"):
         video["source"] = classify_source(source)
+    # ★ 2026-08-15 年级/科目统一规范化：新推断与各源元数据同口径
+    #   （幼儿/幼小 → 小班；拼音/识字/古诗 → 语文，儿歌 → 艺术）
+    video["grade"] = normalize_grade(video.get("grade"))
+    video["subject"] = normalize_subject(video.get("subject"))
     return video

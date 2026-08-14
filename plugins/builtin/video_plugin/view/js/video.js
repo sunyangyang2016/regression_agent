@@ -20,7 +20,7 @@ window.videoApp = {
     // ★ 2026-08-14 三级分组规范顺序（与 index.html 工具栏下拉 value 一致）；未收录/空值放最后
     _videoDimOrder: {
         subject: ['数学', '语文', '英语', '科学', '艺术', '健康'],
-        grade:   ['学前班', '大班', '中班', '小班'],
+        grade:   ['二年级', '一年级', '学前班', '大班', '中班', '小班'],
         source:  ['智慧教育平台', 'bilibili', '优酷']
     },
     // ★ 2026-08-14 展开列表分组折叠状态：key → true（展开）；缺省 = 折叠
@@ -96,6 +96,12 @@ window.videoApp = {
     refreshList: function(payload) {
         var self = this;
         if (!window.video_bridge) return;
+        // ★ 2026-08-15 删除场景：bridge 回调 refreshList({deleted:id}) 时保持已加载视频与展开状态，
+        //   仅移除被删条目（不重置回第 1 页 → 丢失"加载更多"内容、展开组回缩）。
+        if (payload && payload.deleted) {
+            this._removeDeletedVideo(payload.deleted);
+            return;
+        }
         // 搜索/筛选/刷新 → 回到第 1 页
         self._listOffset = 0;
         self._allVideos = [];
@@ -1167,7 +1173,7 @@ window.videoApp = {
                     var meta = document.getElementById('videoNowMeta');
                     if (meta) meta.textContent =
                         (video.subject || '') + ' · ' + (video.grade || '') + ' · ' + (video.source || '');
-                    self.refreshList();
+                    self._renderList();   // ★ 2026-08-15 仅重渲染，不重置分页/展开状态
                     self.startPositionSave(video_id);
                     console.log('[videoApp] ⚡ 解码直渲模式启动:', video.localPath);
                 } else {
@@ -1179,7 +1185,7 @@ window.videoApp = {
             });
         } else if (p === 'ok') {
             self._ensureFrameUI();
-            self.refreshList();
+            self._renderList();   // ★ 2026-08-15 仅重渲染，不重置分页/展开状态
             self.startPositionSave(video_id);
         } else {
             this._playLocalTranscode(video, lastPos, audioPath);
@@ -1221,7 +1227,7 @@ window.videoApp = {
         } else {
             if (typeof showToast === 'function') showToast('播放器接口不可用', 'error');
         }
-        this.refreshList();
+        this._renderList();   // ★ 2026-08-15 仅重渲染，不重置分页/展开状态
     },
 
     // ===== ★ 播放错误诊断 =====
@@ -1414,7 +1420,9 @@ window.videoApp = {
             this._awaitPlaySafe(player);
         }
         this.startPositionSave(video_id);
-        this.refreshList();
+        // ★ 2026-08-15 修复：播放后改用 _renderList() 仅重渲染列表（刷新"▶ 播放中"标识），
+        //   不再 refreshList()（会重置回第 1 页 → 丢失"加载更多"已加载的视频与展开状态）。
+        this._renderList();
     },
 
     // ===== ★ 2026-08-14 在线完整流：转码进度等待 + 安全 seek =====
@@ -1774,7 +1782,7 @@ window.videoApp = {
         }
         try { window.video_bridge.incrementPlayCount(video_id); } catch(e) {}
         this.startPositionSave(video_id);
-        this.refreshList();
+        this._renderList();   // ★ 2026-08-15 仅重渲染，不重置分页/展开状态
     },
 
     _toMediaUrl: function(src) {
@@ -2014,12 +2022,31 @@ window.videoApp = {
         if (modal) modal.style.display = 'flex';
     },
 
+    // ★ 2026-08-15 删除辅助：从已加载列表移除视频并重渲染（保持分页/展开状态，不重置回第 1 页）
+    _removeDeletedVideo: function(videoId) {
+        var videos = this._allVideos || [];
+        var removed = false;
+        for (var i = 0; i < videos.length; i++) {
+            if (videos[i].id === videoId) { videos.splice(i, 1); removed = true; break; }
+        }
+        if (removed && this._totalVideos > 0) this._totalVideos -= 1;
+        this._renderList();
+        return removed;
+    },
+
     confirmDelete: function() {
         var modal = document.getElementById('videoConfirmModal');
         if (modal) modal.style.display = 'none';
         if (this._deleteVideoId) {
-            try { window.video_bridge.deleteVideo(this._deleteVideoId); } catch(e) {}
+            var delId = this._deleteVideoId;
             this._deleteVideoId = null;
+            // ★ 2026-08-15 修复：删除后仅从已加载列表移除并重渲染（保持"加载更多"已加载的视频
+            //   与展开状态），不再 refreshList()（会重置回第 1 页 → 丢失加载内容、展开组回缩）。
+            //   bridge 的 deleteVideo 内部还会回调 refreshList({deleted:id})，同样走 _removeDeletedVideo，
+            //   重复调用幂等（已移除则不再减 total）。
+            try { window.video_bridge.deleteVideo(delId); } catch(e) {}
+            this._removeDeletedVideo(delId);
+            return;
         }
         this.refreshList();
     },
