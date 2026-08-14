@@ -13,6 +13,15 @@ window.videoApp = {
     _player: null,
     _allVideos: [],
     _currentDuration: 0,   // 当前播放视频的真实总时长（秒），来自数据库/列表，优于 Chromium 推断值
+    // ★ 2026-08-14 三级分组规范顺序（与 index.html 工具栏下拉 value 一致）；未收录/空值放最后
+    _videoDimOrder: {
+        subject: ['数学', '语文', '英语', '科学', '艺术', '健康'],
+        grade:   ['学前班', '大班', '中班', '小班'],
+        source:  ['智慧教育平台', 'bilibili', '优酷']
+    },
+    // ★ 2026-08-14 展开列表分组折叠状态：key → true（展开）；缺省 = 折叠
+    //   key 形如 's:语文' / 's:语文|g:大班' / 's:语文|g:大班|src:bilibili'；重渲染后仍保持
+    _expandedGroups: {},
 
     // ===== 初始化 =====
     // ===== ★ 解码能力探测（证明 QWebEngine 支持什么编码）=====
@@ -127,63 +136,213 @@ window.videoApp = {
         if (countEl) countEl.textContent = videos.length + ' 个视频';
         if (fullscreenCountEl) fullscreenCountEl.textContent = videos.length + ' 个视频';
 
+        var self = this;
+        // 分支 1：普通列表保持扁平平铺（现状不变）
+        container.innerHTML = videos.map(function(v) { return self._renderItem(v); }).join('');
+        // 分支 2：展开列表三级嵌套分组（科目 > 年级 > 来源），并绑定分组标题点击折叠
+        if (fullscreenContainer) {
+            this._bindGroupToggle();
+            fullscreenContainer.innerHTML = self._renderFullscreenList(videos);
+        }
+    },
+
+    // ★ 2026-08-14 分组标题点击展开/收起：事件委托挂在 #fullscreenVideoList（innerHTML 重建不影响监听）
+    _bindGroupToggle: function() {
+        if (this._groupToggleBound) return;
+        this._groupToggleBound = true;
+        var self = this;
+        var container = document.getElementById('fullscreenVideoList');
+        if (!container) return;
+        container.addEventListener('click', function(e) {
+            var el = e.target;
+            while (el && el !== container) {
+                if (el.getAttribute && el.getAttribute('data-expand')) {
+                    self.toggleGroup(el);
+                    return;
+                }
+                el = el.parentNode;
+            }
+        });
+    },
+
+    // 切换分组展开/收起；折叠状态写入 _expandedGroups 并在重渲染后保持
+    // 箭头为 fa-chevron-right，展开时由 CSS (:not(.collapsed) 旋转 90°) 指向下，无需 JS 改图标
+    toggleGroup: function(section) {
+        var key = section.getAttribute('data-expand');
+        var map = this._expandedGroups || (this._expandedGroups = {});
+        var isCollapsed = section.classList.contains('collapsed');
+        if (isCollapsed) {
+            section.classList.remove('collapsed');
+            map[key] = true;
+        } else {
+            section.classList.add('collapsed');
+            delete map[key];
+        }
+    },
+
+    // 单条 .video-item HTML（普通列表与分组网格共用）
+    _renderItem: function(v) {
         var esc = this._esc;
-        var html = videos.map(function(v) {
-            var statusHtml = '';
-            var actions = '';
-            var id = esc(v.id);
-            // ★ 2026-08-13 播放中标识：当前正在播放的视频在列表中明确显示「▶ 播放中」
-            var playingHtml = (v.id === window.videoApp._currentVideoId)
-                ? '<span class="video-status playing">▶ 播放中</span>'
-                : '';
-            if (v.status === 'downloaded') {
-                statusHtml = '<span class="video-status downloaded">✓ 已下载</span>';
-            } else if (v.status === 'downloading') {
-                statusHtml = '<span class="video-status downloading">⏳ 下载中 ' +
-                    (v.downloadProgress || 0) + '%</span>';
-            } else if (v.status === 'failed') {
-                statusHtml = '<span class="video-status failed">✗ 下载失败</span>';
-                actions = '<button class="video-btn" title="重新下载" onclick="event.stopPropagation();window.videoApp.download(\'' +
-                    id + '\')"><i class="fas fa-redo"></i></button>';
-            } else {
-                statusHtml = '<span class="video-status online">在线</span>';
-                actions = '<button class="video-btn" title="下载" onclick="event.stopPropagation();window.videoApp.download(\'' +
-                    id + '\')"><i class="fas fa-download"></i></button>';
-            }
-            if (v.status === 'downloaded' || v.status === 'online' || v.status === 'failed') {
-                actions += '<button class="video-btn" title="删除" onclick="event.stopPropagation();window.videoApp.remove(\'' +
-                    id + '\')"><i class="fas fa-trash"></i></button>';
-            }
-            // ★ 2026-08-13 移除列表播放按钮：点击条目本身（video-item onclick）即播放，按钮多余
+        var statusHtml = '';
+        var actions = '';
+        var id = esc(v.id);
+        // ★ 2026-08-13 播放中标识：当前正在播放的视频在列表中明确显示「▶ 播放中」
+        var playingHtml = (v.id === this._currentVideoId)
+            ? '<span class="video-status playing">▶ 播放中</span>'
+            : '';
+        if (v.status === 'downloaded') {
+            statusHtml = '<span class="video-status downloaded">✓ 已下载</span>';
+        } else if (v.status === 'downloading') {
+            statusHtml = '<span class="video-status downloading">⏳ 下载中 ' +
+                (v.downloadProgress || 0) + '%</span>';
+        } else if (v.status === 'failed') {
+            statusHtml = '<span class="video-status failed">✗ 下载失败</span>';
+            actions = '<button class="video-btn" title="重新下载" onclick="event.stopPropagation();window.videoApp.download(\'' +
+                id + '\')"><i class="fas fa-redo"></i></button>';
+        } else {
+            statusHtml = '<span class="video-status online">在线</span>';
+            actions = '<button class="video-btn" title="下载" onclick="event.stopPropagation();window.videoApp.download(\'' +
+                id + '\')"><i class="fas fa-download"></i></button>';
+        }
+        if (v.status === 'downloaded' || v.status === 'online' || v.status === 'failed') {
+            actions += '<button class="video-btn" title="删除" onclick="event.stopPropagation();window.videoApp.remove(\'' +
+                id + '\')"><i class="fas fa-trash"></i></button>';
+        }
+        // ★ 2026-08-13 移除列表播放按钮：点击条目本身（video-item onclick）即播放，按钮多余
 
-            var thumb = v.thumbnail
-                ? '<img src="' + esc(v.thumbnail) + '" class="video-thumb" onerror="this.outerHTML=window.videoApp._thumbFallback()">'
-                : window.videoApp._thumbFallback();
+        var thumb = v.thumbnail
+            ? '<img src="' + esc(v.thumbnail) + '" class="video-thumb" onerror="this.outerHTML=window.videoApp._thumbFallback()">'
+            : this._thumbFallback();
 
-            var resume = (v.lastPosition && v.lastPosition > 0)
-                ? '<div class="video-resume">⏺ 上次播到 ' + window.videoApp._formatTime(v.lastPosition) + '</div>'
-                : '';
+        var resume = (v.lastPosition && v.lastPosition > 0)
+            ? '<div class="video-resume">⏺ 上次播到 ' + this._formatTime(v.lastPosition) + '</div>'
+            : '';
 
-            return '<div class="video-item' + (v.id === window.videoApp._currentVideoId ? ' active' : '') + '"' +
-                ' onclick="window.videoApp.play(\'' + id + '\')">' +
-                thumb +
-                '<div class="video-item-info">' +
-                    '<div class="video-item-title" title="' + esc(v.title) + '">' + esc(v.title) + '</div>' +
-                    '<div class="video-item-meta">' +
-                        '<i class="fas fa-book"></i> ' + esc(v.subject || '未知') +
-                        ' · ' + esc(v.grade || '未知') +
-                        ' · ' + esc(v.source || '未知') +
-                        '<span style="margin-left:6px;">⏱ ' + window.videoApp._formatTime(v.duration || 0) + '</span>' +
-                        (v.quality ? ' · ' + esc(v.quality) : '') +
-                    '</div>' +
-                    resume +
-                    '<div class="video-item-actions">' + playingHtml + statusHtml + actions + '</div>' +
+        return '<div class="video-item' + (v.id === this._currentVideoId ? ' active' : '') + '"' +
+            ' onclick="window.videoApp.play(\'' + id + '\')">' +
+            thumb +
+            '<div class="video-item-info">' +
+                '<div class="video-item-title" title="' + esc(v.title) + '">' + esc(v.title) + '</div>' +
+                '<div class="video-item-meta">' +
+                    '<i class="fas fa-book"></i> ' + esc(v.subject || '未知') +
+                    ' · ' + esc(v.grade || '未知') +
+                    ' · ' + esc(v.source || '未知') +
+                    '<span style="margin-left:6px;">⏱ ' + this._formatTime(v.duration || 0) + '</span>' +
+                    (v.quality ? ' · ' + esc(v.quality) : '') +
                 '</div>' +
-            '</div>';
-        }).join('');
+                resume +
+                '<div class="video-item-actions">' + playingHtml + statusHtml + actions + '</div>' +
+            '</div>' +
+        '</div>';
+    },
 
-        container.innerHTML = html;
-        if (fullscreenContainer) fullscreenContainer.innerHTML = html;
+    // ===== 展开列表三级嵌套分组（科目 > 年级 > 来源）=====
+    // ★ 2026-08-14 用户需求：展开页面按 科目/年级/来源 分类显示；普通列表保持平铺
+    // 分组键归一化：空/空白统一为 ''
+    _dimKey: function(value) {
+        return (value == null ? '' : String(value).trim());
+    },
+    // 分组标题展示名：空值给维度专属文案；来源 value → 显示名（bilibili → B站）
+    _dimLabel: function(key, dim) {
+        if (!key) {
+            return (dim === 'subject') ? '未知科目'
+                 : (dim === 'grade')   ? '未知年级'
+                 : '未知来源';
+        }
+        if (dim === 'source' && key === 'bilibili') return 'B站';
+        return key;
+    },
+    // 按规范顺序排序（_videoDimOrder），规范表外/空值追加到末尾
+    _sortDimKeys: function(group, dim) {
+        var order = this._videoDimOrder[dim] || [];
+        var index = {};
+        for (var i = 0; i < order.length; i++) index[order[i]] = i;
+        var known = [], unknown = [];
+        Object.keys(group).forEach(function(k) {
+            if (Object.prototype.hasOwnProperty.call(index, k)) known.push(k);
+            else unknown.push(k);
+        });
+        known.sort(function(a, b) { return index[a] - index[b]; });
+        return known.concat(unknown);
+    },
+    // 三级分桶：subject → grade → source，最内层收集视频条目
+    _groupVideos: function(videos) {
+        var root = {};
+        var self = this;
+        videos.forEach(function(v) {
+            var sKey = self._dimKey(v.subject);
+            var gKey = self._dimKey(v.grade);
+            var srcKey = self._dimKey(v.source);
+            if (!root[sKey])          root[sKey]          = { count: 0, grades: {} };
+            var sG = root[sKey];
+            if (!sG.grades[gKey])     sG.grades[gKey]     = { count: 0, sources: {} };
+            var gG = sG.grades[gKey];
+            if (!gG.sources[srcKey])  gG.sources[srcKey]  = { count: 0, items: [] };
+            var srcG = gG.sources[srcKey];
+            srcG.items.push(v);
+            srcG.count++; gG.count++; sG.count++;
+        });
+        return root;
+    },
+    // 生成三级嵌套分组 HTML（所有标题经 _esc 转义；★ 2026-08-14 默认全部折叠，标题可点击展开）
+    // ★ 2026-08-14 图标化：箭头 fa-chevron-right（展开时 CSS 旋转 90°）、
+    //   科目 fa-graduation-cap / 年级 fa-users / 来源 fa-tv
+    _renderFullscreenList: function(videos) {
+        var self = this;
+        var grouped = this._groupVideos(videos);
+        var expanded = this._expandedGroups || {};
+        var html = '';
+        this._sortDimKeys(grouped, 'subject').forEach(function(sKey) {
+            var sG = grouped[sKey];
+            var sExpKey = 's:' + sKey;
+            var sCollapsed = expanded[sExpKey] ? '' : ' collapsed';
+            var subHtml = '';
+            self._sortDimKeys(sG.grades, 'grade').forEach(function(gKey) {
+                var gG = sG.grades[gKey];
+                var gExpKey = 's:' + sKey + '|g:' + gKey;
+                var gCollapsed = expanded[gExpKey] ? '' : ' collapsed';
+                var srcHtml = '';
+                self._sortDimKeys(gG.sources, 'source').forEach(function(srcKey) {
+                    var srcG = gG.sources[srcKey];
+                    var srcExpKey = 's:' + sKey + '|g:' + gKey + '|src:' + srcKey;
+                    var srcCollapsed = expanded[srcExpKey] ? '' : ' collapsed';
+                    var itemsHtml = srcG.items.map(function(v) { return self._renderItem(v); }).join('');
+                    srcHtml +=
+                        '<div class="video-cat-source' + srcCollapsed + '" data-expand="' + self._esc(srcExpKey) + '">' +
+                            '<div class="video-cat-label video-cat-toggle">' +
+                                '<i class="video-cat-arrow fas fa-chevron-right"></i>' +
+                                '<i class="video-cat-ico fas fa-tv"></i>' +
+                                '<span class="video-cat-name">' + self._esc(self._dimLabel(srcKey, 'source')) + '</span>' +
+                                '<span class="video-cat-count">' + srcG.items.length + ' 个视频</span>' +
+                            '</div>' +
+                            '<div class="video-cat-body">' +
+                                '<div class="video-cat-grid">' + itemsHtml + '</div>' +
+                            '</div>' +
+                        '</div>';
+                });
+                subHtml +=
+                    '<div class="video-cat-sub' + gCollapsed + '" data-expand="' + self._esc(gExpKey) + '">' +
+                        '<div class="video-cat-label video-cat-toggle">' +
+                            '<i class="video-cat-arrow fas fa-chevron-right"></i>' +
+                            '<i class="video-cat-ico fas fa-users"></i>' +
+                            '<span class="video-cat-name">' + self._esc(self._dimLabel(gKey, 'grade')) + '</span>' +
+                            '<span class="video-cat-count">' + gG.count + ' 个视频</span>' +
+                        '</div>' +
+                        '<div class="video-cat-body">' + srcHtml + '</div>' +
+                    '</div>';
+            });
+            html +=
+                '<div class="video-cat-group' + sCollapsed + '" data-expand="' + self._esc(sExpKey) + '">' +
+                    '<div class="video-cat-header video-cat-toggle">' +
+                        '<i class="video-cat-arrow fas fa-chevron-right"></i>' +
+                        '<i class="video-cat-ico fas fa-graduation-cap"></i>' +
+                        '<span class="video-cat-name">' + self._esc(self._dimLabel(sKey, 'subject')) + '</span>' +
+                        '<span class="video-cat-count">' + sG.count + ' 个视频</span>' +
+                    '</div>' +
+                    '<div class="video-cat-body">' + subHtml + '</div>' +
+                '</div>';
+        });
+        return html;
     },
 
     _thumbFallback: function() {
