@@ -38,7 +38,13 @@ class Agent:
         app = QApplication(sys.argv)
         app.setStyle('Fusion')
         try:
-            app.setWindowIcon(QIcon())
+            # 应用图标（resources/app_icon.ico，⚡ 闪电品牌，与主界面 logo 一致）
+            _icon_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "resources", "app_icon.ico",
+            )
+            if os.path.exists(_icon_path):
+                app.setWindowIcon(QIcon(_icon_path))
         except Exception:
             pass
 

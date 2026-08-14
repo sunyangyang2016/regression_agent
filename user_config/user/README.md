@@ -28,4 +28,4 @@ user_config/user/mcp_servers.json
 | `builtin_tools_config.json` | `defaults/builtin_tools_config.json` | 内置工具开关 |
 | `ui_state.json` | `defaults/ui_state.json` | UI 界面状态（面板/侧边栏/插件 Tab） |
 | 其他 JSON | `defaults/` 下对应文件 | 其他配置 |
-</｜｜DSML｜｜_notes>
+</

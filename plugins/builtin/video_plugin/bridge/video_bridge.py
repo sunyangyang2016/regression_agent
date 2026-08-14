@@ -99,17 +99,26 @@ class VideoBridge(QObject):
 
     @pyqtSlot(str, result=str)
     def getVideos(self, filter_json):
-        """获取视频列表（按科目/年级/来源/关键词筛选）"""
+        """获取视频列表（按科目/年级/来源/关键词筛选，★ 2026-08-14 支持分页，返回 {videos, total}）"""
         try:
             f = json.loads(filter_json or "{}")
+            limit = int(f.get("limit") or 100)
+            offset = int(f.get("offset") or 0)
             videos = self._repo.get_all(
                 subject=f.get("subject"),
                 grade=f.get("grade"),
                 source=f.get("source"),
                 status=f.get("status"),
                 keyword=f.get("keyword"),
-                limit=f.get("limit", 100),
-                offset=f.get("offset", 0),
+                limit=limit,
+                offset=offset,
+            )
+            total = self._repo.count(
+                subject=f.get("subject"),
+                grade=f.get("grade"),
+                source=f.get("source"),
+                status=f.get("status"),
+                keyword=f.get("keyword"),
             )
             # ★ 自动补录：旧版本 downloaded 记录 localPath 为空时，扫描固定目录回写
             for v in videos:
@@ -124,7 +133,7 @@ class VideoBridge(QObject):
                         )
                         v["localPath"] = local_file
                         v["audioPath"] = audio_file
-            return json.dumps(videos, ensure_ascii=False)
+            return json.dumps({"videos": videos, "total": total}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
@@ -142,7 +151,7 @@ class VideoBridge(QObject):
 
             def _worker():
                 try:
-                    videos = search_videos(keyword, limit=10, source=source)
+                    videos = search_videos(keyword, limit=50, source=source)
                     for v in videos:
                         guess_metadata(v, keyword, source)
 

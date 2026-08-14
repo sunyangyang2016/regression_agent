@@ -13,11 +13,51 @@ if os.path.isdir(_nodejs_path) and _nodejs_path not in os.environ.get("PATH", ""
 
 from PyQt5.QtCore import QObject, QTimer
 from PyQt5.QtWidgets import QMainWindow, QDesktopWidget
+from PyQt5.QtGui import QIcon
 
 from controller.bridge_manager import BridgeManager
 from controller.bridge_loader import BridgeLoader
 from core.event_bus import EventBus
 LOG = "[AppController]"
+
+
+def _apply_windows_dark_titlebar(window):
+    """将主窗口原生标题栏切换为深色，与主界面深色主题匹配（仅 Windows）。
+
+    保留原生边框/最小化/最大化/关闭按钮，只通过 DWM 属性改变标题栏配色。
+    非 Windows 平台为 no-op。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        hwnd = int(window.winId())
+        dwmapi = ctypes.windll.dwmapi
+        dwmapi.DwmSetWindowAttribute.argtypes = [
+            wintypes.HWND, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint,
+        ]
+        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+
+        # 深色标题栏：20 = Win10 2004+/Win11，19 = 更早版本（1809/1903）
+        dark = wintypes.BOOL(True)
+        for attr in (20, 19):
+            if dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(dark), ctypes.sizeof(dark)
+            ) == 0:
+                break
+
+        # Win11 22H2+：指定精确背景色/文字色，与 Web 主题 --bg-primary(#0d1117)、--text-primary(#e6edf3) 一致
+        # COLORREF 格式 = 0x00BBGGRR
+        caption = wintypes.DWORD(0x0017110D)  # #0d1117
+        text = wintypes.DWORD(0x00F3EDE6)     # #e6edf3
+        for attr, color in ((35, caption), (36, text)):
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(color), ctypes.sizeof(color)
+            )
+    except Exception as e:
+        print(f"{LOG} ⚠️ 设置深色标题栏失败: {e}")
 
 
 class AppController(QObject):
@@ -106,6 +146,19 @@ class AppController(QObject):
             QMainWindow { background: #0a0d12; }
             QWebEngineView { background: transparent; }
         """)
+
+        # 主窗口标题栏切成深色，匹配主界面（DWM，仅 Windows）。
+        # 在 show() 之前强制创建 HWND 并应用，避免启动瞬间白色标题栏闪烁。
+        _apply_windows_dark_titlebar(window)
+
+        # 应用窗口图标（标题栏左上角 + 任务栏），与主界面 ⚡ 品牌 logo 一致
+        _icon_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "resources", "app_icon.ico",
+        )
+        if os.path.exists(_icon_path):
+            window.setWindowIcon(QIcon(_icon_path))
+
         self.main_window = window
         return window
 
@@ -580,6 +633,9 @@ class AppController(QObject):
             print(f"[AppController] [WARN] 注册插件 bridge 失败: {e}")
 
         window.show()
+
+        # 兜底：窗口真正显示后再应用一次深色标题栏（幂等，确保生效）
+        _apply_windows_dark_titlebar(window)
 
         self.bridge_loader = BridgeLoader()
         self.bridge_loader.load(

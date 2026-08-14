@@ -142,11 +142,23 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
 }
+/* ★ 2026-08-15 标题 + 上一个/下一个按钮同行：标题靠左省略号截断，按钮靠右紧凑 */
+.video-now-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
 .video-now-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 6px;
 }
 .video-now-meta {
   font-size: 12px;
@@ -161,6 +173,37 @@
   color: var(--accent-primary);
   text-decoration: none;
   cursor: pointer;
+}
+/* ★ 2026-08-15 上一个/下一个导航按钮（主动切换 + ended 自动连播共用） */
+.video-now-nav {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.video-nav-btn {
+  padding: 5px 10px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-family);
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.video-nav-btn i {
+  font-size: 11px;
+  margin: 0 4px;
+}
+.video-nav-btn:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+.video-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 /* ---- 右侧播放列表（★ 2026-08-14 普通态为紧凑面板，头部「全屏」按钮展开覆盖播放区+列表区） ---- */
 .video-list-area {
@@ -369,6 +412,76 @@
 .video-cat-sub.collapsed > .video-cat-body,
 .video-cat-source.collapsed > .video-cat-body {
   display: none;
+}
+
+/* ---- 同系列折叠（★ 2026-08-14 右侧普通列表 + 全屏展开列表共用；默认折叠） ---- */
+.video-series-group {
+  margin-bottom: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+.video-series-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.video-series-header:hover {
+  background: var(--bg-hover);
+}
+.video-series-body {
+  display: block;
+  border-top: 1px solid var(--border-color);
+  padding: 8px;
+}
+.video-series-group:not(.collapsed) > .video-series-header > .video-cat-arrow {
+  transform: rotate(90deg);
+}
+.video-series-group.collapsed > .video-series-body {
+  display: none;
+}
+/* 全屏列表内系列块：占满来源行宽，内容用网格排布；左侧随来源级再缩进 */
+.video-cat-grid > .video-series-group {
+  grid-column: 1 / -1;
+}
+.video-cat-source .video-series-group {
+  margin-left: 16px;
+  margin-bottom: 12px;
+}
+.video-series-body .video-item:last-child {
+  margin-bottom: 0;
+}
+
+/* ---- 分页"加载更多"按钮（★ 2026-08-14 库超一页时列表底部出现） ---- */
+.video-load-more {
+  text-align: center;
+  padding: 10px;
+  margin: 8px 4px 4px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--bg-tertiary);
+  transition: all 0.2s;
+}
+.video-load-more:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+/* 全屏容器内按钮占满整行（flex 纵向容器） */
+#fullscreenVideoList > .video-load-more {
+  flex: 0 0 auto;
+  width: auto;
+  align-self: stretch;
 }
 
 /* ---- 播放列表项（普通态原尺寸：缩略图 80×45，全屏展开也保持原尺寸） ---- */

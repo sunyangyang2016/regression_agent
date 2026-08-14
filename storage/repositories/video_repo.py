@@ -89,12 +89,16 @@ class VideoRepository:
         return self._row_to_dict(row) if row else {}
 
     def count(self, **filters) -> int:
-        """获取视频数量（支持筛选）"""
+        """获取视频数量（支持筛选；keyword 与 get_all 一致按标题/简介模糊匹配）"""
         where, params = [], []
         for k, v in filters.items():
             if v is not None and v != "":
-                where.append(f"{k} = ?")
-                params.append(v)
+                if k == "keyword":
+                    where.append("(title LIKE ? OR description LIKE ?)")
+                    params += [f"%{v}%", f"%{v}%"]
+                else:
+                    where.append(f"{k} = ?")
+                    params.append(v)
         sql = f"SELECT COUNT(*) FROM {self.TABLE}"
         if where:
             sql += " WHERE " + " AND ".join(where)

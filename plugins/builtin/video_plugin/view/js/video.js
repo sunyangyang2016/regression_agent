@@ -12,6 +12,10 @@ window.videoApp = {
     _initialized: false,
     _player: null,
     _allVideos: [],
+    // ★ 2026-08-14 分页：库可能超 100 条，逐页"加载更多"（_totalVideos 为库中总数）
+    _totalVideos: 0,
+    _listLimit: 100,
+    _listOffset: 0,
     _currentDuration: 0,   // 当前播放视频的真实总时长（秒），来自数据库/列表，优于 Chromium 推断值
     // ★ 2026-08-14 三级分组规范顺序（与 index.html 工具栏下拉 value 一致）；未收录/空值放最后
     _videoDimOrder: {
@@ -49,6 +53,8 @@ window.videoApp = {
         // ★ 2026-08-13 幂等守卫：重复 init 不重复绑定事件/重复刷新
         if (this._initialized) return;
         this._initialized = true;
+        // ★ 2026-08-14 恢复上次的展开状态（插件重建/重启后仍保持已展开分组，删除后不自动折叠）
+        this._restoreExpandedGroups();
         var self = this;
         this._player = document.getElementById('videoPlayer');
         if (!this._player) return;
@@ -56,7 +62,12 @@ window.videoApp = {
 
         // 播放器事件
         this._player.addEventListener('pause', function() { self.savePosition(); });
-        this._player.addEventListener('ended', function() { self.savePosition(); });
+        this._player.addEventListener('ended', function() {
+            self.savePosition();
+            // ★ 2026-08-15 自动连播：播放结束自动播放下一个（系列优先，顺序见 _getPlaybackOrder）。
+            //   已是最末一个视频时 playNext 内部 no-op 并刷新按钮，不会循环/重复连播。
+            self.playNext();
+        });
         // ★ 修复：pause 时 savePosition() 会清掉 5s 定时器；这里在再次 play（原生控制条/AI resume）
         //   时恢复定时保存，避免续播后位置不再自动落库
         this._player.addEventListener('play', function() {
@@ -81,39 +92,86 @@ window.videoApp = {
         if (el) el.style.display = 'none';
     },
 
-    // ===== 列表加载（异步 Promise）=====
+    // ===== 列表加载（异步 Promise；★ 2026-08-14 分页：首屏 limit=_listLimit, offset=0，解析 {videos,total}）=====
     refreshList: function(payload) {
         var self = this;
         if (!window.video_bridge) return;
+        // 搜索/筛选/刷新 → 回到第 1 页
+        self._listOffset = 0;
+        self._allVideos = [];
         var filter = {
             subject: document.getElementById('videoSubjectFilter').value,
             grade: document.getElementById('videoGradeFilter').value,
             source: document.getElementById('videoSourceFilter').value,
-            keyword: document.getElementById('videoSearchInput').value
+            keyword: document.getElementById('videoSearchInput').value,
+            limit: self._listLimit,
+            offset: 0
         };
         var p = window.video_bridge.getVideos(JSON.stringify(filter));
-        if (p && typeof p.then === 'function') {
-            p.then(function(result) {
-                try {
-                    var parsed = (typeof result === 'string') ? JSON.parse(result) : result;
+        var apply = function(result) {
+            try {
+                var parsed = (typeof result === 'string') ? JSON.parse(result) : result;
+                if (parsed && Array.isArray(parsed.videos)) {
+                    self._allVideos = parsed.videos;
+                    self._totalVideos = (typeof parsed.total === 'number') ? parsed.total : parsed.videos.length;
+                } else {
+                    // 兼容旧返回结构（裸数组）
                     self._allVideos = Array.isArray(parsed) ? parsed : [];
-                } catch(e) {
-                    self._allVideos = [];
+                    self._totalVideos = self._allVideos.length;
                 }
-                self._renderList();
-            }).catch(function(e) {
+            } catch(e) {
+                self._allVideos = [];
+                self._totalVideos = 0;
+            }
+            self._renderList();
+        };
+        if (p && typeof p.then === 'function') {
+            p.then(apply).catch(function(e) {
                 console.warn('[videoApp] getVideos 失败:', e);
                 self._allVideos = [];
+                self._totalVideos = 0;
                 self._renderList();
             });
         } else {
+            apply(p);
+        }
+    },
+
+    // ★ 2026-08-14 分页：加载更多（offset = 已加载条数），追加到 _allVideos 并重渲染
+    loadMore: function() {
+        var self = this;
+        if (!window.video_bridge) return;
+        if (!this._allVideos.length && !this._totalVideos) return;  // 无数据不触发
+        var filter = {
+            subject: document.getElementById('videoSubjectFilter').value,
+            grade: document.getElementById('videoGradeFilter').value,
+            source: document.getElementById('videoSourceFilter').value,
+            keyword: document.getElementById('videoSearchInput').value,
+            limit: self._listLimit,
+            offset: self._allVideos.length
+        };
+        var p = window.video_bridge.getVideos(JSON.stringify(filter));
+        var apply = function(result) {
             try {
-                var parsed = (typeof p === 'string') ? JSON.parse(p) : p;
-                this._allVideos = Array.isArray(parsed) ? parsed : [];
+                var parsed = (typeof result === 'string') ? JSON.parse(result) : result;
+                var newVideos = (parsed && Array.isArray(parsed.videos)) ? parsed.videos : [];
+                if (parsed && typeof parsed.total === 'number') self._totalVideos = parsed.total;
+                if (!newVideos.length) return;
+                // 去重（翻页边界理论上无重叠，防御式过滤）
+                var seen = {};
+                self._allVideos.forEach(function(v) { seen[v.id] = true; });
+                self._allVideos = self._allVideos.concat(newVideos.filter(function(v) { return !seen[v.id]; }));
             } catch(e) {
-                this._allVideos = [];
+                return;
             }
-            this._renderList();
+            self._renderList();
+        };
+        if (p && typeof p.then === 'function') {
+            p.then(apply).catch(function(e) {
+                console.warn('[videoApp] loadMore 失败:', e);
+            });
+        } else {
+            apply(p);
         }
     },
 
@@ -123,45 +181,67 @@ window.videoApp = {
         var countEl = document.getElementById('videoCount');
         var fullscreenCountEl = document.getElementById('fullscreenVideoCount');
         if (!container) return;
+        // ★ 2026-08-15 列表重渲染后刷新上一个/下一个按钮可用态（init/搜索/删除/加载更多）
+        this.updateNavButtons();
 
         var videos = this._allVideos || [];
+        var total = this._totalVideos || videos.length;
         var emptyHtml = '<div class="video-empty">🎬 暂无视频<br>请让 AI 搜索教学视频</div>';
         if (videos.length === 0) {
             container.innerHTML = emptyHtml;
             if (fullscreenContainer) fullscreenContainer.innerHTML = emptyHtml;
-            if (countEl) countEl.textContent = '0 个视频';
-            if (fullscreenCountEl) fullscreenCountEl.textContent = '0 个视频';
+            if (countEl) countEl.textContent = total + ' 个视频';
+            if (fullscreenCountEl) fullscreenCountEl.textContent = total + ' 个视频';
             return;
         }
-        if (countEl) countEl.textContent = videos.length + ' 个视频';
-        if (fullscreenCountEl) fullscreenCountEl.textContent = videos.length + ' 个视频';
+        if (countEl) countEl.textContent = total + ' 个视频';
+        if (fullscreenCountEl) fullscreenCountEl.textContent = total + ' 个视频';
 
         var self = this;
-        // 分支 1：普通列表保持扁平平铺（现状不变）
-        container.innerHTML = videos.map(function(v) { return self._renderItem(v); }).join('');
+        // ★ 2026-08-14 分页：库中总数 > 已加载 → 追加"加载更多"按钮（普通列表与全屏容器都挂）
+        var loadMoreHtml = (total > videos.length)
+            ? '<div class="video-load-more" onclick="window.videoApp.loadMore()">⬇ 加载更多（已显示 ' +
+                videos.length + ' / ' + total + '）</div>'
+            : '';
+        // 分支 1：普通列表按系列折叠渲染（★ 2026-08-14 同系列多集折叠成一条可展开条目，单集视频平铺）
+        container.innerHTML = this._seriesBlocks(videos).map(function(b) {
+            if (b.kind === 'series') {
+                return self._renderSeriesGroup('slist:' + b.key, b.title, b.items.length,
+                    b.items.map(function(i) { return self._renderItem(i); }).join(''));
+            }
+            return self._renderItem(b.item);
+        }).join('') + loadMoreHtml;
         // 分支 2：展开列表三级嵌套分组（科目 > 年级 > 来源），并绑定分组标题点击折叠
         if (fullscreenContainer) {
             this._bindGroupToggle();
-            fullscreenContainer.innerHTML = self._renderFullscreenList(videos);
+            fullscreenContainer.innerHTML = self._renderFullscreenList(videos) + loadMoreHtml;
         }
     },
 
-    // ★ 2026-08-14 分组标题点击展开/收起：事件委托挂在 #fullscreenVideoList（innerHTML 重建不影响监听）
+    // ★ 2026-08-14 分组标题点击展开/收起：事件委托同时挂在 #videoList 与 #fullscreenVideoList（innerHTML 重建不影响监听）
     _bindGroupToggle: function() {
         if (this._groupToggleBound) return;
         this._groupToggleBound = true;
         var self = this;
-        var container = document.getElementById('fullscreenVideoList');
-        if (!container) return;
-        container.addEventListener('click', function(e) {
-            var el = e.target;
-            while (el && el !== container) {
-                if (el.getAttribute && el.getAttribute('data-expand')) {
-                    self.toggleGroup(el);
-                    return;
+        ['videoList', 'fullscreenVideoList'].forEach(function(id) {
+            var container = document.getElementById(id);
+            if (!container) return;
+            container.addEventListener('click', function(e) {
+                // ★ 2026-08-14 点条目本身（播放/操作）不触发折叠：先冒泡找 .video-item，命中则 return
+                var t = e.target;
+                while (t && t !== container) {
+                    if (t.classList && t.classList.contains('video-item')) return;
+                    t = t.parentNode;
                 }
-                el = el.parentNode;
-            }
+                var el = e.target;
+                while (el && el !== container) {
+                    if (el.getAttribute && el.getAttribute('data-expand')) {
+                        self.toggleGroup(el);
+                        return;
+                    }
+                    el = el.parentNode;
+                }
+            });
         });
     },
 
@@ -178,6 +258,27 @@ window.videoApp = {
             section.classList.add('collapsed');
             delete map[key];
         }
+        this._saveExpandedGroups();
+    },
+
+    // ★ 2026-08-14 展开状态持久化：localStorage 保存/恢复。
+    //   作用：删除视频后的 refreshList 重渲染、插件 Tab 重建、重启应用后，
+    //   已展开的分组保持展开（不自动折叠）。localStorage 不可用（如 file:// 限制）时静默降级为内存态。
+    _restoreExpandedGroups: function() {
+        var restored = {};
+        try {
+            var stored = window.localStorage.getItem('video_expanded_groups');
+            if (stored) {
+                var obj = JSON.parse(stored);
+                if (obj && typeof obj === 'object') restored = obj;
+            }
+        } catch(e) {}
+        this._expandedGroups = restored;
+    },
+    _saveExpandedGroups: function() {
+        try {
+            window.localStorage.setItem('video_expanded_groups', JSON.stringify(this._expandedGroups || {}));
+        } catch(e) {}
     },
 
     // 单条 .video-item HTML（普通列表与分组网格共用）
@@ -288,6 +389,103 @@ window.videoApp = {
         });
         return root;
     },
+    // ★ 2026-08-14 系列分组辅助：同系列多集折叠成一条可展开的系列条目（默认折叠）
+    // 系列键：seriesId 优先，回退 seriesTitle（兼容有 title 无 id 的遗留行）
+    _seriesKey: function(v) {
+        return (v.seriesId || '').trim() || (v.seriesTitle || '').trim();
+    },
+    // 把列表数组转成有序渲染块：单集 → {kind:'single'}；同系列 ≥2 集 → {kind:'series'}
+    // 系列内按 episodeIndex 升序（第1集在前）；仅 1 集的系列降级为 single（不显示折叠头），
+    // 但曾展开过的系列例外（删除后只剩 1 集仍保留折叠头，见下方保级逻辑）
+    _seriesBlocks: function(videos, expKeyPrefix) {
+        var self = this;
+        var groups = [];
+        var index = {};
+        videos.forEach(function(v) {
+            var key = self._seriesKey(v);
+            if (!key) { groups.push({ kind: 'single', item: v }); return; }
+            if (!Object.prototype.hasOwnProperty.call(index, key)) {
+                index[key] = groups.length;
+                groups.push({ kind: 'series', key: key, title: v.seriesTitle || v.title, items: [] });
+            }
+            groups[index[key]].items.push(v);
+        });
+        return groups.map(function(g) {
+            if (g.kind === 'series') {
+                // ★ 2026-08-14 删除后保级：曾展开过的系列即使只剩 1 集也保留折叠头（不再降级成单集），
+                //   避免"展开→删除→系列消失/自动折叠"。默认前缀 slist:（普通列表）；全屏列表由调用方
+                //   传入来源级键 srcExpKey + '|sr:'，保证与 data-expand 写入的键一致。
+                var expKey = (expKeyPrefix || 'slist:') + g.key;
+                if (g.items.length < 2 && !(self._expandedGroups || {})[expKey]) {
+                    return { kind: 'single', item: g.items[0] };
+                }
+                if (g.items.every(function(i) { return i.episodeIndex != null; })) {
+                    g.items.sort(function(a, b) { return a.episodeIndex - b.episodeIndex; });
+                }
+            }
+            return g;
+        });
+    },
+    // 系列可折叠块 HTML（普通列表与全屏列表共用；默认折叠，data-expand 决定折叠状态）
+    _renderSeriesGroup: function(expKey, title, count, itemsHtml) {
+        var expanded = this._expandedGroups || {};
+        var sCollapsed = expanded[expKey] ? '' : ' collapsed';
+        return '<div class="video-series-group' + sCollapsed + '" data-expand="' + this._esc(expKey) + '">' +
+            '<div class="video-series-header video-cat-toggle">' +
+                '<i class="video-cat-arrow fas fa-chevron-right"></i>' +
+                '<i class="video-cat-ico fas fa-folder"></i>' +
+                '<span class="video-cat-name">📚 ' + this._esc(title) + '</span>' +
+                '<span class="video-cat-count">' + count + ' 集</span>' +
+            '</div>' +
+            '<div class="video-series-body">' + itemsHtml + '</div>' +
+        '</div>';
+    },
+
+    // ===== ★ 2026-08-15 播放顺序（下一个/上一个 + ended 自动连播共用）=====
+    // 把 _allVideos 展平成"线性播放序"，分组/排序规则与 _seriesBlocks 完全一致：
+    //   - 单集视频按列表顺序直接加入；
+    //   - 同系列（_seriesKey 一致）聚成连续块，块内【全部】有 episodeIndex 时按升序排，
+    //     否则保持列表顺序（与 _seriesBlocks 的排序条件一致）；
+    //   - 不读 _expandedGroups：折叠状态只影响折叠头是否显示，不影响播放顺序。
+    _getPlaybackOrder: function() {
+        var videos = this._allVideos || [];
+        var order = [];
+        var blocks = [];
+        var index = {};
+        var self = this;
+        videos.forEach(function(v) {
+            var key = self._seriesKey(v);
+            if (!key) { blocks.push({ kind: 'single', item: v }); return; }
+            if (!Object.prototype.hasOwnProperty.call(index, key)) {
+                index[key] = blocks.length;
+                blocks.push({ kind: 'series', key: key, items: [] });
+            }
+            blocks[index[key]].items.push(v);
+        });
+        blocks.forEach(function(b) {
+            if (b.kind === 'series') {
+                if (b.items.every(function(i) { return i.episodeIndex != null; })) {
+                    b.items.sort(function(a, b) { return a.episodeIndex - b.episodeIndex; });
+                }
+                for (var k = 0; k < b.items.length; k++) order.push(b.items[k]);
+            } else {
+                order.push(b.item);
+            }
+        });
+        return order;
+    },
+
+    // 当前视频在播放序中的位置 {order, idx}；不在已加载列表内 idx = -1
+    _getNavState: function() {
+        var order = this._getPlaybackOrder();
+        var cid = this._currentVideoId || '';
+        var idx = -1;
+        for (var i = 0; i < order.length; i++) {
+            if (order[i].id === cid) { idx = i; break; }
+        }
+        return { order: order, idx: idx };
+    },
+
     // 生成三级嵌套分组 HTML（所有标题经 _esc 转义；★ 2026-08-14 默认全部折叠，标题可点击展开）
     // ★ 2026-08-14 图标化：箭头 fa-chevron-right（展开时 CSS 旋转 90°）、
     //   科目 fa-graduation-cap / 年级 fa-users / 来源 fa-tv
@@ -310,7 +508,16 @@ window.videoApp = {
                     var srcG = gG.sources[srcKey];
                     var srcExpKey = 's:' + sKey + '|g:' + gKey + '|src:' + srcKey;
                     var srcCollapsed = expanded[srcExpKey] ? '' : ' collapsed';
-                    var itemsHtml = srcG.items.map(function(v) { return self._renderItem(v); }).join('');
+                    // ★ 2026-08-14 来源内再按系列折叠：同系列块占满整行（grid-column:1/-1），单集直接铺
+                    var itemsHtml = self._seriesBlocks(srcG.items, srcExpKey + '|sr:').map(function(b) {
+                        if (b.kind === 'series') {
+                            return self._renderSeriesGroup(srcExpKey + '|sr:' + b.key, b.title, b.items.length,
+                                '<div class="video-cat-grid">' +
+                                    b.items.map(function(i) { return self._renderItem(i); }).join('') +
+                                '</div>');
+                        }
+                        return self._renderItem(b.item);
+                    }).join('');
                     srcHtml +=
                         '<div class="video-cat-source' + srcCollapsed + '" data-expand="' + self._esc(srcExpKey) + '">' +
                             '<div class="video-cat-label video-cat-toggle">' +
@@ -399,8 +606,10 @@ window.videoApp = {
                 p.then(function(allStr) {
                     try {
                         var all = JSON.parse(allStr);
-                        for (var j = 0; j < all.length; j++) {
-                            if (all[j].id === video_id) { self._startPlay(all[j]); break; }
+                        // ★ 2026-08-14 getVideos 现返回 {videos,total}，兼容裸数组旧返回
+                        var list = (all && Array.isArray(all.videos)) ? all.videos : (Array.isArray(all) ? all : []);
+                        for (var j = 0; j < list.length; j++) {
+                            if (list[j].id === video_id) { self._startPlay(list[j]); break; }
                         }
                     } catch(e) {}
                 });
@@ -429,6 +638,8 @@ window.videoApp = {
             this._stopAudioSync();
         }
         this._currentVideoId = video_id;
+        // ★ 2026-08-15 切换视频后刷新上一个/下一个按钮状态
+        this.updateNavButtons();
         // ★ 2026-08-13 播放启动中 → 播放区显示等待旋转动画（playing/error 时隐藏）
         this._showSpinner();
         // ★ 每次新播放清除上一次未完成的异步解析待续项 + 自动重试定时器
@@ -516,6 +727,36 @@ window.videoApp = {
                 if (typeof showToast === 'function') showToast('解析视频地址失败', 'error');
             }
         }
+    },
+
+    // ===== ★ 2026-08-15 上一个/下一个导航 + 按钮状态 =====
+    // 刷新"上一个/下一个"按钮可用态：无视频 / 已是边界 → disabled
+    updateNavButtons: function() {
+        var prevBtn = document.getElementById('videoPrevBtn');
+        var nextBtn = document.getElementById('videoNextBtn');
+        if (!prevBtn || !nextBtn) return;
+        var s = this._getNavState();
+        prevBtn.disabled = !(s.idx > 0);                                        // 第一个 → 禁用"上一个"
+        nextBtn.disabled = !(s.idx >= 0 && s.idx + 1 < s.order.length);        // 最后一个 → 禁用"下一个"
+    },
+
+    // 播放下一个（ended 自动连播与按钮点击共用；★ 2026-08-15 主动切换）
+    // 未播完的视频也会立即切换（切换前 _startPlay 会先保存当前断点）；已是最后一个则 no-op（停住）
+    playNext: function() {
+        var fromId = this._currentVideoId;
+        var s = this._getNavState();
+        if (s.idx < 0 || s.idx + 1 >= s.order.length) { this.updateNavButtons(); return; }
+        if (this._currentVideoId !== fromId) return;   // 防重入：调用期间已切换视频
+        this.play(s.order[s.idx + 1].id);
+    },
+
+    // 播放上一个（★ 2026-08-15 主动切换）：已是第一个则 no-op
+    playPrev: function() {
+        var fromId = this._currentVideoId;
+        var s = this._getNavState();
+        if (s.idx <= 0) { this.updateNavButtons(); return; }
+        if (this._currentVideoId !== fromId) return;   // 防重入
+        this.play(s.order[s.idx - 1].id);
     },
 
     // ★ 在线 URL 异步解析完成回调（后端后台线程 → playUrlReady(video_id, data)）

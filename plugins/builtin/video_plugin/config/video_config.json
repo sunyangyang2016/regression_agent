@@ -3,5 +3,6 @@
   "download_dir": "user_config/media/videos",
   "refresh_interval": 5,
   "position_save_interval": 5,
-  "max_results": 50
+  "_comment": "max_results 与 skills/md/preschool-video/scripts/video_catcher_runner.py 的 MAX_SEARCH_TOTAL 同步（单次搜索最多入库条数）",
+  "max_results": 100
 }

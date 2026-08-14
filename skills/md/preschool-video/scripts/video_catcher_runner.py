@@ -7,6 +7,7 @@ yt-dlp 搜索与解析执行器 + video-catcher 下载执行（preschool-video �
 额外提供：网站认证信息管理（保存到 user_config/user/video_auth.json + 内存缓存，
 播放时自动携带 Cookie/Token 等认证信息）。
 """
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -202,9 +203,11 @@ def _fetch_meta(page_url, timeout=40):
 # ==========================================
 
 # 搜索一次最多入库的视频总数上限（对应 plugins/builtin/video_plugin/config/video_config.json 的 max_results）
-MAX_SEARCH_TOTAL = 50
+MAX_SEARCH_TOTAL = 100
 # 单个系列（多P视频）最多展开的集数上限（防御异常大系列）
 _MAX_SERIES_ENTRIES = 200
+# ★ 2026-08-14 候选解析并行度：每批并发解析的候选数（3 worker，提升吞吐；B站反爬敏感可回调为 2）
+_PARALLEL = 3
 
 
 def _entry_to_video(entry, series_id=None, series_title=None,
@@ -322,14 +325,15 @@ def _expand_series(info):
     return False, 1, [v]
 
 
-def ytdlp_search(keyword, limit=10, timeout=120, max_total=None):
+def ytdlp_search(keyword, limit=50, timeout=300, max_total=None):
     """使用 yt-dlp 搜索 B站视频并补全元数据（★ 多P整套：自动展开为全部集）。
 
-    流程：bilisearch(flat) 获取候选 URL → 逐个 fetch_series_and_meta
+    流程：bilisearch(flat) 获取候选 URL → 分批并发 fetch_series_and_meta
          （多P视频一次取回全部集，返回列表为整套展开后的全部视频）。
     返回 [{"title", "page_url", "play_url", "thumbnail", "duration", ...}]
-    失败/无结果返回 []。总数受 max_total 上限约束（默认 MAX_SEARCH_TOTAL=50，
-    达到上限时保留当前完整系列，不截半），并带墙钟截止时间防后台卡死。
+    失败/无结果返回 []。总数受 max_total 上限约束（默认 MAX_SEARCH_TOTAL=100，
+    达到上限时保留当前完整系列，不截半），并带墙钟截止时间防后台卡死
+    （deadline = max(60, timeout)，与 execute_system_command 最大 300s 对齐）。
     """
     try:
         cmd = [
@@ -359,24 +363,39 @@ def ytdlp_search(keyword, limit=10, timeout=120, max_total=None):
         if not candidates:
             return []
 
-        # 2) 逐个解析（多P自动展开整套），带墙钟截止时间防卡死
+        # 2) 分批并发解析（多P自动展开整套）：每批 _PARALLEL 个，批间检查 deadline / max_total
         max_total = int(max_total or MAX_SEARCH_TOTAL)
         videos = []
+        seen = set()
         deadline = time.monotonic() + max(60, timeout)
-        for url in candidates:
+        for i in range(0, len(candidates), _PARALLEL):
             if time.monotonic() > deadline:
                 print("[ytdlp_search] ⏱️ 达到搜索时限，提前收尾")
                 break
-            try:
-                _is_series, _count, metas = fetch_series_and_meta(url, timeout=45)
-            except Exception as e:
-                print(f"[ytdlp_search] ⚠️ 解析 {url[:60]} 失败: {e}")
-                continue
-            for m in metas:
-                if m.get("title"):
-                    videos.append(m)
+            batch = candidates[i:i + _PARALLEL]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=_PARALLEL) as ex:
+                future_to_url = {ex.submit(fetch_series_and_meta, url, timeout=45): url
+                                 for url in batch}
+                for fut in concurrent.futures.as_completed(future_to_url):
+                    url = future_to_url[fut]
+                    try:
+                        _is_series, _count, metas = fut.result()
+                    except Exception as e:
+                        print(f"[ytdlp_search] ⚠️ 解析 {url[:60]} 失败: {e}")
+                        continue
+                    for m in metas:
+                        if not m.get("title"):
+                            continue
+                        # 并行结果去重（候选可能重叠/同一系列出现多次）
+                        key = (m.get("page_url") or m.get("video_id") or m.get("title")).strip()
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        videos.append(m)
+                    if len(videos) >= max_total:
+                        print(f"[ytdlp_search] 已达结果上限 {max_total}，停止展开")
+                        break
             if len(videos) >= max_total:
-                print(f"[ytdlp_search] 已达结果上限 {max_total}，停止展开")
                 break
         return videos
     except subprocess.TimeoutExpired:
@@ -472,7 +491,7 @@ def ytdlp_get_url(url, timeout=60):
     return []
 
 
-def search_videos(keyword, limit=10, source=None):
+def search_videos(keyword, limit=50, source=None):
     """搜索入口：多源搜索，目标源取不到数据时自动回退 B站（绝不无结果/崩）。
 
     source: None/'自动' → B站（默认稳定源）；
@@ -481,7 +500,7 @@ def search_videos(keyword, limit=10, source=None):
     返回与 ytdlp_search 一致结构的视频列表。
     """
     keyword = (keyword or "").strip()
-    limit = int(limit or 10)
+    limit = int(limit or 50)
     src_key = _SOURCE_MAP.get((source or "").strip().lower())
     if src_key == "smartedu":
         videos = _search_smartedu(keyword, limit)
@@ -681,10 +700,13 @@ def guess_subject(keyword):
 
 
 def guess_grade(keyword):
-    """从关键词猜测年级"""
+    """从关键词猜测年级
+    ★ 2026-08-14 大班/中班/小班优先于「幼儿园」泛称（dict 顺序即优先级），
+      避免「幼儿园大班 数学」被误判为学前班；仅含「幼儿园」时默认学前班。
+    """
     grades = {
-        "学前班": "学前班", "幼小衔接": "学前班", "幼儿园": "学前班",
         "大班": "大班", "中班": "中班", "小班": "小班",
+        "学前班": "学前班", "幼小衔接": "学前班", "幼儿园": "学前班",
     }
     for k, v in grades.items():
         if k in (keyword or ""):

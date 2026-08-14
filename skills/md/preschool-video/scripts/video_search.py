@@ -37,8 +37,8 @@ def main():
     parser.add_argument("--keyword", required=True, help="搜索关键词")
     parser.add_argument("--source", default="自动",
                         help="内容来源（自动/bilibili/智慧教育平台/优酷，目标源失败自动回退 B站）")
-    parser.add_argument("--limit", type=int, default=10,
-                        help="搜索候选数量（多P视频自动展开整套入库，总数受上限约束，默认 10）")
+    parser.add_argument("--limit", type=int, default=50,
+                        help="搜索候选数量（多P视频自动展开整套入库，总数受 MAX_SEARCH_TOTAL 上限约束，默认 50）")
     args = parser.parse_args()
 
     if not args.keyword:
@@ -70,7 +70,7 @@ def main():
     # 输出摘要
     skip_txt = f"（重复 {skipped} 个已跳过）" if skipped else ""
     print(f"✅ 搜索到 {len(videos)} 个视频，新增 {added} 个到视频库{skip_txt}")
-    for i, v in enumerate(videos[:5]):
+    for i, v in enumerate(videos[:20]):
         print(f"  {i+1}. {v['title']}")
         if v.get("id"):
             print(f"     ID: {v['id']} | {v.get('subject', '未知')} | {v.get('grade', '未知')}")

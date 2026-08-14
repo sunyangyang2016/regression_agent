@@ -24,13 +24,13 @@ class ResponseParser:
             except json.JSONDecodeError:
                 pass
 
-        # 检测 Anthropic/Claude 格式的工具调用 <｜｜DSML｜｜tool_calls><invoke>...</invoke></｜｜DSML｜｜tool_calls>
+        # 检测 Anthropic/Claude 格式的工具调用 <tool_calls><invoke>...</invoke></tool_calls>
         anthropic_calls = ResponseParser.parse_anthropic_tool_calls(content)
         if anthropic_calls:
             result["tool_calls"].extend(anthropic_calls)
-            # 移除 <｜｜DSML｜｜tool_calls> 块，保留其余文本
+            # 移除 <tool_calls> 块，保留其余文本
             result["text"] = re.sub(
-                r'<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>', "", content, flags=re.DOTALL
+                r'<tool_calls>.*?</tool_calls>', "", content, flags=re.DOTALL
             ).strip()
             return result
 
@@ -40,15 +40,15 @@ class ResponseParser:
 
     @staticmethod
     def parse_anthropic_tool_calls(content: str) -> List[Dict[str, Any]]:
-        """解析 Anthropic/Claude 格式的 <｜｜DSML｜｜tool_calls> 工具调用块
+        """解析 Anthropic/Claude 格式的 <tool_calls> 工具调用块
 
         支持的 XML 结构：
-            <｜｜DSML｜｜tool_calls>
+            <tool_calls>
             <invoke name="tool_name">
             <parameter name="param1">value1</parameter>
             <parameter name="param2">value2</parameter>
             </invoke>
-            </｜｜DSML｜｜tool_calls>
+            </tool_calls>
 
         返回 OpenAI tool_calls 兼容格式：
             [{
@@ -58,13 +58,13 @@ class ResponseParser:
             }]
         解析失败返回空列表。
         """
-        if "<｜｜DSML｜｜tool_calls>" not in content:
+        if "<tool_calls>" not in content:
             return []
 
         calls: List[Dict[str, Any]] = []
-        # 匹配整个 <｜｜DSML｜｜tool_calls> 块
+        # 匹配整个 <tool_calls> 块
         block_match = re.search(
-            r'<｜｜DSML｜｜tool_calls>(.*?)</｜｜DSML｜｜tool_calls>', content, re.DOTALL)
+            r'<tool_calls>(.*?)</tool_calls>', content, re.DOTALL)
         if not block_match:
             return []
         block = block_match.group(1)

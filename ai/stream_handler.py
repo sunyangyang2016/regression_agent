@@ -9,8 +9,15 @@ from typing import AsyncIterator, Optional, Callable
 from openai import AsyncOpenAI
 from ai.protocol import AIStreamEvent, ToolCallInfo, ModelConfig
 from ai.tool_names import resolve_original_name, sanitize_tools_for_api
+from ai.response_parser import ResponseParser
 from ai.context_window import ContextWindowManager
 from ai.token_optimizer import AgentTokenOptimizer
+
+
+# 每条消息内「乱码(U+FFFD)自动重试」的最大次数
+# 上游模型/网关间歇性返回 UTF-8 解码失败内容，重发请求给模型一次干净的回复机会。
+# 重试仍乱码则按原内容继续（保证流程不卡死）。
+_MAX_GARBLE_RETRIES = 2
 
 
 class StreamHandler:
@@ -163,6 +170,7 @@ class StreamHandler:
         round_count = 0
         current_messages = list(messages)
         collected_content = ""
+        garble_retries = 0  # 本次消息内乱码自动重试计数（入口归零）
 
         # 防御性校验：确保传给 API 的工具名符合 ^[a-zA-Z0-9_-]+$（AIClient 已规范化时此步为空操作）
         if tools:
@@ -220,6 +228,7 @@ class StreamHandler:
             try:
                 # 第一轮调用
                 collected_content = ""
+                round_deltas = []  # 本轮文本 chunk 缓冲：整轮收集完、乱码检测通过后才回放给前端
                 tool_calls_buffer = {}
                 usage_info = None
                 
@@ -264,7 +273,7 @@ class StreamHandler:
                     
                     if delta.content:
                         collected_content += delta.content
-                        yield AIStreamEvent(type="chunk", data=delta.content)
+                        round_deltas.append(delta.content)
                     
                     if delta.tool_calls:
                         for tc in delta.tool_calls:
@@ -283,17 +292,17 @@ class StreamHandler:
                                 if tc.function.arguments:
                                     tool_calls_buffer[idx]["function"]["arguments"] += tc.function.arguments
                 
-                # ====== 兼容 Claude 格式 <｜｜DSML｜｜tool_calls>：非 OpenAI 工具调用结构 ======
+                # ====== 兼容 Claude 格式 <tool_calls>：非 OpenAI 工具调用结构 ======
                 # 某些模型（如 deepseek-v4-flash）在工具调用时会输出 Anthropic/Claude 的
-                # <｜｜DSML｜｜tool_calls><invoke name="..."><parameter ...> 结构而非 OpenAI 原生
+                # <tool_calls><invoke name="..."><parameter ...> 结构而非 OpenAI 原生
                 # delta.tool_calls。此时 SDK 会把整段 XML 累积到 collected_content 中，
                 # tool_calls_buffer 为空 → 会导致工具调用丢失、目标操作无法完成。
-                # 这里检测到 <｜｜DSML｜｜tool_calls> 标记时，用 ResponseParser 将其解析为
+                # 这里检测到 <tool_calls> 标记时，用 ResponseParser 将其解析为
                 # OpenAI tool_calls 兼容格式并回填 tool_calls_buffer。
-                if not tool_calls_buffer and "<｜｜DSML｜｜tool_calls>" in collected_content:
+                if not tool_calls_buffer and "<tool_calls>" in collected_content:
                     anthropic_calls = ResponseParser.parse_anthropic_tool_calls(collected_content)
                     if anthropic_calls:
-                        print(f"[StreamHandler] 🔄 检测到 Claude 格式 <｜｜DSML｜｜tool_calls>，解析出 {len(anthropic_calls)} 个工具调用")
+                        print(f"[StreamHandler] 🔄 检测到 Claude 格式 <tool_calls>，解析出 {len(anthropic_calls)} 个工具调用")
                         for idx, ac in enumerate(anthropic_calls):
                             # 用 collected_content 中的原始文本片段作为临时占位，回填 buffer
                             tool_calls_buffer[idx] = {
@@ -304,9 +313,9 @@ class StreamHandler:
                                     "arguments": ac["function"]["arguments"],
                                 }
                             }
-                            # 从 collected_content 中移除 <｜｜DSML｜｜tool_calls> 块，避免作为纯文本展示
+                            # 从 collected_content 中移除 <tool_calls> 块，避免作为纯文本展示
                         collected_content = re.sub(
-                            r'<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>', "",
+                            r'<tool_calls>.*?</tool_calls>', "",
                             collected_content, flags=re.DOTALL
                         ).strip()
 
@@ -331,6 +340,28 @@ class StreamHandler:
                         "cached_tokens": cached_tokens,
                     }
                 self._emit_raw_log("response", response_payload)
+
+                # ====== 乱码自动重试（U+FFFD 检测）======
+                # 上游模型/网关间歇性返回 UTF-8 解码失败内容（文本与工具参数都可能被破坏）。
+                # 检测到乱码 → 整轮丢弃（不发 chunk/round，不执行工具），重新请求一轮干净的。
+                # 当前轮尚未改动 current_messages（append 在下方完成/工具调用分支），
+                # 直接 continue 即回到 while 开头用干净历史重发请求。
+                garbled = '�' in collected_content or any(
+                    '�' in tc["function"]["arguments"]
+                    for tc in tool_calls_buffer.values()
+                )
+                if garbled and garble_retries < _MAX_GARBLE_RETRIES:
+                    garble_retries += 1
+                    print(f"[StreamHandler] 🔁 检测到乱码(U+FFFD)，丢弃本轮并自动重试 第{garble_retries}次 (round {round_count})")
+                    continue  # 本轮 round_deltas 自然丢弃，不进入回放
+                if garbled:
+                    print("[StreamHandler] ⚠️ 乱码重试已用完，按当前内容继续")
+
+                # ====== 回放本轮缓冲的文本 chunk（乱码轮被丢弃则不进入此处）======
+                # 前端 onStreamUpdate 对每个 chunk 都是整体替换累积内容，故缓冲回放即可
+                # 保证最终展示与落库均为干净文本，无需改动 bridge/JS。
+                for d in round_deltas:
+                    yield AIStreamEvent(type="chunk", data=d)
 
                 # ====== 中间进度 token 推送（有工具调用时）======
                 if usage_info and tool_calls_buffer and self.on_progress_usage:

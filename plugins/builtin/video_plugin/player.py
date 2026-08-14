@@ -1038,8 +1038,11 @@ class FFmpegDecoder:
                             with self._buf_lock:
                                 buf_full = self._buf_size >= fsize
                             if buf_full:
-                                time.sleep(0.05)
-                                continue
+                                # ★★ 2026-08-14 修复：缓冲满 == 整文件已读尽（原生直通整文件缓冲、不弹出）
+                                #   → 结束循环并置位 _buf_closed，让 EOF 分支（416）正确触发。
+                                #   原写法永久 sleep → _buf_closed 永不置位 → 视频末尾 Chromium
+                                #   请求越界字节时服务端空等 60s → 读超时 → PIPELINE_ERROR_READ。
+                                break
                             data = f.read(65536)
                             if not data:
                                 break
@@ -1258,14 +1261,16 @@ class FFmpegDecoder:
                 if start > end:
                     # 请求起点超出当前缓冲（通常是前端续播 seek 到 reader 尚未读取的偏移）
                     if getattr(dec, "_buf_closed", False):
-                        # ★★ 2026-08-13 修复：ffmpeg 已结束 → 返回 206 + 实际总大小
-                        #   Chromium 据此知道文件已到末尾 → 正常停止而非卡住
-                        actual_end = dec._buf_start + dec._buf_size - 1
-                        self.send_response(206)
-                        self.send_header("Content-Type", content_type)
+                        # ★★ 2026-08-14 修复：流已结束且请求起点超出实际数据末尾 →
+                        #   返回 416 Range Not Satisfiable + 实际总大小（Content-Range: bytes */total）。
+                        #   Chromium 收到 416 且请求偏移 >= 总大小时判定为正常 EOF → 触发 ended。
+                        #   此前返回 206 + Content-Length:0 + 与请求不匹配的 Range [buf_start, 实际末尾]：
+                        #   Chromium 请求的 [请求起点, ...] 数据永远不会到达 → 读超时 →
+                        #   PIPELINE_ERROR_READ / MEDIA_ERR_NETWORK（视频快播完时偶发）。
+                        actual_total = dec._buf_start + dec._buf_size
+                        self.send_response(416)
                         self.send_header("Accept-Ranges", "bytes")
-                        self.send_header("Content-Range", f"bytes {buf_start}-{actual_end}/{virtual_total}")
-                        self.send_header("Content-Length", "0")
+                        self.send_header("Content-Range", f"bytes */{actual_total}")
                         self.send_header("Connection", "close")
                         self.end_headers()
                         return
@@ -1292,12 +1297,12 @@ class FFmpegDecoder:
                             break
                     if start > end:
                         if closed:
-                            actual_end = dec._buf_start + dec._buf_size - 1
-                            self.send_response(206)
-                            self.send_header("Content-Type", content_type)
+                            # ★★ 2026-08-14 修复：同上方 EOF 分支一致 — 用 416 + 实际总量，
+                            #   而非不匹配请求区间的 206 空体（后者导致 Chromium 读超时报错）。
+                            actual_total = dec._buf_start + dec._buf_size
+                            self.send_response(416)
                             self.send_header("Accept-Ranges", "bytes")
-                            self.send_header("Content-Range", f"bytes {buf_start}-{actual_end}/{virtual_total}")
-                            self.send_header("Content-Length", "0")
+                            self.send_header("Content-Range", f"bytes */{actual_total}")
                             self.send_header("Connection", "close")
                             self.end_headers()
                             return
@@ -1582,17 +1587,25 @@ class FFmpegDecoder:
 
         def _buf_writer():
             try:
-                while proc and proc.poll() is None:
+                while proc:
                     # ★ 背压：缓冲满时暂停读取（锁外 sleep，避免阻塞 HTTP 读取线程）
                     with self._buf_lock:
                         # ★ 2026-08-14 在线完整模式：数据永不弹出 → 上限放大到视频转码后大小
                         cap = getattr(self, "_full_timeline_cap", 0) if getattr(self, "_full_timeline", False) else self._MAX_BUF
                         buf_full = self._buf_size >= cap
                     if buf_full:
+                        # ★ 缓冲满且 ffmpeg 已退出 → 无更多数据，收尾置位 _buf_closed；
+                        #   否则背压等待（pipe 写满后 ffmpeg 自然阻塞降速）
+                        if proc.poll() is not None:
+                            break
                         time.sleep(0.05)
                         continue
                     data = proc.stdout.read(65536)
                     if not data:
+                        # ★★ 2026-08-14 修复：以 read() EOF 收尾，而非 `proc.poll() is None`。
+                        #   原写法在 ffmpeg 写完末段并退出的瞬间，若下一轮 poll() 先于读管道返回
+                        #   非 None → 循环直接退出 → 管道里未读的尾部数据被丢弃 → 流被截断，
+                        #   视频末尾 Chromium 取不到完整数据 → 偶发 PIPELINE_ERROR_READ。
                         break
                     with self._buf_lock:
                         # 代际变化说明已被 reset/seek → 本线程应退出
@@ -1773,8 +1786,11 @@ class FFmpegDecoder:
                             with self._buf_lock:
                                 buf_full = self._buf_size >= fsize
                             if buf_full:
-                                time.sleep(0.05)
-                                continue
+                                # ★★ 2026-08-14 修复：缓冲满 == 整文件已读尽（原生直通整文件缓冲、不弹出）
+                                #   → 结束循环并置位 _buf_closed，让 EOF 分支（416）正确触发。
+                                #   原写法永久 sleep → _buf_closed 永不置位 → 视频末尾 Chromium
+                                #   请求越界字节时服务端空等 60s → 读超时 → PIPELINE_ERROR_READ。
+                                break
                             data = f.read(65536)
                             if not data:
                                 break
