@@ -253,14 +253,21 @@ function activatePluginTab(name) {
     });
 
     var chatMessages = document.getElementById('chatMessages');
+    // ★ 状态条(token/context) 与 输入框 归属聊天 Tab：切到插件时隐藏，回到聊天时恢复
+    var statusBar = document.getElementById('statusBar');
+    var inputContainer = document.getElementById('inputContainer');
 
     if (name === 'chat') {
-        // 聊天 Tab：显示聊天消息区，隐藏插件内容容器
+        // 聊天 Tab：显示聊天消息区 + 状态条 + 输入框，隐藏插件内容容器
         if (chatMessages) chatMessages.style.display = '';
+        if (statusBar) statusBar.style.display = '';
+        if (inputContainer) inputContainer.style.display = '';
         if (content) content.style.display = 'none';
     } else {
-        // 插件 Tab：隐藏聊天消息区，显示插件内容容器
+        // 插件 Tab：隐藏聊天消息区、状态条、输入框，显示插件内容容器
         if (chatMessages) chatMessages.style.display = 'none';
+        if (statusBar) statusBar.style.display = 'none';
+        if (inputContainer) inputContainer.style.display = 'none';
         if (content) content.style.display = '';
         if (content) {
             content.querySelectorAll('.plugin-tab-panel').forEach(function(p) {

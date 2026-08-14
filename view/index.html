@@ -139,50 +139,51 @@
                     </div>
                 </div>
             </div>
-        </div>
-        <!-- 状态条: Token / Context / Cost -->
-        <div class="status-bar" id="statusBar">
-            <div class="status-bar-left">
-                <div class="status-item" title="当前会话累计 Token 使用量（命中/未命中/输出 分类统计）">
-                    <i class="fas fa-file-alt"></i>
-                    累计 Tokens: <span id="tokenCount">0</span>
-                    <span style="margin-left:20px;color:var(--accent-success);">命中 <span id="hitTokenCount">0</span></span>
-                    <span style="margin-left:20px;color:var(--accent-warning);">未命中 <span id="missTokenCount">0</span></span>
-                    <span style="margin-left:20px;color:var(--accent-primary);">输出 <span id="outputTokenCount">0</span></span>
-                </div>
-                <div class="status-item" title="当前会话上下文使用率">
-                    <i class="fas fa-tachometer-alt"></i>
-                    <div class="context-bar">
-                        <div class="context-bar-fill" id="contextBarFill" style="width:0%"></div>
+            <!-- 状态条: Token / Context / Cost（归属 chat，切到插件 Tab 时隐藏） -->
+            <div class="status-bar" id="statusBar">
+                <div class="status-bar-left">
+                    <div class="status-item" title="当前会话累计 Token 使用量（命中/未命中/输出 分类统计）">
+                        <i class="fas fa-file-alt"></i>
+                        累计 Tokens: <span id="tokenCount">0</span>
+                        <span style="margin-left:20px;color:var(--accent-success);">命中 <span id="hitTokenCount">0</span></span>
+                        <span style="margin-left:20px;color:var(--accent-warning);">未命中 <span id="missTokenCount">0</span></span>
+                        <span style="margin-left:20px;color:var(--accent-primary);">输出 <span id="outputTokenCount">0</span></span>
                     </div>
-                    <span id="contextPercent">0%</span>
+                    <div class="status-item" title="当前会话上下文使用率">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <div class="context-bar">
+                            <div class="context-bar-fill" id="contextBarFill" style="width:0%"></div>
+                        </div>
+                        <span id="contextPercent">0%</span>
+                    </div>
+                    <button class="status-log-btn" onclick="compressContext()" title="将历史对话压缩为摘要，释放上下文空间">
+                        <i class="fas fa-compress-alt"></i> 压缩
+                    </button>
+                    <div class="status-item" title="当前会话累计费用">
+                        <i class="fas fa-coins"></i>
+                        累计费用: <span id="costDisplay">$0.0000</span>
+                    </div>
+                    <button class="status-log-btn" onclick="toggleAILog(event)">
+                        <i class="fas fa-clipboard-list"></i> 日志
+                        <span class="log-badge" id="logBadge" style="display:none;">0</span>
+                    </button>
                 </div>
-                <button class="status-log-btn" onclick="compressContext()" title="将历史对话压缩为摘要，释放上下文空间">
-                    <i class="fas fa-compress-alt"></i> 压缩
-                </button>
-                <div class="status-item" title="当前会话累计费用">
-                    <i class="fas fa-coins"></i>
-                    累计费用: <span id="costDisplay">$0.0000</span>
-                </div>
-                <button class="status-log-btn" onclick="toggleAILog(event)">
-                    <i class="fas fa-clipboard-list"></i> 日志
-                    <span class="log-badge" id="logBadge" style="display:none;">0</span>
-                </button>
             </div>
-        </div>
-        <div class="input-container">
-            <div class="input-wrapper">
-                <div class="input-box">
-                    <textarea id="messageInput" rows="1" placeholder="输入消息... (Shift+Enter 换行)" onkeydown="handleInputKeydown(event)" oninput="autoResize(this)"></textarea>
-                    <div class="input-tools">
-                        <button id="voiceBtn" onclick="toggleVoiceInput()" title="语音输入（点击开始/停止）"><i class="fas fa-microphone"></i></button>
-                        <button onclick="toggleAttachment()"><i class="fas fa-paperclip"></i></button>
-                        <button onclick="toggleCodeBlock()"><i class="fas fa-code"></i></button>
-                        <button onclick="showMCPStatus()"><i class="fas fa-plug"></i></button>
+            <!-- 输入框（归属 chat，切到插件 Tab 时隐藏） -->
+            <div class="input-container" id="inputContainer">
+                <div class="input-wrapper">
+                    <div class="input-box">
+                        <textarea id="messageInput" rows="1" placeholder="输入消息... (Shift+Enter 换行)" onkeydown="handleInputKeydown(event)" oninput="autoResize(this)"></textarea>
+                        <div class="input-tools">
+                            <button id="voiceBtn" onclick="toggleVoiceInput()" title="语音输入（点击开始/停止）"><i class="fas fa-microphone"></i></button>
+                            <button onclick="toggleAttachment()"><i class="fas fa-paperclip"></i></button>
+                            <button onclick="toggleCodeBlock()"><i class="fas fa-code"></i></button>
+                            <button onclick="showMCPStatus()"><i class="fas fa-plug"></i></button>
+                        </div>
+                        <button class="send-btn" id="sendBtn" onclick="sendMessage()"><i class="fas fa-paper-plane"></i><span class="send-text">发送</span></button>
                     </div>
-                    <button class="send-btn" id="sendBtn" onclick="sendMessage()"><i class="fas fa-paper-plane"></i><span class="send-text">发送</span></button>
+                    <div class="input-hint"><kbd>Enter</kbd> 发送 · <kbd>Shift+Enter</kbd> 换行 · 当前模型: <span id="footerModel">DeepSeek</span> · MCP: <span id="footerMCPStatus">已连接</span></div>
                 </div>
-                <div class="input-hint"><kbd>Enter</kbd> 发送 · <kbd>Shift+Enter</kbd> 换行 · 当前模型: <span id="footerModel">DeepSeek</span> · MCP: <span id="footerMCPStatus">已连接</span></div>
             </div>
         </div>
     </main>
