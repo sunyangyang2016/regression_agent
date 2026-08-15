@@ -1,13 +1,15 @@
 """视频插件桥接层 - JS <-> Python 通信"""
+import base64
 import json
 import os
 import sys
 import threading
+import urllib.request
 from urllib.parse import urlparse
 from PyQt5.QtCore import QObject, pyqtSlot, pyqtSignal
 
 from storage.repositories.video_repo import VideoRepository
-from ..player import FFmpegDecoder
+from ..player import FFmpegDecoder, GPU_STREAM_BITRATE, CPU_STREAM_BITRATE
 
 # 项目根目录
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
@@ -51,6 +53,14 @@ class VideoBridge(QObject):
         # ★ 2026-08-13 播放器互斥锁：所有 FFmpegDecoder 变更操作（play/seek/stop/close）
         #   在后台线程异步执行，用此锁串行化，避免 GUI 线程与播放 worker 并发访问内部状态
         self._player_lock = threading.RLock()
+        # ★ 2026-08-15 在线地址解析去重集合：同一 video_id 已有解析线程在跑时，
+        #   再收到 getPlayableUrl 不重复起线程（前端 _pendingVideoId 是第一道闸，此处兜底，
+        #   防任何路径对同一视频重复解析 → 重复 playOnlineVideo worker 互杀转码流）
+        self._resolving_video_ids = set()
+        # ★ 2026-08-15 缩略图代理缓存：url → base64 data（''=抓取失败）。
+        #   失败也缓存，避免列表重渲染反复请求同一失效 URL。
+        self._thumb_cache = {}
+        self._thumb_cache_lock = threading.RLock()
 
     # ==========================================
     # 工具方法
@@ -71,6 +81,81 @@ class VideoBridge(QObject):
                 self._webview.page().runJavaScript(js_code)
         except Exception as e:
             print(f"[VideoBridge] JS 执行失败: {e}")
+
+    # ==========================================
+    # ★ 2026-08-15 缩略图代理：前端不再直连外部图床（Chromium 把 http 缩略图自动升级
+    #   https → TLS 握手失败 → ssl_client_socket_impl 日志噪音 + 封面不显示）。
+    #   改为 JS → requestThumbs → 后台线程 Python 抓取（带 UA/Referer）→ thumbsReady(base64) 回填。
+    # ==========================================
+    _THUMB_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                 "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+    @pyqtSlot(str)
+    def requestThumbs(self, payload):
+        """前端批量请求缩略图：payload = {video_id: thumb_url, ...}（JSON 字符串）。
+        后台线程抓取（按 URL 缓存，含失败），完成后回调 window.videoApp.thumbsReady({id: base64|''})。"""
+        try:
+            items = json.loads(payload or "{}")
+        except Exception:
+            return
+        if not isinstance(items, dict):
+            return
+        # 剔除已缓存 URL（成功与失败都缓存 → 不重复抓取）
+        todo = {}
+        with self._thumb_cache_lock:
+            for vid, url in items.items():
+                url = str(url or "")
+                if url and url not in self._thumb_cache:
+                    todo[vid] = url
+        if not todo:
+            return
+        threading.Thread(target=self._fetch_thumbs_worker, args=(todo,), daemon=True).start()
+
+    def _fetch_thumbs_worker(self, items):
+        """后台线程：逐个抓取 → 缓存 → 回填前端 thumbsReady"""
+        try:
+            result = {}
+            for vid, url in items.items():
+                result[vid] = self._fetch_thumb_b64(url)
+            with self._thumb_cache_lock:
+                # 按 URL 对号缓存（成功与失败都写 → 重渲染不重复抓取）
+                for vid, url in items.items():
+                    self._thumb_cache[url] = result.get(vid, "")
+            self.execute_js("window.videoApp && window.videoApp.thumbsReady(%s);" % (
+                json.dumps(result, ensure_ascii=False)))
+        except Exception as e:
+            print(f"[VideoBridge] 缩略图抓取异常: {e}")
+
+    def _fetch_thumb_b64(self, url):
+        """抓取单张缩略图 → base64 data（失败返回 ''）。
+        SSRF 守卫：仅 http/https、拒绝 localhost/私有地址（DB/页面被注入 URL 时防本地资源探测）。"""
+        try:
+            if not url or not url.startswith(("http://", "https://")):
+                return ""
+            host = (urlparse(url).hostname or "").lower()
+            if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.startswith("169.254."):
+                return ""
+            if host.startswith(("10.", "192.168.")):
+                return ""
+            parts = host.split(".")
+            if len(parts) == 4 and parts[0] == "172":
+                try:
+                    if 16 <= int(parts[1]) <= 31:
+                        return ""
+                except Exception:
+                    pass
+            req = urllib.request.Request(url, headers={
+                "User-Agent": self._THUMB_UA,
+                "Referer": "https://www.bilibili.com/",
+            })
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = r.read()
+            if not data or len(data) > 5 * 1024 * 1024:  # 防异常大图撑爆 base64
+                return ""
+            return base64.b64encode(data).decode("ascii")
+        except Exception:
+            # 静默：失败回 ''，前端保持占位图（不刷日志噪音——这正是本代理要消除的）
+            return ""
 
     # ==========================================
     # ★ 后台播放完成通知（worker 线程 → execute_js → GUI 线程执行 JS 回调）
@@ -241,6 +326,14 @@ class VideoBridge(QObject):
                                   ensure_ascii=False)
 
             # ★ 在线：后台线程解析真实播放地址 → JS 回调 playUrlReady
+            # ★ 2026-08-15 修复：同一视频已在解析中 → 不重复起线程。
+            #   否则同一视频两条「在线解析」→ 两个解析线程都回调 playUrlReady →
+            #   前端两个 playOnlineVideo worker 并行转码互杀 → <video> SRC_NOT_SUPPORTED。
+            if video_id in self._resolving_video_ids:
+                print(f"[VideoBridge] ⏳ 已在解析中，跳过重复解析: {str(page_url)[:40]}")
+                return json.dumps({"ok": True, "started": True,
+                                   "message": "该视频正在解析中..."}, ensure_ascii=False)
+            self._resolving_video_ids.add(video_id)
             print(f"[VideoBridge] 🔍 在线解析: {str(page_url)[:60]}")
             threading.Thread(
                 target=self._resolve_online_url, args=(video_id, page_url), daemon=True
@@ -311,6 +404,9 @@ class VideoBridge(QObject):
         except Exception as e:
             print(f"[VideoBridge] ❌ 在线解析失败: {e}")
             self._notify_play_url_ready(video_id, {"ok": False, "message": str(e)[:200]})
+        finally:
+            # ★ 2026-08-15 无论成功/失败/认证，解析结束后释放去重标记，允许下次重新解析
+            self._resolving_video_ids.discard(video_id)
 
     def _notify_play_url_ready(self, video_id, payload):
         """后台线程完成 URL 解析 → 前端 playUrlReady(video_id, data) 回调（继续播放流程）
@@ -457,8 +553,10 @@ class VideoBridge(QObject):
         """执行 video-catcher 下载并在结束后从固定目录扫描产物更新状态"""
         try:
             # ★ 使用 --run-dir 让 video-catcher 直接输出到固定子目录（不再创建日期子目录）
+            # ★ 2026-08-15 传 on_progress：yt-dlp [download] 进度逐行回调 → 落库 + 推前端
             returncode, stdout, stderr = run_video_catcher(
-                vc_script, url, video_dir, run_dir=video_dir
+                vc_script, url, video_dir, run_dir=video_dir,
+                on_progress=lambda pct, txt: self._notify_download_progress(video_id, pct, txt),
             )
             # 扫描固定目录中的媒体文件（排除 .bak）
             media_files = []
@@ -500,8 +598,33 @@ class VideoBridge(QObject):
             self._repo.set_status(video_id, "failed")
             self.refresh_frontend({"video_id": video_id, "status": "failed"})
 
+    def _notify_download_progress(self, video_id, percent, text):
+        """下载中进度：落库 download_progress + 推前端 onDownloadProgress 原地更新。
+
+        percent 为 0-100 整数或 None（未知总长）；text 为字节文本（如 '34.5MiB'）。
+        run_video_catcher 已节流（≥2% 或 ≥500ms），此处可直接写库 + execute_js。
+        """
+        try:
+            if percent is not None:
+                self._repo.set_download_progress(video_id, int(percent))
+        except Exception as e:
+            print(f"[VideoBridge] 保存下载进度失败: {e}")
+        try:
+            js = ("if (window.videoApp && typeof window.videoApp.onDownloadProgress === 'function') "
+                  f"window.videoApp.onDownloadProgress({json.dumps(video_id)}, "
+                  f"{percent if percent is not None else 'null'}, {json.dumps(text or '')});")
+            self.execute_js(js)
+        except Exception as e:
+            print(f"[VideoBridge] 推送下载进度失败: {e}")
+
     def _find_paired_audio(self, video_dir, video_path):
         """在视频文件同目录查找配对的音频文件（.m4a/.m4s/.mp3/.aac/.opus）
+
+        ★ 2026-08-15 修复：bilibili 下载的 .m4s 可能是【视频流】（如
+        1560294498-1-100110.m4s 只有 hevc 视频、无音轨）——若被当成"配对音频"入库，
+        本地播放会用 -map 1:a:0 合并该视频 m4s → ffmpeg 报「1:a:0 matches no streams」
+        → 转码启动即退出 → 本地播放失败。故配对前用 ffprobe 确认候选文件真实含
+        音频流（has_audio_stream 按路径缓存），纯视频 m4s / 损坏文件一律剔除。
 
         返回匹配到的音频路径；无则返回 None。
         """
@@ -515,6 +638,10 @@ class VideoBridge(QObject):
                 if not low.endswith((".m4a", ".m4s", ".mp3", ".aac", ".opus")):
                     continue
                 cand = os.path.join(video_dir, f)
+                # ★ 2026-08-15 剔除不含音频流的文件（视频 m4s / 损坏文件）
+                if not self._external_player.has_audio_stream(cand):
+                    print(f"[VideoBridge] 跳过非音频文件（无音频流）: {f}")
+                    continue
                 # 优先同 basename（如 video.mp4 ↔ video.m4a）
                 if os.path.splitext(f)[0] == stem:
                     return cand
@@ -779,7 +906,7 @@ class VideoBridge(QObject):
     @pyqtSlot(str, result=str)
     def getStreamProgress(self, video_id=""):
         """★ 2026-08-14 在线完整模式：返回转码已推进到的【虚拟秒数】。
-           口径与 do_GET 的 virtual_total 完全一致（GPU 1.7Mbps / CPU 0.8Mbps），
+           口径与 do_GET 的 virtual_total 完全一致（GPU 2.4Mbps / CPU 1.2Mbps，码率上界），
            因此「progress_sec >= 目标秒数」即代表 Chromium 请求目标位置字节时会秒回。
            用途：续播/前拖到未转码处时，前端先轮询此进度、数据就绪后才 seek，
            避免 Chromium ~15s seek 超时 → 播放失败。"""
@@ -791,23 +918,33 @@ class VideoBridge(QObject):
                     duration = float(getattr(dec, "_duration", 0) or 0)
                     base_pos = float(getattr(dec, "_base_pos", 0) or 0)
                     venc = getattr(dec, "_current_venc", "") or ""
+                    is_native = bool(getattr(dec, "_native_mode", False))
+                    buf_closed = bool(getattr(dec, "_buf_closed", False))
+            # ★ 2026-08-15 修复：本地原生直通/缓存流（webm 缓存命中 → src=native）
+            #   是【整文件入缓冲、无转码】，任意位置即时可 seek。此前混入在线完整流的
+            #   _deferSeek 轮询：getStreamProgress 按假设码率从 buf_size 折算 t，
+            #   缓存 webm 小于 ~50MB 时 t 永远到不了目标+2 → 无限轮询 → 视频一直卡着。
+            #   整文件已读完（buf_closed）→ 直接返回全片可用，_deferSeek 立即放行。
+            if is_native and buf_closed and duration > 0:
+                return json.dumps({"ok": True, "t": round(duration + 2, 2),
+                                   "duration": round(duration, 2)}, ensure_ascii=False)
             remain = max(0, duration - base_pos)
             if remain <= 0 or duration <= 0:
                 # ★ 2026-08-14 修复：在线时长未知（DB 缺失 / 探测失败）时按已转码字节估算进度
-                #   t = buf_size * 8 / bitrate（GPU 1.7Mbps / CPU 0.8Mbps，与 do_GET
+                #   t = buf_size * 8 / bitrate（GPU 2.4Mbps / CPU 1.2Mbps，与 do_GET
                 #   virtual_total 口径一致，纯字节推算不依赖总时长）
                 #   → 前端 _deferSeek 的 t>=目标+2 仍能达标 → 在线续播自动向后切（与本地一致）
                 if buf_size > 0:
                     if venc in ("vp9_qsv", "vp9_nvenc", "vp9_amf"):
-                        _t = buf_size * 8 / 1_700_000
+                        _t = buf_size * 8 / GPU_STREAM_BITRATE
                     else:
-                        _t = buf_size * 8 / 800_000
+                        _t = buf_size * 8 / CPU_STREAM_BITRATE
                     return json.dumps({"ok": True, "t": round(_t, 2), "duration": duration}, ensure_ascii=False)
                 return json.dumps({"ok": True, "t": 0.0, "duration": duration}, ensure_ascii=False)
             if venc in ("vp9_qsv", "vp9_nvenc", "vp9_amf"):
-                virtual_total = int(remain * 1_700_000 / 8)
+                virtual_total = int(remain * GPU_STREAM_BITRATE / 8)
             else:
-                virtual_total = int(remain * 800_000 / 8)
+                virtual_total = int(remain * CPU_STREAM_BITRATE / 8)
             if virtual_total <= 0:
                 return json.dumps({"ok": True, "t": 0.0, "duration": duration}, ensure_ascii=False)
             t = buf_size * remain / virtual_total

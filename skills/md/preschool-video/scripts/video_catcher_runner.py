@@ -10,6 +10,7 @@ yt-dlp 搜索与解析执行器 + video-catcher 下载执行（preschool-video �
 import concurrent.futures
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -129,12 +130,134 @@ def build_auth_args(auth):
 # 下载执行（video-catcher 子进程隔离）
 # ==========================================
 
-def run_video_catcher(vc_script, url, out_root, quality=None, timeout=1800, run_dir=None):
+_PROGRESS_PCT_RE = re.compile(r"\[download\]\s+(\d+(?:\.\d+)?)%")
+_PROGRESS_BYTES_RE = re.compile(r"\[download\]\s+([\d.]+)\s*([KMGT]?i?B)")
+# ★ 2026-08-15 DASH 整体进度："of <大小> <单位>"（当前流总字节数，如 of 128.00MiB）
+_STREAM_SIZE_RE = re.compile(r"of\s+([\d.]+)\s*([KMGT]?i?B)")
+_SIZE_UNITS = {"B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3, "TiB": 1024 ** 4}
+
+
+def _stream_size_bytes(match):
+    """把 `of 128.00MiB` 匹配结果换算成字节；匹配失败返回 0.0"""
+    try:
+        return float(match.group(1)) * _SIZE_UNITS.get(match.group(2) or "B", 1)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _stream_video_catcher(cmd, timeout, on_progress):
+    """流式运行 video-catcher：逐行解析 yt-dlp 的 `[download]` 进度并回调 on_progress。
+
+    节流：百分比变化 ≥2 或距上次回调 ≥500ms 才回调一次（避免高频写 DB / execute_js）。
+    on_progress(percent, text)：percent 为 0-100 整数；总长未知（total_bytes=0）时
+    percent=None、text 为已下载字节文本（如 "34.5MiB"）。
+    ★ 2026-08-15 DASH 整体进度：B站等分离流 = 纯视频流 + 纯音频流两段各自下载、各自
+      0→100%。这里按每段 `of X` 总大小 + 百分比大幅回落（100→0 = 换下一段）换算成
+      累计字节，回调【整体】0-100%——视频流 0→100 后音频流从剩余比例继续爬到 100%，
+      避免进度条"两次 0→100"让人误以为下载了两遍。单段（合并格式/未知总长）时
+      整体进度 = 该段百分比，行为不变。
+    返回 (returncode, stdout, stderr)，契约与 subprocess.run(capture_output=True) 一致。
+    """
+    out_lines = []
+    err_lines = []
+    last_pct = -10
+    last_text = None
+    last_time = 0.0
+    phase_total = 0.0    # 当前下载段（流）的总字节
+    done_bytes = 0.0     # 已完整下载的段累计字节
+    had_phase = False
+    last_reported = -10  # 已回调给前端的百分比（单调不降：整体进度只升不降）
+
+    def _maybe_report(line):
+        nonlocal last_pct, last_text, last_time, phase_total, done_bytes, had_phase, last_reported
+        if "[download]" not in line:
+            return
+        m = _PROGRESS_PCT_RE.search(line)
+        now = time.monotonic()
+        if m:
+            pct = int(round(float(m.group(1))))
+            text = None
+            tm = _STREAM_SIZE_RE.search(line)
+            new_total = _stream_size_bytes(tm) if tm else 0.0
+            # 换段判定：百分比从上一段高位（100）大幅回落到低位（0）→ 进入下一段下载
+            if had_phase and pct < last_pct - 5:
+                if phase_total > 0:
+                    done_bytes += phase_total
+                phase_total = new_total
+            elif new_total > 0:
+                phase_total = new_total
+            had_phase = True
+            # ★ 整体进度 =（已下载段字节 + 当前段已下载）/（已下载段 + 当前段总大小）
+            #   单段（合并格式）时 done_bytes=0，整体=该段百分比，行为不变。
+            if phase_total > 0 and done_bytes > 0:
+                overall = (done_bytes + pct / 100.0 * phase_total) / (done_bytes + phase_total) * 100.0
+                pct = int(round(overall))
+            # ★ 单调不降：视频段爬到 100% 后切音频段，整体会回落到视频所占比例（如 85%）——
+            #   直接上报会造成"100→85→100"倒退观感。钳制为只升不降，音频段在后台完成。
+            if pct < last_reported:
+                pct = last_reported
+            if abs(pct - last_pct) < 2 and now - last_time < 0.5:
+                return
+            last_pct = pct
+            if pct > last_reported:
+                last_reported = pct
+        else:
+            mb = _PROGRESS_BYTES_RE.search(line)
+            pct = None
+            text = mb.group(0) if mb else line.strip()
+            if text == last_text and now - last_time < 0.5:
+                return
+            last_text = text
+        last_time = now
+        try:
+            on_progress(pct, text)
+        except Exception:
+            pass
+
+    def _pump(stream, lines, forward):
+        try:
+            for line in iter(stream.readline, ""):
+                lines.append(line)
+                if forward:
+                    _maybe_report(line)
+        except Exception:
+            pass
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    t_out = threading.Thread(target=_pump, args=(proc.stdout, out_lines, True), daemon=True)
+    t_err = threading.Thread(target=_pump, args=(proc.stderr, err_lines, True), daemon=True)
+    t_out.start()
+    t_err.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    t_out.join()
+    t_err.join()
+    return proc.returncode, "".join(out_lines), "".join(err_lines)
+
+
+def run_video_catcher(vc_script, url, out_root, quality=None, timeout=1800, run_dir=None, on_progress=None):
     """调用 video-catcher 下载视频（subprocess 隔离封装）。
 
     quality: 可选画质（auto/480p/720p/1080p/2K/4K），默认不指定。
     run_dir: 若指定，则输出到该固定目录（video-catcher 使用 --run-dir，
              不会再创建 <日期>-<标题>/ 子目录，路径固定不变）。
+    on_progress: 可选回调 on_progress(percent, text)——yt-dlp [download] 进度逐行解析后
+                 调用（percent 为 0-100 整数；总长未知时 percent=None、text 为字节文本）。
     返回 (returncode, stdout, stderr)。
     """
     cmd = [sys.executable, vc_script, "download", url]
@@ -147,6 +270,9 @@ def run_video_catcher(vc_script, url, out_root, quality=None, timeout=1800, run_
         cmd += ["--quality", quality, "--quality-mode", "at-most"]
     # 注意：不向 video-catcher 传递 yt-dlp 专属认证参数（--add-header/--user-agent 等），
     # 否则 video-catcher CLI 会因无法识别参数而直接退出。认证由 video-catcher 自身处理。
+    if on_progress is not None:
+        # ★ 2026-08-15 流式：实时解析下载进度（[download] 行由 ytdlp_downloader 转发）
+        return _stream_video_catcher(cmd, timeout, on_progress)
     result = subprocess.run(
         cmd, capture_output=True, timeout=timeout,
         encoding="utf-8", errors="replace"
@@ -447,8 +573,15 @@ def _ytdlp_fetch_urls(url, format_spec, auth, timeout):
         print(f"[ytdlp_get_url] ❌ 解析异常: {msg}")
         return None, msg
     if result.returncode != 0:
-        print(f"[ytdlp_get_url] ❌ 方案 <{format_spec}> 失败: {result.stderr[:200]}")
-        return None, result.stderr[:200]
+        err_txt = result.stderr[:200]
+        # ★ 2026-08-15 优化："Requested format is not available" 表示该站没有对应格式
+        #   （DASH 分离站没有"音视频合并"单文件），是正常的格式降级信号而非故障。
+        #   用 ⏩ 弱提示，避免每次播放 B站 都刷一排 ❌ 让用户误以为解析坏了。
+        if "Requested format is not available" in err_txt:
+            print(f"[ytdlp_get_url] ⏩ 方案 <{format_spec}> 跳过: {err_txt}")
+        else:
+            print(f"[ytdlp_get_url] ❌ 方案 <{format_spec}> 失败: {err_txt}")
+        return None, err_txt
     urls = [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
     if urls:
         print(f"[ytdlp_get_url] ✅ 方案 <{format_spec}> 返回 {len(urls)} 个地址")
@@ -468,6 +601,20 @@ def ytdlp_get_url(url, timeout=60):
         print("[ytdlp_get_url] ⚠️ URL 为空")
         return []
     auth = get_auth_for_url(url)
+
+    # ★ 2026-08-15 优化：B站（含 b23.tv 短链）为纯 DASH 分离流——视频格式全部
+    #   "video only"（mp4/m4s 容器但无音轨），音频单独 m4a，不存在"音视频合并"的
+    #   单文件，best[ext=mp4]/best[ext=m4a]/best 对该站必然匹配 0 个格式、每次白白
+    #   启动 2 次注定失败的 yt-dlp 子进程。B站直接走 DASH 分离方案（一条命令出
+    #   视频流+音频流两行），既省两次解析时间又不刷 ❌ 日志。
+    host = (urlparse(url).netloc or "").lower()
+    if "bilibili.com" in host or "b23.tv" in host:
+        urls_b, err_b = _ytdlp_fetch_urls(
+            url, "bestvideo+bestaudio/bestvideo/best", auth, timeout)
+        if urls_b:
+            return urls_b
+        print(f"[ytdlp_get_url] ⚠️ B站解析失败: {err_b}")
+        return []
 
     # 1) ★ 方案 A：优先单文件 mp4 完整流（含音视频，QMediaPlayer 单源可播）
     urls, err = _ytdlp_fetch_urls(url, "best[ext=mp4]", auth, timeout)

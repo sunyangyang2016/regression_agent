@@ -8,6 +8,19 @@ window.videoApp = {
     _pendingPlay: null,      // ★ 异步播放待续项（等待 playReady/playUrlReady 回调）
     _pendingSeek: null,      // ★ 异步 seek 待续项（等待 seekReady 回调）
     _retryTimer: null,       // ★ SRC_NOT_SUPPORTED 自动重试定时器句柄
+    // ★★ 2026-08-15 自动连播推进标志：ended→playNext 推进一个视频且新视频尚未真正开始播放
+    //   （解析/转码中，spinner）时置 true，防止 spurious/repeated ended 二次 _startPlay
+    //   清空在途 _pendingPlay → playReady 被当过期回调丢弃 → 新视频无法播放。
+    //   在 playing / 播放出错 / playReady 失败时复位；另有超时兜底避免永久阻塞后续连播。
+    _autoAdvancing: false,
+    _autoAdvanceTimer: null,
+    // ★★ 2026-08-15 防重入：当前【正在发起播放】的视频 id（同步标记）。
+    //   同一视频被重复触发 play（ended 二次 / 连点 / 自动连播与按钮竞争）时，
+    //   _startPlay 直接忽略，避免重复 getPlayableUrl → 重复解析线程 →
+    //   重复 playOnlineVideo worker 互杀转码流 → <video> SRC_NOT_SUPPORTED。
+    //   _pendingPlay 是异步才置位，无法拦截同一时刻的第二次调用，故用此同步标记。
+    //   在真正开始播放(playing) / 播放出错 / 解析失败时复位。
+    _pendingVideoId: null,
     _streamStartPos: 0,      // 转码/直通流 URL 携带的实际起始位置（秒）
     _initialized: false,
     _player: null,
@@ -17,6 +30,10 @@ window.videoApp = {
     _listLimit: 100,
     _listOffset: 0,
     _currentDuration: 0,   // 当前播放视频的真实总时长（秒），来自数据库/列表，优于 Chromium 推断值
+    // ★ 2026-08-15 缩略图代理缓存：url → base64 data（''=抓取失败），列表重渲染复用不重抓
+    _thumbCache: {},
+    // ★ 2026-08-15 已在途的缩略图请求：video_id → url（thumbsReady 回来删；防重复请求）
+    _thumbRequested: {},
     // ★ 2026-08-14 三级分组规范顺序（与 index.html 工具栏下拉 value 一致）；未收录/空值放最后
     _videoDimOrder: {
         subject: ['数学', '语文', '英语', '科学', '艺术', '健康'],
@@ -58,11 +75,19 @@ window.videoApp = {
         var self = this;
         this._player = document.getElementById('videoPlayer');
         if (!this._player) return;
+        // ★ 2026-08-15 陈旧元素守卫基准：init 把处理器绑在初始元素上；_freshPlayer 会整体
+        //   替换 <video>，此后旧元素事件（error/ended/playing/pause）一律惰性——见各处理器
+        //   开头的 el0 !== self._player 判断，防止拆旧管线时的噪声触发重试/连播/清闸门。
+        var el0 = this._player;
         this.supportProbe();
 
         // 播放器事件
-        this._player.addEventListener('pause', function() { self.savePosition(); });
+        this._player.addEventListener('pause', function() {
+            if (el0 !== self._player) return;   // 陈旧元素 → 忽略
+            self.savePosition();
+        });
         this._player.addEventListener('ended', function() {
+            if (el0 !== self._player) return;   // 陈旧元素 → 忽略
             self.savePosition();
             // ★ 2026-08-15 自动连播：播放结束自动播放下一个（系列优先，顺序见 _getPlaybackOrder）。
             //   已是最末一个视频时 playNext 内部 no-op 并刷新按钮，不会循环/重复连播。
@@ -71,12 +96,20 @@ window.videoApp = {
         // ★ 修复：pause 时 savePosition() 会清掉 5s 定时器；这里在再次 play（原生控制条/AI resume）
         //   时恢复定时保存，避免续播后位置不再自动落库
         this._player.addEventListener('play', function() {
+            if (el0 !== self._player) return;   // 陈旧元素 → 忽略
             if (self._currentVideoId && !self._positionSaveTimer) {
                 self.startPositionSave(self._currentVideoId);
             }
         });
         // ★ 2026-08-13 真正开始播放 → 隐藏等待旋转动画
-        this._player.addEventListener('playing', function() { self._hideSpinner(); });
+        // ★ 2026-08-15 同时复位自动连播推进标志（新视频已开始，允许下一次 ended 连播）
+        this._player.addEventListener('playing', function() {
+            if (el0 !== self._player) return;   // 陈旧元素 → 忽略
+            self._hideSpinner();
+            self._autoAdvancing = false;
+            // ★ 2026-08-15 真正开始播放 → 播放发起标记复位（允许后续再次播放/切换）
+            self._pendingVideoId = null;
+        });
         // ★ 播放时间只显示在 <video> 内部原生 controls 上，下方卡片不再更新
 
         this.refreshList();
@@ -100,6 +133,14 @@ window.videoApp = {
         //   仅移除被删条目（不重置回第 1 页 → 丢失"加载更多"内容、展开组回缩）。
         if (payload && payload.deleted) {
             this._removeDeletedVideo(payload.deleted);
+            return;
+        }
+        // ★ 2026-08-15 下载状态场景：bridge 推 {video_id, status: downloading/downloaded/failed}
+        //   时原位更新该视频（含进度），不重置回第 1 页 —— 否则下载开始/完成会把"加载更多"
+        //   已加载的后续页丢弃、跨页系列展开组被拆掉（用户感知"下载完成后展开状态丢失"）。
+        if (payload && payload.video_id &&
+            (payload.status === 'downloading' || payload.status === 'downloaded' || payload.status === 'failed')) {
+            this._patchVideo(payload.video_id, payload);
             return;
         }
         // 搜索/筛选/刷新 → 回到第 1 页
@@ -222,6 +263,8 @@ window.videoApp = {
             this._bindGroupToggle();
             fullscreenContainer.innerHTML = self._renderFullscreenList(videos) + loadMoreHtml;
         }
+        // ★ 2026-08-15 渲染完成后批量请求未缓存缩略图（Python 代理抓取 → base64 回填）
+        this._requestThumbs();
     },
 
     // ★ 2026-08-14 分组标题点击展开/收起：事件委托同时挂在 #videoList 与 #fullscreenVideoList（innerHTML 重建不影响监听）
@@ -317,15 +360,14 @@ window.videoApp = {
         }
         // ★ 2026-08-13 移除列表播放按钮：点击条目本身（video-item onclick）即播放，按钮多余
 
-        var thumb = v.thumbnail
-            ? '<img src="' + esc(v.thumbnail) + '" class="video-thumb" onerror="this.outerHTML=window.videoApp._thumbFallback()">'
-            : this._thumbFallback();
+        var thumb = this._thumbHtml(v, id);
 
         var resume = (v.lastPosition && v.lastPosition > 0)
             ? '<div class="video-resume">⏺ 上次播到 ' + this._formatTime(v.lastPosition) + '</div>'
             : '';
 
         return '<div class="video-item' + (v.id === this._currentVideoId ? ' active' : '') + '"' +
+            ' data-id="' + id + '"' +   // ★ 2026-08-15 供 onDownloadProgress 原地定位更新
             ' onclick="window.videoApp.play(\'' + id + '\')">' +
             thumb +
             '<div class="video-item-info">' +
@@ -562,8 +604,57 @@ window.videoApp = {
         return html;
     },
 
-    _thumbFallback: function() {
-        return '<div class="video-thumb video-thumb-fallback"><i class="fas fa-play-circle"></i></div>';
+    // ★ 2026-08-15 缩略图渲染：不直连外部图床（Chromium 把 http 缩略图升级 https → TLS 握手失败
+    //   → ssl_client_socket_impl 日志噪音 + 封面不显示）。已缓存 → 直接 data URL；未缓存 →
+    //   占位 div 记录 data-thumb URL，渲染后 _requestThumbs 批量交 Python 抓（带 UA/Referer）回填。
+    _thumbHtml: function(v, id) {
+        var url = v.thumbnail || '';
+        if (url && this._thumbCache.hasOwnProperty(url) && this._thumbCache[url]) {
+            return '<img src="data:image/png;base64,' + this._thumbCache[url] + '" class="video-thumb">';
+        }
+        return '<div class="video-thumb video-thumb-fallback" data-id="' + id + '" data-thumb="' +
+            this._esc(url) + '"><i class="fas fa-play-circle"></i></div>';
+    },
+
+    // ★ 2026-08-15 批量请求页面内所有未缓存/未在途的缩略图 → bridge.requestThumbs（一次往返）
+    _requestThumbs: function() {
+        var self = this;
+        var collect = {};
+        document.querySelectorAll('.video-thumb[data-thumb]').forEach(function(elm) {
+            var url = elm.getAttribute('data-thumb') || '';
+            var item = elm.closest('.video-item');
+            if (!url || !item) return;
+            var id = item.getAttribute('data-id');
+            if (!id || collect[id] || self._thumbCache.hasOwnProperty(url) ||
+                    self._thumbRequested[id]) return;
+            collect[id] = url;
+        });
+        var ids = Object.keys(collect);
+        if (!ids.length) return;
+        ids.forEach(function(id) { self._thumbRequested[id] = collect[id]; });
+        if (window.video_bridge && typeof window.video_bridge.requestThumbs === 'function') {
+            window.video_bridge.requestThumbs(JSON.stringify(collect));
+        }
+    },
+
+    // ★ 2026-08-15 Python 抓取完成回调：{video_id: base64 或 ''} → 回填缩略图 data URL
+    //   （''=抓取失败，保持占位；url 已缓存，重渲染不再请求）
+    thumbsReady: function(payload) {
+        var self = this;
+        if (!payload) return;
+        Object.keys(payload).forEach(function(id) {
+            var b64 = payload[id] || '';
+            var url = self._thumbRequested[id];
+            if (url) {
+                self._thumbCache[url] = b64;
+                delete self._thumbRequested[id];
+            }
+            if (!b64) return;
+            document.querySelectorAll('.video-item[data-id="' + id + '"] .video-thumb[data-thumb]')
+                .forEach(function(elm) {
+                    elm.outerHTML = '<img src="data:image/png;base64,' + b64 + '" class="video-thumb">';
+                });
+        });
     },
 
     // ★ HTML 转义（列表渲染所有外部字段必须先经此函数，防标题含引号/尖括号破坏布局或注入脚本）
@@ -607,7 +698,9 @@ window.videoApp = {
             if (videos[i].id === video_id) { video = videos[i]; break; }
         }
         if (!video) {
-            var p = window.video_bridge.getVideos('{}');
+            // ★ 2026-08-15 兜底查找带完整分页：默认 limit=100，目标视频排在 100 名之后时
+            //   getVideos('{}') 查不到 → play() 静默失败；改查大 limit 全量（仅此兜底路径）。
+            var p = window.video_bridge.getVideos('{"limit":10000}');
             if (p && typeof p.then === 'function') {
                 p.then(function(allStr) {
                     try {
@@ -630,6 +723,17 @@ window.videoApp = {
         var self = this;
         var video_id = video.id;
         var prevId = this._currentVideoId;
+        // ★★ 2026-08-15 修复：同一视频已在发起播放（解析/转码在途）→ 忽略重复触发。
+        //   实测日志：同一视频两条「在线解析」→ 两个解析线程 → 两个 playOnlineVideo worker
+        //   并行转码互杀（后者杀掉前者的 ffmpeg/HTTP server）→ 前端 <video> 绑定的流被中途
+        //   替换 → MEDIA_ERR_SRC_NOT_SUPPORTED → 3 秒重试又第三次重复解析转码。
+        //   注意：此守卫必须用【同步标记】_pendingVideoId——_pendingPlay 是 getPlayableUrl
+        //   Promise 回调里才置位，无法拦截同一时刻的第二次 _startPlay。
+        if (this._pendingVideoId === video_id) {
+            console.warn('[videoApp] 忽略重复播放触发（' + video_id + ' 已在启动中）');
+            return;
+        }
+        this._pendingVideoId = video_id;
         // ★ 2026-08-13 修复：切换视频前先把上一视频断点落库（此时 _currentVideoId 仍是旧值）。
         //   否则先改 _currentVideoId 再 pause（_releasePlayerSource 内部）
         //   会触发 savePosition()，把旧位置写到新视频 ID 上。
@@ -640,8 +744,19 @@ window.videoApp = {
         //   → 用户感知「新视频就绪前一直播旧视频」。
         //   在改 _currentVideoId 之前释放（pause 事件 → savePosition 仍写旧视频位置）。
         if (prevId && prevId !== video_id && this._player) {
-            this._releasePlayerSource(this._player);
+            // ★★ 2026-08-15 修复：切换视频时【替换整个 <video> 元素】为全新元素——
+            //   彻底释放旧媒体管线 + GPU 共享纹理（复用同一元素 pause+清 src+load()
+            //   仍会残留合成器对旧 mailbox 的引用 → "invalid mailbox" GL 错误 → 黑帧）。
+            // ★ 2026-08-15 先摘音频同步、再换元素：_setupAudioSync 把 onPause/onPlay/onEnded
+            //   绑在旧元素上，_stopAudioSync 用 this._player 移除——若先 _freshPlayer 替换元素，
+            //   this._player 已变新元素，旧元素上的 handler 摘不掉（泄漏残留）。
             this._stopAudioSync();
+            this._freshPlayer();
+            // ★★ 2026-08-15 修复：同时【立即通知后端】释放旧流的 ffmpeg/HTTP server，
+            //   而不是等新视频 play() 时才 stop()——在线路径 yt-dlp 解析最长 60s，
+            //   期间旧 ffmpeg 仍占着 GPU 编码器（QSV 会话冲突 → 新流已就绪却无法正常播放），
+            //   旧 HTTP server/缓冲也一直存活占用内存。stop() 幂等，无播放时调用无害。
+            try { window.video_bridge.controlExternalPlayer('stop', ''); } catch(e) {}
         }
         this._currentVideoId = video_id;
         // ★ 2026-08-15 切换视频后刷新上一个/下一个按钮状态
@@ -753,6 +868,16 @@ window.videoApp = {
         var s = this._getNavState();
         if (s.idx < 0 || s.idx + 1 >= s.order.length) { this.updateNavButtons(); return; }
         if (this._currentVideoId !== fromId) return;   // 防重入：调用期间已切换视频
+        // ★★ 2026-08-15 修复：一次自动连播推进尚未完成（新视频仍在解析/转码，spinner 中）时，
+        //   忽略重复的 ended / 连点，避免 spurious ended 二次 _startPlay 清空在途 _pendingPlay
+        //   → playReady 被当过期回调丢弃 → 新视频「已就绪却无法播放」。
+        if (this._autoAdvancing) return;
+        this._autoAdvancing = true;
+        var self = this;
+        // ★ 安全兜底：新视频长时间不进入 playing 也不触发 error（解析/转码异常卡住）时，
+        //   定时复位标志，避免永久阻塞后续自动连播（届时由用户手动点击接管）。
+        if (this._autoAdvanceTimer) clearTimeout(this._autoAdvanceTimer);
+        this._autoAdvanceTimer = setTimeout(function() { self._autoAdvancing = false; }, 90000);
         this.play(s.order[s.idx + 1].id);
     },
 
@@ -791,11 +916,17 @@ window.videoApp = {
             }
         } else if (data && data.need_auth) {
             self._hideSpinner();  // 弹认证框接管界面，先收起转圈
+            // ★ 2026-08-15 解析失败/需认证 → 播放发起标记复位（允许后续重试或改播他视频）
+            self._pendingVideoId = null;
             self._showAuthDialog(data.site, video_id, video);
         } else {
             self._pendingPlay = null;
             var msg = (data && data.message) || '无法获取播放地址';
             self._hideSpinner();
+            // ★ 2026-08-15 URL 解析失败 → 复位自动连播推进标志
+            self._autoAdvancing = false;
+            // ★ 2026-08-15 解析失败 → 播放发起标记复位
+            self._pendingVideoId = null;
             if (nowTitle) nowTitle.textContent = video.title || '';
             if (typeof showToast === 'function') showToast(msg, 'error');
         }
@@ -810,6 +941,8 @@ window.videoApp = {
         self._pendingPlay = { video: video };
         // ★ 2026-08-14 续播显式化：把上次位置传给后端（后端 start_pos==0 时仍会读库兜底）
         var lastPos = (video.lastPosition && video.lastPosition > 0) ? video.lastPosition : 0;
+        // ★ 2026-08-15 看完整片后再次打开 → 续播位置==时长 → 从 0 开始
+        lastPos = this._sanitizeResumePos(lastPos, video.duration || 0);
         var p2 = window.video_bridge.playOnlineVideo(url, video.id, lastPos, audioUrl || '');
         if (p2 && typeof p2.then === 'function') {
             p2.then(function(res) {
@@ -844,11 +977,13 @@ window.videoApp = {
         var self = this;
         console.log('[videoApp] playReady', video_id, data);
         var pending = this._pendingPlay;
-        this._pendingPlay = null;
         var video = (pending && pending.video) || null;
         var nowTitle = document.getElementById('videoNowTitle');
-        // 无待续项或 video_id 不匹配 → 过期回调（已切换视频），直接忽略
+        // ★ 2026-08-15 先校验身份、后清待续项：过期回调（已切到别的视频）不得清空新视频
+        //   的 _pendingPlay，否则新视频自己的 playReady 到达时待续项已空 → 流就绪却不播、
+        //   spinner 卡死（自动连播"切下一个后不正常播放"的核心根因）。
         if (!video || video.id !== video_id) return;
+        this._pendingPlay = null;
         if (data && data.ok && data.url) {
             var url = (data.mode === 'native') ? self._toMediaUrl(data.url) : data.url;
             if (data.mode === 'native') {
@@ -858,6 +993,10 @@ window.videoApp = {
         } else {
             var msg = (data && data.message) || '播放启动失败';
             self._hideSpinner();
+            // ★ 2026-08-15 播放启动失败 → 复位自动连播推进标志
+            self._autoAdvancing = false;
+            // ★ 2026-08-15 播放启动失败 → 播放发起标记复位
+            self._pendingVideoId = null;
             if (nowTitle) nowTitle.textContent = video.title || '';
             if (typeof showToast === 'function') showToast(msg, 'error');
         }
@@ -867,6 +1006,9 @@ window.videoApp = {
     seekReady: function(video_id, data) {
         var self = this;
         if (!this._pendingSeek) return; // 过期 seek（已切换/重复拖放）→ 忽略
+        // ★ 2026-08-15 校验视频身份：拖进度后立刻切视频，旧视频的 seekReady 不得把它的
+        //   ?seek= 新流地址套到当前视频上（不清 _pendingSeek，等待当前视频自己的 seek 回调）。
+        if (this._pendingSeek.video_id && this._pendingSeek.video_id !== video_id) return;
         this._pendingSeek = null;
         if (data && data.ok && data.url) {
             self._applySeekUrl(data.url);
@@ -1111,6 +1253,8 @@ window.videoApp = {
         if (oldImg) oldImg.remove();
 
         var lastPos = video.lastPosition || 0;
+        // ★ 2026-08-15 看完整片后再次打开 → 续播位置==时长 → 从 0 开始（native/file:// 无后端守卫）
+        lastPos = this._sanitizeResumePos(lastPos, video.duration || 0);
         var audioPath = (video && video.audioPath) || '';
 
         // ★ 2026-08-13 异步化：playLocalVideoNative 后台线程一次性完成
@@ -1237,8 +1381,18 @@ window.videoApp = {
             player._errBound = true;
             var self = this;
             player.addEventListener('error', function() {
+                // ★ 2026-08-15 陈旧元素守卫：该 <video> 已被 _freshPlayer 替换（切换视频），
+                //   其 error 是拆旧管线/杀旧流的噪声，不得触发 3 秒重试、不得清
+                //   _pendingVideoId/_autoAdvancing —— 否则旧视频 error → self.play(_currentVideoId)
+                //   → 重复解析/转码 → 连播错乱（日志「在线解析: 旧视频」级联）。
+                if (player !== self._player) return;
                 // ★ 2026-08-13 出错 → 隐藏等待旋转动画（重试会重新显示）
                 self._hideSpinner();
+                // ★ 2026-08-15 播放出错 → 复位自动连播推进标志（错误重试等后续流程不再被阻塞）
+                self._autoAdvancing = false;
+                // ★ 2026-08-15 播放发起标记复位：出错后 3 秒重试会走 self.play() →
+                //   _startPlay，若不清空 _pendingVideoId 会被同视频守卫拦截 → 重试失效。
+                self._pendingVideoId = null;
                 var err = player.error;
                 var code = err ? err.code : '?';
                 var msg = err && err.message ? err.message : '未知错误';
@@ -1261,11 +1415,15 @@ window.videoApp = {
                     // ★ 2026-08-13 定时器句柄存入 this._retryTimer，
                     //   新播放 / 切换视频时清除 → 避免过期重试打断新视频
                     if (self._retryTimer) clearTimeout(self._retryTimer);
+                    // ★ 2026-08-15 捕获安排重试时的"当前视频"，回调里校验仍是它才重试——
+                    //   避免用户在 3 秒内切走，过期重试把新视频也拉起来（重复解析/转码互杀）。
+                    var retryVideoId = self._currentVideoId;
                     self._retryTimer = setTimeout(function() {
                         self._retryTimer = null;
                         try {
-                            if (self._currentVideoId) {
-                                self.play(self._currentVideoId);
+                            if (self._currentVideoId !== retryVideoId) return; // 已切换 → 放弃重试
+                            if (retryVideoId) {
+                                self.play(retryVideoId);
                             } else {
                                 // 无 video_id → 重新加载当前 src
                                 player.load();
@@ -1298,6 +1456,16 @@ window.videoApp = {
         } catch(e) { return 0; }
     },
 
+    // ★ 2026-08-15 续播位置已到/超过视频末尾（完整看完，或位置记录越界累加）→ 从 0 开始。
+    //   阈值与后端 player.py 的 start_pos >= duration-3 守卫一致；前端原生直通/file://
+    //   路径不经过后端 play()，此钳制是那两条路径的唯一防线。
+    _sanitizeResumePos: function(pos, dur) {
+        pos = Number(pos) || 0;
+        dur = Number(dur) || 0;
+        if (pos > 0 && dur > 0 && pos >= Math.max(1, dur - 3)) return 0;
+        return pos;
+    },
+
     // ★ 把转码 HTTP 流 URL 交给原生 <video> 播放（内部渲染 + 原生 controls）
     // ★ 2026-08-13 修复：切换视频前显式释放旧源（解码器 + GPU 共享纹理）。
     //   直接 player.src = 新URL 会在旧纹理仍被显示合成器引用时销毁它，
@@ -1315,7 +1483,62 @@ window.videoApp = {
         }
     },
 
+    // ★★ 2026-08-15 修复：切换视频时用【全新 <video> 元素】替换旧元素。
+    //   根因：自动连播/主动切换连续切流时，复用同一元素 pause→清 src→load() 并不能
+    //   立即释放旧视频在合成器里的 GPU 共享纹理（shared-image mailbox）。新视频首帧
+    //   到达时合成器仍引用已被销毁的旧 mailbox → 控制台刷屏
+    //   "SharedImageManager::ProduceGLTexture: ... non-existent mailbox" /
+    //   "GL_INVALID_OPERATION: invalid mailbox name" → 新视频黑帧/花屏/无法正常渲染。
+    //   直接 replaceChild 掉旧元素 → Chromium 彻底拆掉旧媒体管线并释放其共享纹理，
+    //   新元素从头走全新管线，不再有残留引用。
+    _freshPlayer: function() {
+        var oldEl = document.getElementById('videoPlayer');
+        if (!oldEl) return this._player;
+        var self = this;
+        var newEl = document.createElement('video');
+        newEl.id = 'videoPlayer';
+        newEl.controls = true;        // 与 index.html 原生控件属性保持一致
+        newEl.preload = 'metadata';
+        newEl.playsinline = true;
+        // 重新绑定核心事件（与 init 对原元素绑定的监听一一对应）
+        // ★ 2026-08-15 陈旧元素守卫：newEl 绑定后才被置为 this._player；若此后又发生一次
+        //   _freshPlayer（连点切换/快速连播），上一轮 newEl 即陈旧 → 其事件惰性，不得再
+        //   触发 savePosition/playNext/清 _autoAdvancing/_pendingVideoId。
+        newEl.addEventListener('pause', function() {
+            if (newEl !== self._player) return;   // 陈旧元素 → 忽略
+            self.savePosition();
+        });
+        newEl.addEventListener('ended', function() {
+            if (newEl !== self._player) return;   // 陈旧元素 → 忽略
+            self.savePosition();
+            // ★ 2026-08-15 自动连播：播放结束自动播放下一个（playNext 内部已防重入）
+            self.playNext();
+        });
+        newEl.addEventListener('play', function() {
+            if (newEl !== self._player) return;   // 陈旧元素 → 忽略
+            if (self._currentVideoId && !self._positionSaveTimer) {
+                self.startPositionSave(self._currentVideoId);
+            }
+        });
+        newEl.addEventListener('playing', function() {
+            if (newEl !== self._player) return;   // 陈旧元素 → 忽略
+            self._hideSpinner();
+            self._autoAdvancing = false;
+            self._pendingVideoId = null;
+        });
+        // 以下按播放器单次绑定的守卫标志需重置，使 _playStreamUrl/_doPlay 里的
+        // _bindSeekGuard/_bindNowProgressUpdate 重新绑定到新元素（它们按 id 查询元素）。
+        this._seekGuardBound = false;
+        this._nowProgressBound = false;
+        this._customTickerBound = false;
+        // 替换 DOM：旧元素连同其媒体管线/GPU 纹理一并释放
+        try { oldEl.parentNode.replaceChild(newEl, oldEl); } catch(e) {}
+        this._player = newEl;
+        return newEl;
+    },
+
     _playStreamUrl: function(url, video) {
+        var self = this;
         var player = this._player;
         if (!player || !url) return;
         var video_id = video.id || '';
@@ -1340,6 +1563,8 @@ window.videoApp = {
         //   转码流（src=transcode）仍是「流从续播点开始、currentTime 从 0 起」，需叠加偏移。
         var isNative = /src=native/.test(url);
         var resumePos = this._streamStartPos;
+        // ★ 2026-08-15 续播位置==时长（已看完整片）→ 从 0 开始（native 直通流 URL start= 同样钳制）
+        resumePos = this._sanitizeResumePos(resumePos, fullDur);
         if (isNative) this._streamStartPos = 0;
         if (isLiveStream) {
             // ★ 2026-08 修复：进度条总时长 = 完整总时长（显示真实总时长）
@@ -1356,7 +1581,11 @@ window.videoApp = {
         this._bindPlayerError(player, url);
         if (!isLiveStream) {
             var pp = window.video_bridge.getLastPosition(video_id);
-            var _doSeek = function(pos) { try { if (pos > 0) player.currentTime = pos; } catch(e) {} };
+            var _doSeek = function(pos) {
+                // ★ 2026-08-15 续播位置==时长（已看完整片）→ 从 0 开始
+                pos = self._sanitizeResumePos(pos, fullDur);
+                try { if (pos > 0) player.currentTime = pos; } catch(e) {}
+            };
             if (pp && typeof pp.then === 'function') { pp.then(_doSeek); } else { _doSeek(pp || 0); }
         }
         // 移除旧 img/canvas 覆盖层
@@ -1764,12 +1993,16 @@ window.videoApp = {
         if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
         player.src = src;
         var pp = window.video_bridge.getLastPosition(video_id);
+        var dur0 = (video && video.duration) || 0;
+        var _seekTo = function(pos) {
+            // ★ 2026-08-15 续播位置==时长（已看完整片）→ 从 0 开始
+            pos = self._sanitizeResumePos(pos, dur0);
+            try { if (pos > 0) player.currentTime = pos; } catch(e) {}
+        };
         if (pp && typeof pp.then === 'function') {
-            pp.then(function(pos) {
-                try { player.currentTime = pos || 0; } catch(e) {}
-            });
+            pp.then(_seekTo);
         } else {
-            try { player.currentTime = pp || 0; } catch(e) {}
+            _seekTo(pp || 0);
         }
         this._awaitPlaySafe(player);
         document.getElementById('videoNowTitle').textContent = video.title || '';
@@ -2032,6 +2265,40 @@ window.videoApp = {
         if (removed && this._totalVideos > 0) this._totalVideos -= 1;
         this._renderList();
         return removed;
+    },
+
+    // ★ 2026-08-15 下载状态辅助：原位更新已加载列表中该视频的 status/localPath/进度并重渲染
+    //   （与 _removeDeletedVideo 成对——只改一条、只 _renderList，绝不重置回第 1 页，
+    //   保住"加载更多"内容与 _expandedGroups 展开状态）
+    _patchVideo: function(videoId, payload) {
+        var videos = this._allVideos || [];
+        for (var i = 0; i < videos.length; i++) {
+            if (videos[i].id === videoId) {
+                if (payload.status) videos[i].status = payload.status;
+                if (payload.local_path) videos[i].localPath = payload.local_path;
+                if (payload.audio_path) videos[i].audioPath = payload.audio_path;
+                if (typeof payload.progress === 'number') videos[i].downloadProgress = payload.progress;
+                break;
+            }
+        }
+        this._renderList();
+    },
+
+    // ★ 2026-08-15 下载进度原地更新（bridge 高频推 onDownloadProgress(video_id, pct, text)）：
+    //   只改该条目的"下载中 X%"文字，不触 _renderList/refreshList（避免刷新分页与展开状态）
+    onDownloadProgress: function(video_id, percent, text) {
+        try {
+            var item = document.querySelector('.video-item[data-id="' + video_id + '"]');
+            if (!item) return;
+            var el = item.querySelector('.video-status.downloading');
+            if (!el) return;
+            if (percent != null && percent >= 0) {
+                el.textContent = '⏳ 下载中 ' + Math.round(percent) + '%';
+            } else if (text) {
+                // 未知总长（total_bytes=0）→ 显示已下载字节数文本，如 "34.5MiB"
+                el.textContent = '⏳ 下载中 ' + text;
+            }
+        } catch(e) {}
     },
 
     confirmDelete: function() {

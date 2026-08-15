@@ -568,6 +568,12 @@
 .video-status.downloading {
   background: rgba(255, 152, 0, 0.15);
   color: #ff9800;
+  /* ★ 2026-08-15 下载中呼吸动效：视觉上"在动"；进度数值由 onDownloadProgress 实时更新 */
+  animation: videoDownloadingPulse 1.6s ease-in-out infinite;
+}
+@keyframes videoDownloadingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 .video-status.downloaded {
   background: rgba(76, 175, 80, 0.2);
