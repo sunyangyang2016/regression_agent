@@ -102,7 +102,8 @@
                     <i class="fas fa-compress"></i>
                 </button>
             </div>
-            <div class="video-list-fullscreen-body">
+            <!-- ★ 2026-08-15 无限滚动容器：滚近底部由 videoApp._bindFullscreenScroll 自动加载下一页 -->
+            <div class="video-list-fullscreen-body" id="videoListFullscreenBody">
                 <!-- ★ 2026-08-14 展开列表改为三级嵌套分组容器：去掉 video-grid，分组网格下移到 .video-cat-grid -->
                 <div id="fullscreenVideoList"></div>
             </div>
@@ -128,7 +129,8 @@
     <div class="auth-modal">
         <h3>🗑️ 删除视频</h3>
         <p class="auth-site" id="confirmVideoTitle"></p>
-        <p class="auth-hint">确定删除该视频？删除后本地文件与数据库记录将一并移除。</p>
+        <!-- ★ 2026-08-15 单集/合集共用提示文案：remove() 写单集文案，_openSeriesDelete() 写合集文案 -->
+        <p class="auth-hint" id="confirmVideoHint">确定删除该视频？删除后本地文件与数据库记录将一并移除。</p>
         <div class="auth-actions">
             <button onclick="window.videoApp.confirmDelete()" class="auth-btn-danger">🗑️ 确认删除</button>
             <button onclick="window.videoApp.cancelDelete()" class="auth-btn-secondary">✖ 取消</button>

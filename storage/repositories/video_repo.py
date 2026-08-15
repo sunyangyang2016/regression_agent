@@ -423,6 +423,19 @@ class VideoRepository:
         """清空所有视频记录"""
         self.db.execute(f"DELETE FROM {self.TABLE}")
 
+    # ★ 2026-08-15 合集整体删除：series_id 或 series_title 命中即删；返回被删记录（供文件清理）
+    def delete_by_series(self, series_key: str) -> list:
+        """按系列键删除整个合集；返回被删记录（bridge 用它做本地文件后台清理）"""
+        rows = self.db.query(
+            f"SELECT * FROM {self.TABLE} WHERE series_id = ? OR series_title = ?",
+            (series_key, series_key))
+        dicts = [self._row_to_dict(r) for r in rows]
+        if dicts:
+            self.db.execute(
+                f"DELETE FROM {self.TABLE} WHERE series_id = ? OR series_title = ?",
+                (series_key, series_key))
+        return dicts
+
     # ==========================================
     # 工具方法
     # ==========================================

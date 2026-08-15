@@ -758,6 +758,34 @@ class VideoBridge(QObject):
         except Exception as e:
             print(f"[VideoBridge] 删除失败: {e}")
 
+    # ★ 2026-08-15 合集整体删除：DB 记录立即删（快），本地文件后台清理；与 deleteVideo 同模式
+    @pyqtSlot(str)
+    def deleteSeries(self, series_key):
+        """删除整个合集（本地文件 + 数据库记录）；series_id/series_title 任一命中即删"""
+        try:
+            videos = self._repo.delete_by_series(series_key)
+            self.refresh_frontend({"deleted_series": series_key, "count": len(videos)})
+
+            def _cleanup():
+                try:
+                    for v in videos:
+                        local = v.get("localPath")
+                        if local and os.path.exists(local):
+                            try:
+                                os.remove(local)
+                            except OSError:
+                                pass
+                        vdir = os.path.join(VIDEO_DIR, v.get("id", ""))
+                        if os.path.isdir(vdir):
+                            import shutil
+                            shutil.rmtree(vdir, ignore_errors=True)
+                except Exception as e:
+                    print(f"[VideoBridge] 删除合集文件清理失败: {e}")
+
+            threading.Thread(target=_cleanup, daemon=True).start()
+        except Exception as e:
+            print(f"[VideoBridge] 删除合集失败: {e}")
+
     @pyqtSlot()
     def openVideoFolder(self):
         try:

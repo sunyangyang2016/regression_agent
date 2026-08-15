@@ -29,6 +29,8 @@ window.videoApp = {
     _totalVideos: 0,
     _listLimit: 100,
     _listOffset: 0,
+    _loadingMore: false,      // ★ 2026-08-15 无限滚动/加载更多在途守卫（滚动连触/按钮连点只发一次请求）
+    _deleteSeriesId: null,    // ★ 2026-08-15 待确认删除的合集键（系列整体删除）
     _currentDuration: 0,   // 当前播放视频的真实总时长（秒），来自数据库/列表，优于 Chromium 推断值
     // ★ 2026-08-15 缩略图代理缓存：url → base64 data（''=抓取失败），列表重渲染复用不重抓
     _thumbCache: {},
@@ -112,6 +114,8 @@ window.videoApp = {
         });
         // ★ 播放时间只显示在 <video> 内部原生 controls 上，下方卡片不再更新
 
+        // ★ 2026-08-15 全屏列表无限滚动：滚近底部自动加载下一页（绑定一次即可，容器常驻）
+        this._bindFullscreenScroll();
         this.refreshList();
     },
 
@@ -133,6 +137,12 @@ window.videoApp = {
         //   仅移除被删条目（不重置回第 1 页 → 丢失"加载更多"内容、展开组回缩）。
         if (payload && payload.deleted) {
             this._removeDeletedVideo(payload.deleted);
+            return;
+        }
+        // ★ 2026-08-15 合集删除场景：bridge 回调 refreshList({deleted_series: key}) 时移除整个系列
+        //   （保持已加载视频与展开状态，不重置回第 1 页）
+        if (payload && payload.deleted_series) {
+            this._removeDeletedSeries(payload.deleted_series);
             return;
         }
         // ★ 2026-08-15 下载状态场景：bridge 推 {video_id, status: downloading/downloaded/failed}
@@ -189,6 +199,9 @@ window.videoApp = {
         var self = this;
         if (!window.video_bridge) return;
         if (!this._allVideos.length && !this._totalVideos) return;  // 无数据不触发
+        // ★ 2026-08-15 在途守卫：无限滚动连触/按钮连点只发一次请求（apply/catch 复位）
+        if (this._loadingMore) return;
+        this._loadingMore = true;
         var filter = {
             subject: document.getElementById('videoSubjectFilter').value,
             grade: document.getElementById('videoGradeFilter').value,
@@ -199,6 +212,8 @@ window.videoApp = {
         };
         var p = window.video_bridge.getVideos(JSON.stringify(filter));
         var apply = function(result) {
+            // ★ 2026-08-15 请求回来即复位（成功 / parse 失败 / 无新数据三路径统一复位）
+            self._loadingMore = false;
             try {
                 var parsed = (typeof result === 'string') ? JSON.parse(result) : result;
                 var newVideos = (parsed && Array.isArray(parsed.videos)) ? parsed.videos : [];
@@ -215,6 +230,7 @@ window.videoApp = {
         };
         if (p && typeof p.then === 'function') {
             p.then(apply).catch(function(e) {
+                self._loadingMore = false;
                 console.warn('[videoApp] loadMore 失败:', e);
             });
         } else {
@@ -254,14 +270,16 @@ window.videoApp = {
         container.innerHTML = this._seriesBlocks(videos).map(function(b) {
             if (b.kind === 'series') {
                 return self._renderSeriesGroup('slist:' + b.key, b.title, b.items.length,
-                    b.items.map(function(i) { return self._renderItem(i); }).join(''));
+                    b.items.map(function(i) { return self._renderItem(i); }).join(''), b.key);
             }
             return self._renderItem(b.item);
         }).join('') + loadMoreHtml;
         // 分支 2：展开列表三级嵌套分组（科目 > 年级 > 来源），并绑定分组标题点击折叠
+        // ★ 2026-08-15 全屏列表改为无限滚动：不再挂"加载更多"按钮，滚近底部由
+        //   _bindFullscreenScroll 自动 loadMore（主列表保留按钮）。
         if (fullscreenContainer) {
             this._bindGroupToggle();
-            fullscreenContainer.innerHTML = self._renderFullscreenList(videos) + loadMoreHtml;
+            fullscreenContainer.innerHTML = self._renderFullscreenList(videos);
         }
         // ★ 2026-08-15 渲染完成后批量请求未缓存缩略图（Python 代理抓取 → base64 回填）
         this._requestThumbs();
@@ -276,6 +294,13 @@ window.videoApp = {
             var container = document.getElementById(id);
             if (!container) return;
             container.addEventListener('click', function(e) {
+                // ★ 2026-08-15 合集删除按钮先拦截：须在下方 data-expand 折叠 walk 之前，
+                //   否则点 🗑 会触发系列折叠/展开
+                var delBtn = e.target.closest ? e.target.closest('.video-series-del') : null;
+                if (delBtn) {
+                    self._openSeriesDelete(delBtn);
+                    return;
+                }
                 // ★ 2026-08-14 点条目本身（播放/操作）不触发折叠：先冒泡找 .video-item，命中则 return
                 var t = e.target;
                 while (t && t !== container) {
@@ -291,6 +316,24 @@ window.videoApp = {
                     el = el.parentNode;
                 }
             });
+        });
+    },
+
+    // ★ 2026-08-15 全屏列表无限滚动：滚动容器是 .video-list-fullscreen-body（父节点），
+    //   滚近底部 < 150px 自动 loadMore 下一页（替代"加载更多"按钮）；容器常驻、绑定一次即可。
+    //   滚动位置天然保持：_renderList 只重建其子 #fullscreenVideoList 的 innerHTML，scrollTop 不变。
+    _bindFullscreenScroll: function() {
+        if (this._fullscreenScrollBound) return;
+        this._fullscreenScrollBound = true;
+        var self = this;
+        var body = document.getElementById('videoListFullscreenBody');
+        if (!body) return;
+        body.addEventListener('scroll', function() {
+            if (self._loadingMore) return;                              // 在途请求不重复触发
+            if (self._allVideos.length >= self._totalVideos) return;    // 已加载完
+            if (body.scrollHeight - body.scrollTop - body.clientHeight < 150) {
+                self.loadMore();
+            }
         });
     },
 
@@ -475,7 +518,9 @@ window.videoApp = {
         });
     },
     // 系列可折叠块 HTML（普通列表与全屏列表共用；默认折叠，data-expand 决定折叠状态）
-    _renderSeriesGroup: function(expKey, title, count, itemsHtml) {
+    // ★ 2026-08-15 头部加"🗑 删除整个合集"按钮：走事件委托（_bindGroupToggle），
+    //   data-series-key/title 供 _openSeriesDelete 用（不用 inline onclick 避免引号转义问题）
+    _renderSeriesGroup: function(expKey, title, count, itemsHtml, seriesKey) {
         var expanded = this._expandedGroups || {};
         var sCollapsed = expanded[expKey] ? '' : ' collapsed';
         return '<div class="video-series-group' + sCollapsed + '" data-expand="' + this._esc(expKey) + '">' +
@@ -484,6 +529,8 @@ window.videoApp = {
                 '<i class="video-cat-ico fas fa-folder"></i>' +
                 '<span class="video-cat-name">📚 ' + this._esc(title) + '</span>' +
                 '<span class="video-cat-count">' + count + ' 集</span>' +
+                '<button class="video-series-del" data-series-key="' + this._esc(seriesKey) +
+                    '" data-series-title="' + this._esc(title) + '" title="删除整个合集">🗑</button>' +
             '</div>' +
             '<div class="video-series-body">' + itemsHtml + '</div>' +
         '</div>';
@@ -562,7 +609,7 @@ window.videoApp = {
                             return self._renderSeriesGroup(srcExpKey + '|sr:' + b.key, b.title, b.items.length,
                                 '<div class="video-cat-grid">' +
                                     b.items.map(function(i) { return self._renderItem(i); }).join('') +
-                                '</div>');
+                                '</div>', b.key);
                         }
                         return self._renderItem(b.item);
                     }).join('');
@@ -2249,10 +2296,51 @@ window.videoApp = {
             if (videos[i].id === video_id) { video = videos[i]; break; }
         }
         this._deleteVideoId = video_id;
+        // ★ 2026-08-15 弹窗单/合集共用：进单集删除清掉合集态并复位提示文案
+        this._deleteSeriesId = null;
         var titleEl = document.getElementById('confirmVideoTitle');
         if (titleEl) titleEl.textContent = (video && video.title) ? '《' + video.title + '》' : '该视频';
+        var hintEl = document.getElementById('confirmVideoHint');
+        if (hintEl) hintEl.textContent = '确定删除该视频？删除后本地文件与数据库记录将一并移除。';
         var modal = document.getElementById('videoConfirmModal');
         if (modal) modal.style.display = 'flex';
+    },
+
+    // ★ 2026-08-15 合集删除：从删除按钮 data-* 读系列键/标题，统计集数后弹确认框（与单集共用弹窗）
+    _openSeriesDelete: function(delBtn) {
+        if (!window.video_bridge) return;
+        var seriesKey = delBtn.getAttribute('data-series-key');
+        if (!seriesKey) return;
+        var seriesTitle = delBtn.getAttribute('data-series-title') || seriesKey;
+        var self = this;
+        var count = 0;
+        (this._allVideos || []).forEach(function(v) {
+            if (self._seriesKey(v) === seriesKey) count++;
+        });
+        this._deleteSeriesId = seriesKey;
+        var titleEl = document.getElementById('confirmVideoTitle');
+        if (titleEl) titleEl.textContent = '《' + seriesTitle + '》合集';
+        var hintEl = document.getElementById('confirmVideoHint');
+        if (hintEl) hintEl.textContent = '确定删除整个合集（共 ' + count + ' 个视频）？删除后本地文件与数据库记录将一并移除。';
+        var modal = document.getElementById('videoConfirmModal');
+        if (modal) modal.style.display = 'flex';
+    },
+
+    // ★ 2026-08-15 合集删除辅助：从已加载列表移除整个系列并重渲染（保持分页/展开状态，不重置回第 1 页）
+    _removeDeletedSeries: function(seriesKey) {
+        var self = this;
+        var keep = [];
+        var removed = 0;
+        (this._allVideos || []).forEach(function(v) {
+            if (self._seriesKey(v) === seriesKey) { removed++; }
+            else { keep.push(v); }
+        });
+        if (removed) {
+            this._allVideos = keep;
+            if (this._totalVideos > 0) this._totalVideos -= removed;
+            this._renderList();
+        }
+        return removed;
     },
 
     // ★ 2026-08-15 删除辅助：从已加载列表移除视频并重渲染（保持分页/展开状态，不重置回第 1 页）
@@ -2304,6 +2392,16 @@ window.videoApp = {
     confirmDelete: function() {
         var modal = document.getElementById('videoConfirmModal');
         if (modal) modal.style.display = 'none';
+        // ★ 2026-08-15 合集删除分支（单集之前）：deleteSeries + 本地移除整个系列。
+        //   bridge 内部还会回调 refreshList({deleted_series:key}) → 同样走 _removeDeletedSeries，
+        //   重复调用幂等（已移除则 removed=0 不动）。
+        if (this._deleteSeriesId) {
+            var sk = this._deleteSeriesId;
+            this._deleteSeriesId = null;
+            try { window.video_bridge.deleteSeries(sk); } catch(e) {}
+            this._removeDeletedSeries(sk);
+            return;
+        }
         if (this._deleteVideoId) {
             var delId = this._deleteVideoId;
             this._deleteVideoId = null;
@@ -2322,6 +2420,7 @@ window.videoApp = {
         var modal = document.getElementById('videoConfirmModal');
         if (modal) modal.style.display = 'none';
         this._deleteVideoId = null;
+        this._deleteSeriesId = null;
     },
 
     _showAuthDialog: function(site, video_id, video) {
