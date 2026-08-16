@@ -195,6 +195,7 @@ class ChatBridge(BridgeBase):
                 "'<div class=\"quick-action\" onclick=\"quickAction(\\'翻译成中文\\')\"><i class=\"fas fa-language\"></i><span class=\"label\">翻译</span></div>' + "
                 "'</div></div>';"
                 "window.chatApp.messages=[];"
+                "if (typeof loadMoreState !== 'undefined' && loadMoreState){loadMoreState.offset=0;loadMoreState.hasMore=false;loadMoreState.loading=false;}"
                 f"renderChatList({json.dumps(data, ensure_ascii=False)});"
             )
             self.execute_js(js)

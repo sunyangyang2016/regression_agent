@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>RAG 数据库</title>
+</head>
+<body>
+<div class="rag-center">
+    <!-- 顶部状态条 -->
+    <div class="rag-statusbar">
+        <span class="rag-status-item"><i class="fas fa-database"></i> 向量库:
+            <select id="ragDbSelect" style="max-width:140px"
+                    onchange="window.ragApp.pickDatabase(this.value)"
+                    title="切换向量数据库（每个库独立目录存储）：切换后集合下拉自动显示该库的集合列表；输入新库名导入会自动创建">
+                <option value="default">default</option>
+            </select>
+        </span>
+        <span class="rag-status-item"><i class="fas fa-folder"></i> 集合:
+            <select id="ragCollections" style="max-width:140px"
+                    onchange="window.ragApp.pickCollection(this.value)"
+                    title="切换当前集合：切换后同步刷新已处理记录与统计；「全部集合」查看整库">
+                <option value="">全部集合</option>
+            </select>
+        </span>
+        <span class="rag-status-item"><i class="fas fa-file-alt"></i> 已处理: <b id="ragProcessed">0</b></span>
+        <span class="rag-status-item"><i class="fas fa-cubes"></i> 向量块: <b id="ragChunks">0</b></span>
+        <span class="rag-status-item"><i class="fas fa-hdd"></i> 磁盘: <b id="ragSize">0 MB</b></span>
+        <span class="rag-status-item" id="ragModelStatus"><i class="fas fa-microchip"></i> 模型: 检查中…</span>
+        <button class="rag-btn rag-btn-ghost rag-tip" onclick="window.ragApp.downloadModels()" data-tip="检查并下载缺失的模型文件。&#10;&#10;知识库使用两个本地模型：&#10;• 嵌入模型 bge-base-zh-v1.5（768 维）——把文档和问题转成向量，用于检索比对&#10;• 重排模型 bge-reranker-base——对检索结果精排，让最相关的排在前面&#10;&#10;已就绪的模型会自动跳过，只下载缺失的。下载走 hf-mirror.com 镜像、支持断点续传，进度见「导入日志」。" title="下载缺失的模型"><i class="fas fa-download"></i> 下载模型</button>
+        <button class="rag-btn rag-btn-ghost rag-tip" onclick="window.ragApp.refreshStats()" data-tip="重新扫描知识库并刷新状态栏统计（按当前选中的向量库/集合）：&#10;• 集合——当前向量库中的集合列表&#10;• 已处理——当前库/集合的文件记录数&#10;• 向量块——当前库/集合的向量块总数&#10;• 磁盘——当前向量库占用的磁盘空间&#10;&#10;导入完成或手动增删文件后，点此让统计保持最新。" title="刷新知识库统计"><i class="fas fa-sync"></i> 刷新</button>
+    </div>
+
+    <!-- 文档导入 -->
+    <div class="rag-section">
+        <div class="rag-section-title"><i class="fas fa-upload"></i> 文档导入</div>
+        <div class="rag-form-row">
+            <label>文档目录</label>
+            <input type="text" id="ragRootDir" placeholder="选择或输入文档目录路径（递归扫描）">
+            <button class="rag-btn" onclick="window.ragApp.browseFolder()"><i class="fas fa-folder-open"></i> 浏览</button>
+        </div>
+        <div class="rag-form-row">
+            <label>向量数据库</label>
+            <input type="text" id="ragDatabase" list="ragDbList" placeholder="default" style="max-width:160px"
+                   title="导入目标向量数据库：可从下拉选已有库，或直接输入新库名（首次导入自动创建）。各库集合相互隔离。">
+            <datalist id="ragDbList"></datalist>
+            <button class="rag-btn rag-btn-sm rag-btn-danger" onclick="window.ragApp.deleteDatabase()"
+                    title="删除当前输入的向量数据库（其全部集合与文件记录）"><i class="fas fa-trash-alt"></i> 删库</button>
+        </div>
+        <div class="rag-form-row">
+            <label>集合名称</label>
+            <input type="text" id="ragCollection" list="ragCollectionList" placeholder="knowledge" style="max-width:160px"
+                   title="导入目标集合：可从下拉选当前库已有集合，或直接输入新集合名（首次导入自动创建）。">
+            <datalist id="ragCollectionList"></datalist>
+            <button class="rag-btn rag-btn-sm rag-btn-danger" onclick="window.ragApp.deleteCollection()"
+                    title="删除当前输入的集合（其向量数据与文件记录）"><i class="fas fa-trash-alt"></i> 删集合</button>
+        </div>
+        <div class="rag-form-row">
+            <label>拆分方式</label>
+            <select id="ragSplitMode" style="max-width:140px">
+                <option value="smart">智能分段</option>
+                <option value="paragraph">按段落</option>
+                <option value="heading">按章节</option>
+                <option value="fixed">按固定大小</option>
+                <option value="code">代码结构化</option>
+            </select>
+        </div>
+        <div class="rag-form-row rag-checks">
+            <label class="rag-check"><input type="checkbox" id="ragSkipExisting"> 跳过已处理</label>
+            <label class="rag-check"><input type="checkbox" id="ragDetectChanges"> 检测变更重处理</label>
+            <label class="rag-check"><input type="checkbox" id="ragCodeStructure"> 代码结构化解析</label>
+        </div>
+        <div class="rag-form-row">
+            <label>文件类型</label>
+            <input type="text" id="ragFileTypes" placeholder=".pdf,.docx,.txt,.md（留空 = 支持全部类型）">
+        </div>
+        <div class="rag-form-row">
+            <button class="rag-btn rag-btn-primary" id="ragStartBtn" onclick="window.ragApp.startImport()"><i class="fas fa-play"></i> 开始导入</button>
+            <button class="rag-btn" id="ragStopBtn" onclick="window.ragApp.stopImport()" disabled><i class="fas fa-stop"></i> 停止</button>
+        </div>
+        <div class="rag-progress-wrap" id="ragProgressWrap" style="display:none">
+            <div class="rag-progress"><div class="rag-progress-bar" id="ragProgressBar" style="width:0%"></div></div>
+            <span class="rag-progress-text" id="ragProgressText">0 / 0</span>
+        </div>
+    </div>
+
+    <!-- 导入日志 -->
+    <div class="rag-section">
+        <div class="rag-section-title"><i class="fas fa-terminal"></i> 导入日志</div>
+        <div class="rag-log" id="ragLog"></div>
+    </div>
+
+    <!-- 文件记录 -->
+    <div class="rag-section">
+        <div class="rag-section-title"><i class="fas fa-history"></i> 已处理文件记录</div>
+        <div class="rag-form-row">
+            <input type="text" id="ragRecordSearch" placeholder="搜索文件名/路径…"
+                   onkeydown="if(event.key==='Enter') window.ragApp.loadRecords(1)">
+            <select id="ragRecordStatus" style="max-width:120px" onchange="window.ragApp.loadRecords(1)">
+                <option value="">全部状态</option>
+                <option value="success">成功</option>
+                <option value="failed">失败</option>
+                <option value="skipped">跳过</option>
+                <option value="processing">处理中</option>
+            </select>
+            <button class="rag-btn" onclick="window.ragApp.loadRecords(1)"><i class="fas fa-search"></i> 查询</button>
+            <button class="rag-btn" onclick="window.ragApp.exportCsv()"><i class="fas fa-file-export"></i> 导出 CSV</button>
+            <button class="rag-btn rag-btn-danger" onclick="window.ragApp.clearRecords()"><i class="fas fa-trash"></i> 清空记录</button>
+        </div>
+        <div class="rag-table-wrap">
+            <table class="rag-table">
+                <thead>
+                    <tr>
+                        <th style="width:28%">文件名</th>
+                        <th style="width:64px">状态</th>
+                        <th style="width:56px">块数</th>
+                        <th style="width:90px">数据库</th>
+                        <th style="width:104px">集合</th>
+                        <th style="width:84px">拆分策略</th>
+                        <th style="width:132px">处理时间</th>
+                        <th style="width:128px">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="ragRecordBody"><tr><td colspan="8" class="rag-empty">暂无记录</td></tr></tbody>
+            </table>
+        </div>
+        <div class="rag-pager">
+            <span id="ragRecordTotal">共 0 条</span>
+            <span id="ragRecordPage">第 1 页</span>
+            <button class="rag-btn rag-btn-sm" onclick="window.ragApp.loadRecords(window.ragApp._page-1)">上一页</button>
+            <button class="rag-btn rag-btn-sm" onclick="window.ragApp.loadRecords(window.ragApp._page+1)">下一页</button>
+        </div>
+    </div>
+
+    <!-- 检索预览 -->
+    <div class="rag-section">
+        <div class="rag-section-title"><i class="fas fa-search"></i> 检索预览</div>
+        <div class="rag-form-row">
+            <input type="text" id="ragSearchQuery" placeholder="输入问题，测试知识库检索效果…">
+            <input type="number" id="ragSearchTopK" value="5" min="1" max="20" style="width:70px" title="返回条数">
+            <button class="rag-btn rag-btn-primary" onclick="window.ragApp.runSearch()"><i class="fas fa-bolt"></i> 检索</button>
+        </div>
+        <div id="ragSearchResults" class="rag-search-results"></div>
+    </div>
+</div>
+
+<!-- 自定义确认模态框（替代原生 confirm，QtWebEngine 原生弹窗不受 CSS 控制） -->
+<div class="rag-modal-mask" id="ragConfirmMask" style="display:none">
+    <div class="rag-modal">
+        <div class="rag-modal-title" id="ragConfirmTitle">确认操作</div>
+        <div class="rag-modal-body" id="ragConfirmText"></div>
+        <div class="rag-modal-actions">
+            <button class="rag-btn" onclick="window.ragApp.closeConfirm(false)">取消</button>
+            <button class="rag-btn rag-btn-danger" id="ragConfirmOkBtn" onclick="window.ragApp.closeConfirm(true)">确认</button>
+        </div>
+    </div>
+</div>
+</body>
+</html>

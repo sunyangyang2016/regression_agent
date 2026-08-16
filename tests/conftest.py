@@ -6,6 +6,10 @@ import pytest
 # 添加项目根目录到 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# RAG MCP 服务器已独立到 tools/mcp/server/rag-mcp-server/（rag_mcp_server 包）
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(1, os.path.join(_ROOT, "tools", "mcp", "server", "rag-mcp-server"))
+
 
 @pytest.fixture
 def sample_config():

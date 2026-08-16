@@ -458,13 +458,17 @@ class AIClient:
         tools = []
         try:
             from tools.builtin.builtin_tools_manager import BuiltinManager
-            bt = BuiltinManager().get_tools_for_api()
-            if bt:
-                print(f"[AI] 📦 加载 {len(bt)} 个已启用的内建工具:")
-                for t in bt:
+            bt = BuiltinManager()
+            tools_list = bt.get_tools_for_api()
+            if tools_list:
+                print(f"[AI] 📦 加载 {len(tools_list)} 个已启用的内建工具:")
+                for t in tools_list:
                     fn = t.get("function", {})
                     print(f"       - {fn.get('name')}: {fn.get('description')[:60]}")
-            tools.extend(bt)
+            tools.extend(tools_list)
+            # 注：内置工具处理器执行走 stream_handler 同步 fallback（bt.execute_tool）。
+            # 已删除对 rag_search 的耗时型工具注册（该工具已随独立 MCP 服务器 rag-mcp-server
+            # 迁移下线，MCP 工具经 _get_mcp_tools 进入工具列表）。
         except Exception as e:
             print(f"[AI] ❌ 获取内建工具失败: {e}")
         return tools

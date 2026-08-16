@@ -7,19 +7,22 @@ const PLUGIN_ICONS = {
     security_plugin: 'fa-shield-alt',
     monitor_plugin: 'fa-chart-line',
     git_plugin: 'fa-code-branch',
-    video_plugin: 'fa-video'
+    video_plugin: 'fa-video',
+    rag_plugin: 'fa-database'
 };
 const PLUGIN_ICON_COLORS = {
     security_plugin: 'rgba(247,120,186,0.15)',
     monitor_plugin: 'rgba(76,175,80,0.15)',
     git_plugin: 'rgba(255,152,0,0.15)',
-    video_plugin: 'rgba(255,87,34,0.15)'
+    video_plugin: 'rgba(255,87,34,0.15)',
+    rag_plugin: 'rgba(77,163,255,0.15)'
 };
 const PLUGIN_ICON_COLOR_FG = {
     security_plugin: 'var(--accent-pink)',
     monitor_plugin: '#4caf50',
     git_plugin: '#ff9800',
-    video_plugin: '#ff5722'
+    video_plugin: '#ff5722',
+    rag_plugin: '#4da3ff'
 };
 
 function renderPlugins() {
@@ -202,7 +205,8 @@ function showPlugin(name) {
     var title = name === 'security_plugin' ? '安全插件配置' :
                 name === 'monitor_plugin' ? '系统监控' :
                 name === 'git_plugin' ? 'Git 集成' :
-                name === 'video_plugin' ? '视频中心' : '插件配置';
+                name === 'video_plugin' ? '视频中心' :
+                name === 'rag_plugin' ? 'RAG 数据库' : '插件配置';
 
     // ===== 创建 Tab 标签按钮 =====
     var tabBtn = document.createElement('div');

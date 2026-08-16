@@ -11,14 +11,14 @@ import queue
 import threading
 
 NAME = "execute_system_command"
-DESCRIPTION = "执行 Shell 命令（如 git clone、npm install、pip install、ls、dir 等），返回命令输出结果"
+DESCRIPTION = "执行 Shell 命令（如 git clone、npm install、pip install、dir、ls 等），返回命令输出结果。Windows 下走 cmd.exe，Unix 命令如 ls/find 不存在，递归搜文件用 dir /s /b"
 
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "execute_system_command",
-            "description": "在本地系统执行 Shell 命令（如 git clone、npm install、pip install、dir、ls 等），返回命令的标准输出和错误输出。注意：长时间运行的命令会有超时限制。",
+            "description": "在本地系统执行 Shell 命令（如 git clone、npm install、pip install、dir、ls 等），返回命令的标准输出和错误输出。注意：当前运行在 Windows，命令由 cmd.exe（shell=True）执行，Unix 命令 ls / find / grep 不存在会报错，应改用 Windows 等价命令：列出目录用 dir，递归搜索文件用 dir /s /b <目录>\\*.pdf，查找文件内容用 findstr /s /i \"关键词\" <目录>。长时间运行的命令会有超时限制。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -40,7 +40,7 @@ TOOLS = [
         },
         "display": {
             "name_cn": "系统指令执行器",
-            "description_cn": "在本地系统执行 Shell 命令（如 git clone、npm install、pip install 等），返回命令输出",
+            "description_cn": "在本地系统执行 Shell 命令（如 git clone、npm install、pip install 等），返回命令输出。Windows 下为 cmd.exe，ls/find 不可用，递归搜文件用 dir /s /b",
             "icon": "fa-terminal"
         }
     }

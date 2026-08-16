@@ -2,11 +2,38 @@
 name = "agent"
 version = "0.2.0"
 requires-python = ">=3.13"
+# 依赖清单对齐项目 .venv 实际安装的库（版本下限 = .venv 当前版本）。
+# 参考：plugins/builtin/rag_plugin/requirements.txt 注明「实际运行在项目 .venv，见 pyproject.toml」。
 dependencies = [
+    # ── 核心 AI / RAG 检索（rag_mcp_server + rag_plugin）──
+    "chromadb>=1.5.9",
+    "huggingface-hub>=1.27.0",
     "mcp[cli]>=1.28.1",
+    "numpy>=2.5.2",
+    "onnxruntime>=1.28.0",
     "openai>=2.45.0",
     "psutil>=5.9.0",
-    "yt-dlp>=2024.1.0",
+    "pymupdf>=1.28.2",
+    "python-docx>=1.2.0",
+    "tokenizers>=0.23.1",
+    # ── GUI（PyQt5 + QtWebEngine）──
+    "PyQt5>=5.15.11",
+    "PyQtWebEngine>=5.15.7",
+    # ── 语音（media/voice + voice_bridge：ASR / 录音）──
+    "vosk>=0.3.45",
+    "PyAudio>=0.2.14",
+    # ── 视频 / 音频（video_plugin：下载、播放、转码）──
+    # static-ffmpeg 提供 ffmpeg/ffprobe 可执行文件（player.py 经 shutil.which 使用）
+    "yt-dlp[default,curl-cffi]>=2026.7.4",
+    "yt-dlp-ejs>=0.8.0",
+    "static-ffmpeg>=3.0",
+    "sounddevice>=0.5.5",
+    "srt>=3.5.3",
+    # ── HTTP ──
+    "requests>=2.34.2",
+    # ── 视频采集技能（skills/md/video-catcher）──
+    "playwright>=1.62.0",
+    "bgutil-ytdlp-pot-provider>=1.3.1",
 ]
 
 [tool.uv.workspace]

@@ -259,6 +259,26 @@ function loadConversationMessages(data) {
     if (!container) return;
     var welcome = document.getElementById('welcomeScreen');
     if (welcome) welcome.remove();
+    // ====== 重置实时聊天状态（修复：历史会话加载后残留的流式引用导致消息重复显示）======
+    // 之前只清空 DOM，未重置 chatApp 的 _currentAssistantId / _lastToolAnchor / isProcessing /
+    // messages。若加载发生在 AI 仍活跃或刚结束时，残留的实时状态会让后续 live 渲染
+    // （insertToolMessage / onStreamUpdate / addMessage）把新气泡追加到历史气泡之后，
+    // 形成「同一段对话显示两遍」（历史用 ISO 时间、实时用本地时间）的错乱显示。
+    if (window.chatApp) {
+        window.chatApp._currentAssistantId = null;
+        window.chatApp._lastToolAnchor = null;
+        window.chatApp.isProcessing = false;
+        window.chatApp._stopRequested = false;
+        // 重建内部消息列表，使其与刚渲染的 DOM 一致（历史消息的 id 为合成 id，
+        // 仅供内部索引，不会被 completeMessage 等实时逻辑再次引用）
+        window.chatApp.messages = (data || []).map(function(m) {
+            return { id: 'msg_hist_' + Math.random().toString(36).substr(2, 8),
+                     role: m.role || 'user', content: m.content || '' };
+        });
+        if (typeof window.chatApp.setSendButtonStopMode === 'function') {
+            window.chatApp.setSendButtonStopMode(false);
+        }
+    }
     container.innerHTML = '';
     data = data || [];
     data.forEach(function(msg) { renderMessageInto(container, msg); });
@@ -296,6 +316,11 @@ function handleChatScroll(el) {
     // 仅当接近顶部时才触发加载（scrollTop <= 30 容差）
     if (el.scrollTop > 30) return;
     if (!loadMoreState.hasMore || loadMoreState.loading) return;
+    // 防止「全新会话」误触分页：offset 只在 loadConversationMessages / prependHistoryMessages
+    // 中初始化。若 offset=0（本次会话从未从历史加载过，全是实时渲染），滚动到顶部时若继续
+    // 分页，后端会以 offset=0 返回全部消息并 prepend 到顶部 → 同一段对话显示两遍
+    // （历史用 ISO 时间、实时用本地时间，与用户看到的重复现象完全一致）。
+    if (loadMoreState.offset <= 0) return;
     loadMoreState.loading = true;
     if (window.py_bridge && typeof window.py_bridge.loadMoreMessages === 'function') {
         try {

@@ -1,0 +1,115 @@
+{
+  "version": "3.0",
+  "description": "RAG 插件默认配置（只读，永不修改）。路径均为相对项目根目录的相对路径，由 config_manager 解析。用户自定义覆盖写入 user_config/user/rag_config.json。",
+  "models": {
+    "embedding": {
+      "name": "Xenova/bge-base-zh-v1.5",
+      "dimension": 768,
+      "batch_size": 32,
+      "normalize": true,
+      "max_length": 512,
+      "cache_dir": "user_config/rag/models/embedding",
+      "mirror": "https://hf-mirror.com"
+    },
+    "rerank": {
+      "name": "Xenova/bge-reranker-base",
+      "batch_size": 16,
+      "cache_dir": "user_config/rag/models/rerank",
+      "mirror": "https://hf-mirror.com",
+      "fallback_on_failure": true
+    }
+  },
+  "chunking": {
+    "split_mode": "smart",
+    "modes": {
+      "smart": {
+        "max_chunk_chars": 2000,
+        "overlap_chars": 200,
+        "min_chunk_chars": 50
+      },
+      "paragraph": {
+        "max_chunk_chars": 2000,
+        "overlap_chars": 200,
+        "min_chunk_chars": 50
+      },
+      "heading": {
+        "max_chunk_chars": 2000,
+        "overlap_chars": 200,
+        "heading_levels": [1, 2, 3, 4]
+      },
+      "fixed": {
+        "chunk_chars": 2000,
+        "overlap_chars": 200,
+        "split_at_sentence": true
+      }
+    },
+    "code": {
+      "enabled": true,
+      "max_function_chars": 2000,
+      "include_docstring": true,
+      "include_comments": true,
+      "include_imports": true,
+      "supported_languages": [
+        "python", "javascript", "typescript", "java", "go", "rust", "c", "cpp",
+        "csharp", "ruby", "php", "swift", "kotlin", "shell", "sql", "json", "yaml", "xml"
+      ]
+    }
+  },
+  "import": {
+    "file_extensions": [
+      ".pdf", ".docx", ".txt", ".md", ".markdown",
+      ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
+      ".java", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+      ".rb", ".php", ".swift", ".kt", ".sh", ".bash", ".zsh",
+      ".sql", ".json", ".yml", ".yaml", ".xml"
+    ],
+    "skip_existing": true,
+    "detect_changes": true,
+    "force_reprocess": false,
+    "batch_size": 64,
+    "max_file_size_mb": 100,
+    "exclude_patterns": [
+      "*.tmp", "*.log", "__pycache__/*", "node_modules/*", ".git/*", ".venv/*"
+    ]
+  },
+  "retrieval": {
+    "rough_top_k": 30,
+    "final_top_k": 5,
+    "rerank_top_k": 10,
+    "score_threshold": 0.3,
+    "enable_rerank": true,
+    "default_collection": "knowledge",
+    "timeout_seconds": 15
+  },
+  "chromadb": {
+    "data_dir": "user_config/rag/vector_db",
+    "current_database": "default",
+    "space": "cosine",
+    "batch_size": 64,
+    "max_retries": 3,
+    "retry_delay_seconds": 1
+  },
+  "sqlite": {
+    "db_path": "user_config/rag/file_tracker.db",
+    "journal_mode": "WAL",
+    "timeout_ms": 5000
+  },
+  "ui": {
+    "default_root_dir": "",
+    "default_collection": "knowledge",
+    "database": "default",
+    "split_mode": "smart",
+    "file_extensions": [],
+    "skip_existing": true,
+    "detect_changes": true,
+    "enable_code_structure": true,
+    "current_collection": "",
+    "recent_collections": []
+  },
+  "logging": {
+    "level": "INFO",
+    "log_dir": "logs/rag",
+    "max_bytes": 1048576,
+    "backup_count": 3
+  }
+}

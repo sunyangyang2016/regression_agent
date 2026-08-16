@@ -58,18 +58,17 @@ function renderMCPLocalServers() {
 function scanLocalServerDirs() {
     var select = document.getElementById('localServerDir');
     if (!select) return;
+    var savedVal = select.getAttribute('data-selected') || '';
     select.innerHTML = '<option value="">— 加载中... —</option>';
-    if (appState && appState.mcpServers && appState.mcpServers.length > 0) {
-        var stdioList = appState.mcpServers.filter(function(s) { return s.transport === 'stdio'; });
-        if (stdioList.length > 0) { populateLocalServerFromAppState(stdioList); return; }
-    }
     if (window.mcp_bridge && window._bridgeReady) {
-        window.mcp_bridge.getMCPConfig().then(function(configStr) {
+        // 始终拉取 tools/mcp/server/ 全部目录 + 当前配置，合并后全量展示
+        Promise.all([window.mcp_bridge.getLocalServerDirs(), window.mcp_bridge.getMCPConfig()]).then(function(res) {
             try {
-                var config = typeof configStr === 'string' ? JSON.parse(configStr) : configStr;
-                populateLocalServerDropdown(config.mcpServers || {});
+                var dirs = typeof res[0] === 'string' ? JSON.parse(res[0]) : res[0];
+                var config = typeof res[1] === 'string' ? JSON.parse(res[1]) : res[1];
+                populateLocalServerDropdown(dirs || [], (config && config.mcpServers) || {}, savedVal);
             } catch(e) { scanServerDirsFallback(select); }
-        });
+        }).catch(function() { scanServerDirsFallback(select); });
     } else {
         setTimeout(function() {
             if (window.mcp_bridge && window._bridgeReady) scanLocalServerDirs();
@@ -78,38 +77,69 @@ function scanLocalServerDirs() {
     }
 }
 
-function populateLocalServerDropdown(servers) {
-    var select = document.getElementById('localServerDir');
-    if (!select) return;
-    var options = '<option value="">— 选择已下载的 MCP 项目 —</option>';
-    var count = 0;
-    Object.keys(servers).forEach(function(sid) {
-        var s = servers[sid];
-        if (s.transport === 'stdio') {
-            count++;
-            options += '<option value="' + sid + '|' + (s.description||'') + '|' + ((s.args||[]).join(' ') || s.command||'') + '|node|cwd:' + (s.cwd||'') + '">📦 ' + (s.name||sid) + '</option>';
-        }
-    });
-    if (count === 0 && appState && appState.mcpServers) {
-        appState.mcpServers.forEach(function(s) {
-            if (s.transport === 'stdio') {
-                count++;
-                options += '<option value="' + s.id + '|' + (s.description||'') + '|' + ((s.tools||[]).map(function(t){return t.name;}).join(', ')||'') + '|node|cwd:' + (s.cwd||'') + '">📦 ' + (s.name||s.id) + '</option>';
-            }
-        });
-    }
-    if (count > 0) select.innerHTML = options;
-    else scanServerDirsFallback(select);
+function parseLocalDirValue(val) {
+    if (!val) return null;
+    try { return JSON.parse(val); } catch(e) { return null; }
 }
 
-function populateLocalServerFromAppState(stdioList) {
+function buildLocalInstalledMap(servers, dirs) {
+    var map = {};
+    var seen = {};
+    (dirs || []).forEach(function(d) { var n = (d && (d.name || d.path)) || d; if (n) seen[n] = true; });
+    var extra = [];
+    Object.keys(servers || {}).forEach(function(sid) {
+        var s = servers[sid];
+        if (!s || s.transport === 'http') return;
+        var cwd = s.cwd || '';
+        var folder = '';
+        if (cwd) {
+            var parts = String(cwd).replace(/\\/g, '/').split('/').filter(Boolean);
+            folder = parts.length > 0 ? parts[parts.length - 1] : '';
+        }
+        var key = folder || sid;
+        if (!map[key]) map[key] = { sid: sid };
+        // 目录名 / server_id 都不在 tools/mcp/server 列表里 → 追加到下拉末尾，保持老功能不丢
+        if (!seen[folder] && !seen[sid]) extra.push(sid);
+    });
+    return { map: map, extra: extra };
+}
+
+function populateLocalServerDropdown(dirs, servers, savedVal) {
     var select = document.getElementById('localServerDir');
-    if (!select || !stdioList || stdioList.length === 0) { scanServerDirsFallback(select); return; }
+    if (!select) return;
+    var installed = buildLocalInstalledMap(servers, dirs);
     var options = '<option value="">— 选择已下载的 MCP 项目 —</option>';
-    stdioList.forEach(function(s) {
-        options += '<option value="' + s.id + '|' + (s.description||'') + '|' + ((s.tools||[]).map(function(t){return t.name;}).join(', ')||'') + '|node|cwd:' + (s.cwd||'') + '">📦 ' + (s.name||s.id) + '</option>';
+    var seenDirs = {};
+    (dirs || []).forEach(function(d) {
+        var name = (d && (d.name || d.path)) || d;
+        if (!name) return;
+        seenDirs[name] = true;
+        var info = installed.map[name];
+        var val = JSON.stringify({ dir: name, installed: info ? 1 : 0, sid: info ? info.sid : '' });
+        options += '<option value="' + val.replace(/"/g, '&quot;') + '">' + (info ? '✅ ' : '📁 ') + name + '</option>';
+    });
+    installed.extra.forEach(function(sid) {
+        if (seenDirs[sid]) return;
+        seenDirs[sid] = true;
+        var val = JSON.stringify({ dir: sid, installed: 1, sid: sid });
+        options += '<option value="' + val.replace(/"/g, '&quot;') + '">✅ ' + sid + '</option>';
     });
     select.innerHTML = options;
+    // 恢复选中：按 dir 匹配（value 可能因 installed 状态变化字符串不同，不能直接 select.value=）
+    if (savedVal) {
+        var savedSel = parseLocalDirValue(savedVal);
+        var found = false;
+        if (savedSel) {
+            for (var i = 0; i < select.options.length; i++) {
+                var o = parseLocalDirValue(select.options[i].value);
+                if (o && o.dir === savedSel.dir) { select.selectedIndex = i; found = true; break; }
+            }
+        }
+        if (!found) select.value = '';
+        select.removeAttribute('data-selected');
+    }
+    if (select.value) onLocalDirChange();
+    else clearLocalForm();
 }
 
 function scanServerDirsFallback(select) {
@@ -119,7 +149,11 @@ function scanServerDirsFallback(select) {
                 var dirs = typeof dirsStr === 'string' ? JSON.parse(dirsStr) : dirsStr;
                 if (dirs && dirs.length > 0) {
                     var options = '<option value="">— 选择已下载的 MCP 项目 —</option>';
-                    dirs.forEach(function(d) { options += '<option value="' + (d.name||d.path||d) + '|||cwd:tools/mcp/server/' + (d.name||d.path||d) + '">📁 ' + (d.name||d.path||d) + '</option>'; });
+                    dirs.forEach(function(d) {
+                        var name = (d && (d.name || d.path)) || d;
+                        var val = JSON.stringify({ dir: name, installed: 0, sid: '' });
+                        options += '<option value="' + val.replace(/"/g, '&quot;') + '">📁 ' + name + '</option>';
+                    });
                     select.innerHTML = options;
                 } else select.innerHTML = '<option value="">— 暂无可选目录 —</option>';
             } catch(e) { select.innerHTML = '<option value="">— 暂无可选目录 —</option>'; }
@@ -132,6 +166,33 @@ function scanServerDirsFallback(select) {
 // ============================================
 
 function addLocalMCPServer() {
+    var addBtn = document.querySelector('#mcpSubLocal button[onclick*="addLocalMCPServer"]');
+    var mode = addBtn ? (addBtn.getAttribute('data-local-mode') || 'manual') : 'manual';
+    var dirSelect = document.getElementById('localServerDir');
+    var dirVal = dirSelect ? dirSelect.value : '';
+    var sel = dirVal ? parseLocalDirValue(dirVal) : null;
+
+    // 启动并重启（刚安装完成的状态）：直接重启（未运行则启动）
+    if (mode === 'start') {
+        var startSid = document.getElementById('localServerId').value.trim();
+        if (!startSid) { showToast('请先选择已安装的服务器', 'error'); return; }
+        if (window.mcp_bridge && window._bridgeReady) {
+            showToast('🔄 正在启动/重启: ' + startSid, 'info');
+            window.mcp_bridge.restartMCPServer(startSid).then(function(success) {
+                if (success) { showToast('✅ 已启动: ' + startSid, 'success'); refreshServerStatus(); }
+                else { showToast('❌ 启动失败: ' + startSid, 'error'); }
+            });
+        }
+        return;
+    }
+
+    // 选中了未安装目录 → 启动 AI 安装助手
+    if (sel && !sel.installed) {
+        startLocalServerInstall(sel.dir);
+        return;
+    }
+
+    // ===== 手动添加 / 配置并重启已有服务器 =====
     var id = document.getElementById('localServerId');
     var name = document.getElementById('localServerName');
     var cmd = document.getElementById('localCommand');
@@ -145,12 +206,11 @@ function addLocalMCPServer() {
     var envObj = {};
     if (env.value.trim()) { try { envObj = JSON.parse(env.value.trim()); } catch(e) { showToast('环境变量 JSON 格式错误', 'error'); return; } }
     var config = { "transport": "stdio", "command": cmd.value.trim(), "args": argsList, "cwd": cwd.value.trim() || '', "env": envObj, "enabled": true, "description": desc.value.trim() || '', "name": name.value.trim() || serverId };
-    
-    // 检查是否是编辑已有服务器（"配置并重启"模式）：按钮上有 data-edit-sid 属性
-    var editBtn = document.querySelector('#mcpSubLocal button[onclick*="addLocalMCPServer"]');
-    var editSid = editBtn ? editBtn.getAttribute('data-edit-sid') : null;
-    var isEdit = editSid !== null && editSid !== '';
-    
+
+    // 编辑已有服务器（"配置并重启"模式）：按钮上有 data-edit-sid 属性
+    var editSid = addBtn ? addBtn.getAttribute('data-edit-sid') : null;
+    var isEdit = mode === 'edit' && editSid !== null && editSid !== '';
+
     if (window.mcp_bridge && window._bridgeReady) {
         window.mcp_bridge.getMCPConfig().then(function(configStr) {
             try {
@@ -158,7 +218,7 @@ function addLocalMCPServer() {
                 var servers = fullConfig.mcpServers || {};
                 servers[serverId] = config;
                 fullConfig.mcpServers = servers;
-                
+
                 if (isEdit) {
                     // 配置并重启：先保存配置，再重启指定服务器
                     showToast('🔄 正在配置并重启服务器: ' + serverId, 'info');
@@ -173,7 +233,7 @@ function addLocalMCPServer() {
                     showToast('✅ 已配置并重启: ' + serverId, 'success');
                     clearLocalForm(); loadMCPServers();
                 } else {
-                    // 添加新服务器
+                    // 手动添加新服务器（未选择目录）
                     var saveOk = window.mcp_bridge.saveMCPConfig(JSON.stringify(fullConfig));
                     if (saveOk !== false) { showToast('✅ 已保存服务器: ' + serverId, 'success'); clearLocalForm(); loadMCPServers(); }
                     else { showToast('❌ 保存失败', 'error'); }
@@ -188,6 +248,13 @@ function addLocalMCPServer() {
     }
 }
 
+function startLocalServerInstall(dirName) {
+    // 未安装目录 → 后端 installLocalServer 启动 AI 安装助手（新开 AI 对话走安装审阅）
+    if (!window.mcp_bridge || !window._bridgeReady) { showToast('后端未就绪', 'error'); return; }
+    showToast('🚀 正在启动 AI 安装助手: ' + dirName, 'info');
+    window.mcp_bridge.installLocalServer(dirName);
+}
+
 function clearLocalForm() {
     var ids = ['localServerId','localServerName','localCommand','localArgs','localCwd','localEnv','localDescription'];
     ids.forEach(function(id) { var el = document.getElementById(id); if (el) el.value = ''; });
@@ -200,22 +267,53 @@ function onLocalDirChange() {
     var select = document.getElementById('localServerDir');
     var val = select.value;
     var detectDiv = document.getElementById('localAutoDetect');
-    if (!val) { if (detectDiv) detectDiv.style.display = 'none'; updateLocalButtonState(null); return; }
-    if (window.mcp_bridge && window._bridgeReady) {
-        window.mcp_bridge.getMCPConfig().then(function(configStr) {
-            try {
-                var config = typeof configStr === 'string' ? JSON.parse(configStr) : configStr;
-                var servers = config.mcpServers || {};
-                var selectedSid = val.split('|')[0];
-                var serverConfig = servers[selectedSid];
-                if (serverConfig) { fillLocalFormFromConfig(selectedSid, serverConfig); return; }
-            } catch(e) {}
-            fillLocalFormFromPipe(val);
-        });
-    } else { fillLocalFormFromPipe(val); }
+    // 用户切换了下拉选项 → 清除「刚安装」标记（同一安装的多次自动重扫 value 不变，标记保留到 2s 超时）
+    if (window._localSelectedValue !== undefined && window._localSelectedValue !== val) {
+        window._localJustInstalledDir = null;
+    }
+    window._localSelectedValue = val;
+    if (!val) { if (detectDiv) detectDiv.style.display = 'none'; clearLocalForm(); return; }
+    var sel = parseLocalDirValue(val);
+    if (!sel) { fillLocalFormFromPipe(val); return; }
+    if (sel.installed && sel.sid) {
+        if (window.mcp_bridge && window._bridgeReady) {
+            window.mcp_bridge.getMCPConfig().then(function(configStr) {
+                try {
+                    var config = typeof configStr === 'string' ? JSON.parse(configStr) : configStr;
+                    var serverConfig = (config.mcpServers || {})[sel.sid];
+                    if (serverConfig) {
+                        fillLocalFormFromConfig(sel.sid, serverConfig, window._localJustInstalledDir === sel.sid);
+                        return;
+                    }
+                } catch(e) {}
+                fillLocalFormFromSelection(sel);
+            });
+        } else { fillLocalFormFromSelection(sel); }
+    } else {
+        fillLocalFormFromSelection(sel);
+    }
 }
 
-function fillLocalFormFromConfig(sid, cfg) {
+function fillLocalFormFromSelection(sel) {
+    var detectDiv = document.getElementById('localAutoDetect');
+    if (detectDiv) {
+        detectDiv.style.display = 'block';
+        document.getElementById('localDetectName').textContent = sel.dir;
+        document.getElementById('localDetectDesc').textContent = '';
+        document.getElementById('localDetectEntry').textContent = '';
+        document.getElementById('localDetectPM').textContent = sel.installed ? '✅ 已安装' : '未安装 → 点击「添加并启动配置」启动 AI 安装助手';
+    }
+    document.getElementById('localServerId').value = String(sel.dir).toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    document.getElementById('localServerName').value = sel.dir;
+    document.getElementById('localCommand').value = '';
+    document.getElementById('localArgs').value = '';
+    document.getElementById('localCwd').value = '';
+    document.getElementById('localEnv').value = '';
+    document.getElementById('localDescription').value = '';
+    updateLocalButtonState(sel.installed ? sel.sid : null, sel.installed ? 'edit' : 'add');
+}
+
+function fillLocalFormFromConfig(sid, cfg, justInstalled) {
     var detectDiv = document.getElementById('localAutoDetect');
     if (detectDiv) { detectDiv.style.display = 'block';
         document.getElementById('localDetectName').textContent = cfg.name || sid;
@@ -229,7 +327,7 @@ function fillLocalFormFromConfig(sid, cfg) {
     document.getElementById('localCwd').value = cfg.cwd || '';
     document.getElementById('localEnv').value = cfg.env && Object.keys(cfg.env).length > 0 ? JSON.stringify(cfg.env, null, 2) : '';
     document.getElementById('localDescription').value = cfg.description || '';
-    updateLocalButtonState(sid);
+    updateLocalButtonState(sid, justInstalled ? 'start' : 'edit');
 }
 
 function fillLocalFormFromPipe(val) {
@@ -250,23 +348,37 @@ function fillLocalFormFromPipe(val) {
     document.getElementById('localCwd').value = val.split('|cwd:')[1] || '';
     document.getElementById('localEnv').value = '';
     document.getElementById('localDescription').value = val.split('|')[1] || '';
-    updateLocalButtonState(null);
+    updateLocalButtonState(null, 'add');
 }
 
-function updateLocalButtonState(existingSid) {
+function updateLocalButtonState(existingSid, mode) {
     var addBtn = document.querySelector('#mcpSubLocal button[onclick*="addLocalMCPServer"]');
     if (!addBtn) return;
     var cancelBtn = document.getElementById('localCancelEditBtn');
-    if (existingSid) {
-        addBtn.innerHTML = '<i class="fas fa-sync"></i> 配置并重启';
-        addBtn.style.background = 'var(--accent-warning, #d29922)';
-        addBtn.setAttribute('data-edit-sid', existingSid);
-        if (cancelBtn) cancelBtn.style.display = 'inline-flex';
-    } else {
-        addBtn.innerHTML = '<i class="fas fa-plus"></i> 添加并启动';
-        addBtn.style.background = 'var(--accent-primary)';
-        addBtn.removeAttribute('data-edit-sid');
-        if (cancelBtn) cancelBtn.style.display = 'none';
+    var m = mode || (existingSid ? 'edit' : 'manual');
+    addBtn.setAttribute('data-local-mode', m);
+    if (existingSid) addBtn.setAttribute('data-edit-sid', existingSid);
+    else addBtn.removeAttribute('data-edit-sid');
+    var html = '<i class="fas fa-plus"></i> 添加并启动';
+    var bg = 'var(--accent-primary)';
+    var showCancel = false;
+    if (m === 'edit') { html = '<i class="fas fa-sync"></i> 配置并重启'; bg = 'var(--accent-warning, #d29922)'; showCancel = true; }
+    else if (m === 'start') { html = '<i class="fas fa-play"></i> 启动并重启'; bg = 'var(--accent-success, #2ea043)'; showCancel = true; }
+    else if (m === 'add') { html = '<i class="fas fa-rocket"></i> 添加并启动配置'; bg = 'var(--accent-primary)'; showCancel = false; }
+    addBtn.innerHTML = html;
+    addBtn.style.background = bg;
+    if (cancelBtn) cancelBtn.style.display = showCancel ? 'inline-flex' : 'none';
+}
+
+function onLocalInstallFinished(serverId) {
+    // 本地面板：AI 安装完成 → 重新扫描下拉（标记已安装），表单按钮切「启动并重启」
+    window._localJustInstalledDir = serverId;
+    if (window._localJustInstalledTimeout) clearTimeout(window._localJustInstalledTimeout);
+    window._localJustInstalledTimeout = setTimeout(function() { window._localJustInstalledDir = null; }, 2000);
+    var select = document.getElementById('localServerDir');
+    if (select && select.value) {
+        select.setAttribute('data-selected', select.value);
+        if (typeof scanLocalServerDirs === 'function') scanLocalServerDirs();
     }
 }
 

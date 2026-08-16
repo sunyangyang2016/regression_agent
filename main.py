@@ -7,6 +7,10 @@ import os
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# RAG MCP 服务器已独立到 tools/mcp/server/rag-mcp-server/（rag_mcp_server 包）。
+# 应用进程（RAG 导入插件）从这里导入该包。
+sys.path.insert(1, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "tools", "mcp", "server", "rag-mcp-server"))
 
 # 修复 stdout/stderr 编码为 UTF-8（防止 Windows 控制台 emoji 崩溃）
 # 注意：PYTHONIOENCODING 环境变量必须在解释器启动前设置才生效，
@@ -26,6 +30,20 @@ os.environ["PYTHONIOENCODING"] = "utf-8"
 # 将 Windows 终端代码页切换为 UTF-8，防止 Chromium 控制台日志中文乱码
 if sys.platform == "win32":
     os.system("chcp 65001 > NUL")
+
+# ★ 预载系统 MSVC 运行库（必须在导入 QtWebEngine 之前）。
+#   QtWebEngine 自带的 Qt5/bin/ 里有旧版 msvcp140/vcruntime140，导入时会把该目录
+#   加入 DLL 搜索路径，导致之后 onnxruntime 的 onnxruntime_pybind11_state.pyd
+#   绑定到旧运行库而加载失败（DLL load failed ... 初始化例程失败）。
+#   先把系统运行库载入进程，Windows 会按名复用已加载的版本，Qt 与 onnxruntime 均用系统版。
+if sys.platform == "win32":
+    import ctypes
+    _system32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+    for _dll in ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"):
+        try:
+            ctypes.windll.kernel32.LoadLibraryW(os.path.join(_system32, _dll))
+        except Exception:
+            pass  # 系统缺该运行库时静默，保持原有行为
 
 # ★ 必须在 QApplication 创建之前设置此属性 + 导入 QtWebEngineWidgets
 from PyQt5.QtCore import Qt, QCoreApplication

@@ -54,6 +54,7 @@ window.plugin_bridge = null;
 window.security_bridge = null;
 window.monitor_bridge = null;
 window.video_bridge = null;
+window.rag_bridge = null;
 window.ui_state_bridge = null;
 function connectBridge() {
     if(typeof QWebChannel==='undefined'||typeof qt==='undefined'||!qt.webChannelTransport){setTimeout(connectBridge,200);return;}
@@ -69,6 +70,7 @@ function connectBridge() {
             window.security_bridge=ch.objects.security_bridge||ch.objects.security_plugin_bridge;
             window.monitor_bridge=ch.objects.monitor_bridge||ch.objects.monitor_plugin_bridge;
             window.video_bridge=ch.objects.video_bridge;
+            window.rag_bridge=ch.objects.rag_bridge;
             window.voice_bridge=ch.objects.voice_bridge;
             window.ui_state_bridge=ch.objects.ui_state_bridge;
             window._bridgeReady=true;

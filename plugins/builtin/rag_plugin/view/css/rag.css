@@ -1,0 +1,322 @@
+/* RAG 知识库插件样式（类名统一 rag- 前缀，避免与宿主冲突） */
+.rag-center {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text-primary, #e6e6e6);
+    font-size: 13px;
+    height: 100%;
+    overflow-y: auto;
+}
+
+.rag-statusbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    background: var(--bg-secondary, #1e2228);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 8px;
+}
+/* QtWebEngine 下 flex gap 渲染不生效（同行间距 0、换行行距 0），
+   用 margin 控制：margin-right 同行间距，margin-bottom 换行行距 */
+.rag-statusbar > * {
+    margin-right: 16px;
+    margin-bottom: 6px;
+}
+
+.rag-status-item {
+    color: var(--text-secondary, #9aa4b2);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+}
+.rag-status-item i { font-size: 12px; margin-right: 6px; }
+.rag-status-item b { color: var(--text-primary, #e6e6e6); font-weight: 600; }
+/* 状态栏内下拉（向量数据库选择）深色风格，与表单 select 一致 */
+.rag-statusbar select {
+    background: var(--bg-primary, #14171b);
+    color: var(--text-primary, #e6e6e6);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+    padding: 3px 6px;
+    outline: none;
+    margin-left: 6px;
+    max-width: 150px;
+}
+.rag-statusbar select:focus { border-color: var(--accent-primary, #4da3ff); }
+
+/* 状态栏按钮 hover 说明框：QtWebEngine 不显示 title 原生 tooltip，用伪元素实现 */
+.rag-tip { position: relative; }
+.rag-tip:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 1000;
+    width: max-content;
+    max-width: 300px;
+    padding: 8px 10px;
+    background: #22262e;
+    border: 1px solid #3a4150;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #d6dbe4;
+    white-space: pre-line;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+    text-align: left;
+}
+
+/* 确认模态框（深色，替代原生 confirm） */
+.rag-modal-mask {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+}
+.rag-modal {
+    background: var(--bg-secondary, #1e2228);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 10px;
+    padding: 18px 20px;
+    width: 360px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.rag-modal-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary, #e6e6e6);
+    margin-bottom: 10px;
+}
+.rag-modal-body {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-secondary, #9aa4b2);
+    margin-bottom: 16px;
+}
+.rag-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.rag-section {
+    background: var(--bg-secondary, #1e2228);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.rag-section-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--accent-primary, #4da3ff);
+}
+
+.rag-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.rag-form-row label { color: var(--text-secondary, #9aa4b2); white-space: nowrap; width: 70px; }
+.rag-form-row .rag-inline-label { width: auto; margin-left: 8px; }
+.rag-form-row input[type="text"],
+.rag-form-row input[type="number"],
+.rag-form-row select {
+    flex: 1;
+    min-width: 120px;
+    background: var(--bg-primary, #14171b);
+    color: var(--text-primary, #e6e6e6);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+    padding: 5px 8px;
+    outline: none;
+}
+.rag-form-row input:focus,
+.rag-form-row select:focus { border-color: var(--accent-primary, #4da3ff); }
+
+.rag-checks {
+    /* 横向排列：QtWebEngine 下 gap 渲染不生效（计算值正确但间距 0px），
+       用相邻兄弟 margin-left 控制元素间距 */
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 2px 0;
+}
+.rag-checks .rag-check + .rag-check {
+    margin-left: 16px;
+}
+/* 特异性 .rag-checks .rag-check(0,2,0) > .rag-form-row label(0,1,1)，
+   必须覆盖 70px 定宽，否则 checkbox 文本被压缩换行重叠 */
+.rag-checks .rag-check {
+    display: flex;
+    align-items: center;
+    /* 复选框方框与文字的间距（原 5px 太贴，视觉上挤） */
+    gap: 9px;
+    width: auto;
+    white-space: nowrap;
+    color: var(--text-secondary, #9aa4b2);
+    cursor: pointer;
+}
+.rag-checks .rag-check input { accent-color: var(--accent-primary, #4da3ff); flex: none; }
+
+.rag-btn {
+    background: var(--bg-tertiary, #262c35);
+    color: var(--text-primary, #e6e6e6);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.rag-btn:hover { border-color: var(--accent-primary, #4da3ff); }
+.rag-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.rag-btn-primary { background: var(--accent-primary, #4da3ff); color: #fff; border-color: transparent; }
+.rag-btn-danger { color: #ff6b6b; }
+.rag-btn-ghost { background: transparent; }
+.rag-btn-sm { padding: 3px 8px; font-size: 12px; }
+
+.rag-progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+}
+.rag-progress {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-primary, #14171b);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.rag-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4da3ff, #7b5cff);
+    border-radius: 4px;
+    transition: width 0.2s;
+}
+.rag-progress-text { color: var(--text-secondary, #9aa4b2); font-size: 12px; white-space: nowrap; }
+
+.rag-log {
+    height: 130px;
+    overflow-y: auto;
+    background: var(--bg-primary, #14171b);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.rag-log .rag-ok { color: #67c23a; }
+.rag-log .rag-err { color: #f56c6c; }
+.rag-log .rag-skip { color: #909399; }
+.rag-log .rag-warn { color: #e6a23c; }
+.rag-log .rag-info { color: var(--text-secondary, #9aa4b2); }
+
+.rag-table-wrap {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+}
+.rag-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.rag-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-tertiary, #262c35);
+    color: var(--text-secondary, #9aa4b2);
+    text-align: left;
+    padding: 6px 8px;
+    z-index: 1;
+}
+.rag-table td {
+    padding: 5px 8px;
+    border-top: 1px solid var(--border-color, #2a3038);
+    color: var(--text-primary, #e6e6e6);
+    word-break: break-all;
+}
+.rag-table .rag-empty { text-align: center; color: var(--text-secondary, #9aa4b2); padding: 20px; }
+.rag-status-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+}
+.rag-status-success { background: rgba(103, 194, 58, 0.15); color: #67c23a; }
+.rag-status-failed  { background: rgba(245, 108, 108, 0.15); color: #f56c6c; }
+.rag-status-skipped { background: rgba(144, 147, 153, 0.15); color: #909399; }
+.rag-status-processing { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }
+
+.rag-pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    color: var(--text-secondary, #9aa4b2);
+    font-size: 12px;
+}
+
+.rag-search-results {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+.rag-result-card {
+    background: var(--bg-primary, #14171b);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+.rag-result-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+.rag-result-score {
+    background: var(--accent-primary, #4da3ff);
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+}
+.rag-result-file { color: var(--accent-secondary, #7b5cff); font-size: 12px; }
+.rag-result-heading { color: var(--text-secondary, #9aa4b2); font-size: 11px; }
+.rag-result-content {
+    color: var(--text-primary, #e6e6e6);
+    font-size: 12px;
+    line-height: 1.6;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.rag-result-empty, .rag-result-error {
+    color: var(--text-secondary, #9aa4b2);
+    padding: 10px;
+    text-align: center;
+}
+.rag-result-error { color: #f56c6c; }
+.rag-result-meta { color: var(--text-secondary, #9aa4b2); font-size: 11px; margin-top: 4px; }

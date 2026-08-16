@@ -134,6 +134,8 @@ function mcpFinishInstall(itemId, returnCode, installed) {
             // 强制刷新市场与服务列表，确保「安装→卸载」按钮切换
             if (typeof loadMCPMarket === 'function') loadMCPMarket();
             if (typeof loadMCPServers === 'function') loadMCPServers();
+            // 本地面板安装完成钩子：刷新下拉/表单并把按钮切为「启动并重启」
+            if (typeof onLocalInstallFinished === 'function') onLocalInstallFinished(itemId);
             // 重新渲染但不关闭日志窗口：记录日志面板状态，渲染后恢复
             var wasLogOpen = logDiv && logDiv.style.display === 'block';
             if (typeof renderMCPMarket === 'function') renderMCPMarket();

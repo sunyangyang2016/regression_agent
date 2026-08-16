@@ -32,3 +32,10 @@ user_config/database/*.db-wal
 # Runtime IPC artifacts（video_plugin 与 skill 脚本间的运行时产物，不入版本库）
 storage/video_commands.json
 storage/video_plugin.json
+
+# RAG（向量库/文件记录/模型缓存不入版本库，user_config/rag/README.md 除外）
+user_config/rag/*.db
+user_config/rag/*.db-shm
+user_config/rag/*.db-wal
+user_config/rag/vector_db/
+user_config/rag/models/

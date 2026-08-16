@@ -1373,6 +1373,81 @@ class MCPBridge(BridgeBase):
         # 启动后台线程执行安装 worker
         threading.Thread(target=worker, daemon=True).start()
 
+    @pyqtSlot(str)
+    def installLocalServer(self, dir_name: str):
+        """从本地目录安装 MCP 服务器 — 目录已存在于 tools/mcp/server/，跳过克隆，直接 AI 分析
+
+        复用市场安装（installMCPFromMarket）克隆之后的流水线：
+        自动检测配置草稿 → env 弹窗（如有）→ AI 审阅 → 预览确认 → finalizeMCPInstall。
+        market_id / server_id 均为目录名，finalizeMCPInstall 复用（githubRepoUrl 为空、
+        市场表 upsert 因查不到 db_item 自动跳过）。
+        """
+        import threading
+        import time as _time
+
+        def worker():
+            try:
+                base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "mcp", "server")
+                path = os.path.join(base, dir_name)
+                if not os.path.isdir(path):
+                    self.execute_js(f"mcpAppendLog('{dir_name}', '❌ 目录不存在: {dir_name}');")
+                    self.execute_js(f"mcpFinishInstall('{dir_name}', -1);")
+                    return
+
+                abs_path = path.replace('\\', '\\\\')
+                self._install_context = {
+                    "market_id": dir_name,
+                    "name": dir_name,
+                    "repo_url": "",
+                    "clone_dir": path,
+                    "server_id": dir_name,
+                    "start_time": _time.time(),
+                }
+
+                self._clear_log(dir_name)
+                self._write_log(dir_name, f"📦 开始安装: {dir_name}")
+                self.execute_js(f"mcpAppendLog('{dir_name}', '══════');")
+                self.execute_js(f"mcpAppendLog('{dir_name}', '📦 开始安装 MCP 服务器: {dir_name}');")
+                self.execute_js(f"mcpAppendLog('{dir_name}', '📁 目录: tools/mcp/server/{dir_name}');")
+                self.execute_js(f"mcpAppendLog('{dir_name}', '🔧 自动检测 + AI 审阅');")
+                self.execute_js(f"mcpAppendLog('{dir_name}', '🤖 正在启动 AI 安装助手...');")
+
+                # ---- 复用市场安装流水线：自动检测草稿 → env 弹窗 → AI 审阅 ----
+                try:
+                    draft = self._auto_detect_config(path, dir_name, abs_path)
+                    self._install_context["config_draft"] = draft.get("draft", {})
+                    self._install_context["auto_detect_ok"] = draft.get("ok", False)
+                    if draft.get("ok"):
+                        self._js_log(dir_name, f"📦 自动检测到入口: {draft.get('summary', '')}")
+                    else:
+                        self._js_log(dir_name, "⚠️ 自动检测未识别到标准入口，将由 AI 完整分析")
+
+                    env_vars = self._detect_env_vars(path)
+                    if env_vars:
+                        self._install_context["pending_env"] = True
+                        self._install_context["pending_action"] = "start_ai_review"
+                        self._install_context["await_abs_path"] = abs_path
+                        self._js_log(dir_name, f"🔑 检测到 {len(env_vars)} 个环境变量（API Key 等），自动弹出配置窗口，等待用户确认...")
+                        self._trigger_env_dialog(dir_name, env_vars)
+                        return
+
+                    self._start_ai_review_flow(dir_name, dir_name, dir_name, "", abs_path)
+                except Exception as e:
+                    self._js_log(dir_name, f"⚠️ 自动检测流程异常: {str(e)[:100]}，交 AI 处理")
+                    self.execute_js(
+                        f"startMCPInstallAnalysis({self._js_str(dir_name)}, '', "
+                        f"{self._js_str(dir_name)}, {self._js_str(dir_name)}, "
+                        f"{self._js_str(abs_path)}, {{}});"
+                    )
+                    self.stop_ai_config_listener()
+                    if self._install_context:
+                        self._install_context["awaiting_ai_config"] = False
+            except Exception as e:
+                print(f"[MCPBridge] ❌ installLocalServer 失败: {e}")
+                self.execute_js(f"mcpFinishInstall('{dir_name}', -1);")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_ai_review_flow(self, item_id, install_name, repo_dir_name, install_url, abs_path):
         """启动 AI 审阅流程（env 挂起续接或无 env 直接调用）"""
         try:
