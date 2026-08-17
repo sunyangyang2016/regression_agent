@@ -137,6 +137,15 @@ class RagBridge(QObject):
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
+    @pyqtSlot(str, result=str)
+    def getCollections(self, database):
+        """导入表单：返回指定向量数据库的集合名列表（供「集合名称」下拉提示）"""
+        try:
+            return json.dumps(self._service.list_collections(database or ""),
+                              ensure_ascii=False)
+        except Exception as e:
+            return json.dumps([], ensure_ascii=False)
+
     @pyqtSlot(result=str)
     def getModelStatus(self):
         try:

@@ -320,3 +320,67 @@
 }
 .rag-result-error { color: #f56c6c; }
 .rag-result-meta { color: var(--text-secondary, #9aa4b2); font-size: 11px; margin-top: 4px; }
+
+/* ===== 可编辑下拉（导入表单库/集合）：状态栏 select 效果 + 可输入新名 =====
+   QtWebEngine 不渲染 <input list>+<datalist> 的下拉，故自绘：
+   输入框（可打字） + 右侧 ▾ 按钮（点击弹列表） + 绝对定位选项列表。
+   输入时实时过滤；Enter 选中第一个可见项；Esc/点外部关闭。
+   特异性高于 .rag-form-row input[type="text"]（靠后置），保证圆角/边框覆盖生效 */
+.rag-combo {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    flex: 1;
+    min-width: 120px;
+}
+.rag-combo input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-primary, #14171b);
+    color: var(--text-primary, #e6e6e6);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px 0 0 6px;
+    padding: 5px 8px;
+    outline: none;
+}
+.rag-combo input:focus { border-color: var(--accent-primary, #4da3ff); }
+.rag-combo-btn {
+    width: 26px;
+    background: var(--bg-primary, #14171b);
+    color: var(--text-secondary, #9aa4b2);
+    border: 1px solid var(--border-color, #333a44);
+    border-left: none;
+    border-radius: 0 6px 6px 0;
+    cursor: pointer;
+    outline: none;
+    font-size: 10px;
+    padding: 0;
+    line-height: 1;
+}
+.rag-combo-btn:hover { background: #22262e; color: var(--text-primary, #e6e6e6); }
+.rag-combo-list {
+    display: none;
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 1200;
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+    background: var(--bg-secondary, #1e2228);
+    border: 1px solid var(--border-color, #333a44);
+    border-radius: 6px;
+    max-height: 200px;
+    overflow-y: auto;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.rag-combo-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-primary, #e6e6e6);
+}
+.rag-combo-item:hover { background: var(--accent-primary, #4da3ff); color: #fff; }

@@ -24,6 +24,7 @@ window.ragApp = {
         if (!this._initialized) {
             this._initialized = true;
             this._wireUiPersistence();
+            this._wireComboDrops();
             this.appendLog('✅ RAG 数据库插件已就绪');
         }
         // ★ 先恢复持久化的状态栏库/集合上下文，再用该上下文加载统计与记录。
@@ -38,6 +39,38 @@ window.ragApp = {
         });
     },
 
+    // 自绘下拉事件接线（仅初始化一次）：
+    // ① 选项点击选中（mousedown 委托，先于 input blur/外部 click 的收起执行）
+    // ② 点击下拉外部任意处关闭
+    _wireComboDrops: function() {
+        var self = this;
+        var lists = document.querySelectorAll('.rag-combo-list');
+        for (var i = 0; i < lists.length; i++) {
+            (function(ul) {
+                ul.addEventListener('mousedown', function(e) {
+                    var li = e.target;
+                    while (li && li !== ul
+                           && !(li.classList && li.classList.contains('rag-combo-item'))) {
+                        li = li.parentNode;
+                    }
+                    if (li && li !== ul) {
+                        self.pickCombo(ul.id, li.getAttribute('data-value'));
+                        e.preventDefault();
+                    }
+                });
+            })(lists[i]);
+        }
+        document.addEventListener('click', function(e) {
+            var el = e.target;
+            var inside = false;
+            while (el) {
+                if (el.classList && el.classList.contains('rag-combo')) { inside = true; break; }
+                el = el.parentNode;
+            }
+            if (!inside) self._closeAllCombos();
+        });
+    },
+
     loadDefaults: function() {
         var self = this;
         return window.rag_bridge.getDefaults().then(function(s) {
@@ -48,6 +81,7 @@ window.ragApp = {
                 if (document.getElementById('ragCollection')) document.getElementById('ragCollection').value = d.collection || 'knowledge';
                 if (document.getElementById('ragDatabase')) document.getElementById('ragDatabase').value = d.database || 'default';
                 self._fillDatalist('ragDbList', d.databases);
+                self._fillDatalist('ragCollectionList', d.collections);
                 if (document.getElementById('ragSplitMode')) document.getElementById('ragSplitMode').value = d.split_mode || 'smart';
                 if (document.getElementById('ragSkipExisting')) document.getElementById('ragSkipExisting').checked = !!d.skip_existing;
                 if (document.getElementById('ragDetectChanges')) document.getElementById('ragDetectChanges').checked = !!d.detect_changes;
@@ -89,13 +123,88 @@ window.ragApp = {
         return { db: db, coll: coll };
     },
 
-    // 填充可编辑下拉（datalist）
+    // 填充自绘下拉选项（<ul class="rag-combo-list"> 的 <li> 项）。
+    // 点击选中经事件委托（见 init），随 innerHTML 重建仍生效。
     _fillDatalist: function(id, items) {
-        var dl = document.getElementById(id);
-        if (!dl) return;
-        dl.innerHTML = (items || []).map(function(it) {
-            return '<option value="' + String(it).replace(/"/g, '&quot;') + '"></option>';
+        var ul = document.getElementById(id);
+        if (!ul) return;
+        ul.innerHTML = (items || []).map(function(it) {
+            var s = String(it);
+            return '<li class="rag-combo-item" data-value="' + s.replace(/"/g, '&quot;') + '">'
+                 + s.replace(/</g, '&lt;') + '</li>';
         }).join('');
+    },
+
+    // ===== 自绘可编辑下拉（导入表单库/集合）=====
+    // 说明：QtWebEngine 不渲染 <input list>+<datalist> 的下拉，故自绘成
+    // 「输入框（可打字新名）+ ▾ 按钮 + 选项列表」，外观对齐状态栏 select。
+
+    // 输入变化：打开并过滤列表；是「向量数据库」则顺带刷新「集合名称」下拉
+    onComboInput: function(listId, isDb) {
+        var self = this;
+        var input = (listId === 'ragDbList')
+            ? document.getElementById('ragDatabase')
+            : document.getElementById('ragCollection');
+        var v = ((input && input.value) || '').trim().toLowerCase();
+        self._openComboFiltered(listId, v);
+        if (isDb) self.onImportDbChange();
+    },
+
+    // ▾ 按钮：展开/收起（展开时显示全部选项）
+    toggleCombo: function(listId) {
+        var ul = document.getElementById(listId);
+        if (!ul) return;
+        var wasOpen = ul.style.display === 'block';
+        this._closeAllCombos();
+        if (!wasOpen) this._openComboFiltered(listId, '');
+    },
+
+    // 选项点击选中（onmousedown 由 init 事件委托调用）：填输入框 + 关闭 + 刷关联
+    pickCombo: function(listId, value) {
+        var input = (listId === 'ragDbList')
+            ? document.getElementById('ragDatabase')
+            : document.getElementById('ragCollection');
+        if (input) input.value = value;
+        this._closeAllCombos();
+        if (listId === 'ragDbList') this.onImportDbChange();
+    },
+
+    // 输入框按键：Enter 选中第一个可见项；Esc 关闭
+    onComboKeydown: function(e, listId) {
+        if (e.key === 'Enter') {
+            var ul = document.getElementById(listId);
+            if (ul && ul.style.display === 'block') {
+                var items = ul.querySelectorAll('.rag-combo-item');
+                for (var i = 0; i < items.length; i++) {
+                    if (items[i].style.display !== 'none') {
+                        this.pickCombo(listId, items[i].getAttribute('data-value'));
+                        break;
+                    }
+                }
+                e.preventDefault();
+            }
+        } else if (e.key === 'Escape') {
+            this._closeAllCombos();
+        }
+    },
+
+    // 按输入过滤并显示列表；无匹配项时收起
+    _openComboFiltered: function(listId, v) {
+        var ul = document.getElementById(listId);
+        if (!ul) return;
+        var items = ul.querySelectorAll('.rag-combo-item');
+        var shown = 0;
+        for (var i = 0; i < items.length; i++) {
+            var match = !v || items[i].getAttribute('data-value').toLowerCase().indexOf(v) >= 0;
+            items[i].style.display = match ? '' : 'none';
+            if (match) shown++;
+        }
+        ul.style.display = shown ? 'block' : 'none';
+    },
+
+    _closeAllCombos: function() {
+        var lists = document.querySelectorAll('.rag-combo-list');
+        for (var i = 0; i < lists.length; i++) lists[i].style.display = 'none';
     },
 
     refreshStats: function(db, coll) {
@@ -111,7 +220,7 @@ window.ragApp = {
         try {
             var p = payload || {};
             if (p.error) return;
-            // 状态栏向量库下拉 + 导入区可编辑下拉（datalist）：列表来自后端 list_databases
+            // 状态栏向量库下拉 + 导入区自绘可编辑下拉（列表来自后端 list_databases）
             var curDb = (document.getElementById('ragDbSelect') && document.getElementById('ragDbSelect').value)
                         || p.current_database || 'default';
             this._fillDbSelect('ragDbSelect', p.databases, curDb, false);
@@ -211,6 +320,7 @@ window.ragApp = {
         var sel = document.getElementById('ragCollections');
         if (sel) sel.value = '';
         var self = this;
+        self.onImportDbChange();   // 按新库刷新「集合名称」下拉
         window.rag_bridge.setDatabase(name).then(function(s) {
             try { JSON.parse(s); } catch(e) {}
             self.saveUiState();
@@ -220,6 +330,22 @@ window.ragApp = {
     },
 
     // ===== 导入 =====
+
+    // 导入区「向量数据库」输入变化（或下拉选库）→ 按该库刷新「集合名称」下拉；
+    // 新库名查不到 → 集合下拉清空（首次导入自动创建）。防抖 300ms。
+    onImportDbChange: function() {
+        var self = this;
+        clearTimeout(this._dbChangeTimer);
+        this._dbChangeTimer = setTimeout(function() {
+            var db = (document.getElementById('ragDatabase') || {}).value || '';
+            window.rag_bridge.getCollections(db).then(function(s) {
+                try {
+                    self._fillDatalist('ragCollectionList', JSON.parse(s));
+                } catch(e) {}
+            });
+        }, 300);
+    },
+
     startImport: function() {
         if (this._importing) { showToast('已有导入任务进行中', 'warning'); return; }
         var root = (document.getElementById('ragRootDir').value || '').trim();

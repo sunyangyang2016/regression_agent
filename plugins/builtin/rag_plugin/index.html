@@ -40,17 +40,27 @@
         </div>
         <div class="rag-form-row">
             <label>向量数据库</label>
-            <input type="text" id="ragDatabase" list="ragDbList" placeholder="default" style="max-width:160px"
-                   title="导入目标向量数据库：可从下拉选已有库，或直接输入新库名（首次导入自动创建）。各库集合相互隔离。">
-            <datalist id="ragDbList"></datalist>
+            <div class="rag-combo">
+                <input type="text" id="ragDatabase" placeholder="default" autocomplete="off"
+                       oninput="window.ragApp.onComboInput('ragDbList', true)"
+                       onkeydown="window.ragApp.onComboKeydown(event, 'ragDbList')"
+                       title="导入目标向量数据库：点右侧 ▼ 选已有库，或直接输入新库名（首次导入自动创建）。各库集合相互隔离；切换后「集合名称」下拉自动更新为该库的集合列表。">
+                <button type="button" class="rag-combo-btn" onclick="window.ragApp.toggleCombo('ragDbList')">▾</button>
+                <ul id="ragDbList" class="rag-combo-list"></ul>
+            </div>
             <button class="rag-btn rag-btn-sm rag-btn-danger" onclick="window.ragApp.deleteDatabase()"
                     title="删除当前输入的向量数据库（其全部集合与文件记录）"><i class="fas fa-trash-alt"></i> 删库</button>
         </div>
         <div class="rag-form-row">
             <label>集合名称</label>
-            <input type="text" id="ragCollection" list="ragCollectionList" placeholder="knowledge" style="max-width:160px"
-                   title="导入目标集合：可从下拉选当前库已有集合，或直接输入新集合名（首次导入自动创建）。">
-            <datalist id="ragCollectionList"></datalist>
+            <div class="rag-combo">
+                <input type="text" id="ragCollection" placeholder="knowledge" autocomplete="off"
+                       oninput="window.ragApp.onComboInput('ragCollectionList', false)"
+                       onkeydown="window.ragApp.onComboKeydown(event, 'ragCollectionList')"
+                       title="导入目标集合：点右侧 ▼ 选当前库已有集合，或直接输入新集合名（首次导入自动创建）。">
+                <button type="button" class="rag-combo-btn" onclick="window.ragApp.toggleCombo('ragCollectionList')">▾</button>
+                <ul id="ragCollectionList" class="rag-combo-list"></ul>
+            </div>
             <button class="rag-btn rag-btn-sm rag-btn-danger" onclick="window.ragApp.deleteCollection()"
                     title="删除当前输入的集合（其向量数据与文件记录）"><i class="fas fa-trash-alt"></i> 删集合</button>
         </div>

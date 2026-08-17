@@ -259,6 +259,15 @@ class RagService:
             logger.warning("列出向量数据库失败: %s", e)
             return []
 
+    def list_collections(self, database: str = None) -> list:
+        """列出指定向量数据库的集合名（供导入表单「集合名称」下拉提示）"""
+        try:
+            return VectorStoreManager(config=self._config).list_collections(
+                database=(database or "").strip() or None)
+        except Exception as e:
+            logger.warning("列出集合失败: %s", e)
+            return []
+
     # ================================================================
     # 默认配置
     # ================================================================
@@ -305,12 +314,20 @@ class RagService:
             databases = VectorStoreManager(config=self._config).list_databases()
         except Exception as e:
             logger.warning("列出向量数据库失败: %s", e)
+        # 当前库的集合列表（供导入表单「集合名称」下拉提示）
+        collections = []
+        try:
+            collections = VectorStoreManager(config=self._config).list_collections(
+                database=(opts.database or "").strip() or None)
+        except Exception as e:
+            logger.warning("列出集合失败: %s", e)
         return {
             "root_dir": opts.root_dir,
             "collection": opts.collection,
             "database": opts.database,
             "current_collection": (c.get("ui.current_collection") or "").strip() or "",
             "databases": databases,
+            "collections": collections,
             "split_mode": opts.split_mode,
             "file_extensions": ",".join(opts.file_extensions or []),
             "exclude_patterns": opts.exclude_patterns,
